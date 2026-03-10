@@ -1,3 +1,10 @@
+<!-- BADGES:START -->
+[![CI](https://github.com/POps-Rox/ato-copilot/actions/workflows/ci.yml/badge.svg)](https://github.com/POps-Rox/ato-copilot/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/POps-Rox/ato-copilot/pulls)
+[![Maintained](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/POps-Rox/ato-copilot/graphs/commit-activity)
+<!-- BADGES:END -->
+
 # ATO Copilot
 
 AI-powered compliance copilot that guides DoD teams through every step of the NIST Risk Management Framework (RMF) — from system registration through continuous monitoring and ATO authorization.

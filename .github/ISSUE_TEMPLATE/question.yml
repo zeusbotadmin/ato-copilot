@@ -1,0 +1,36 @@
+name: ❓ Question / Support
+description: Ask a question or get help with usage
+labels: ["question", "support"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have a question? We're happy to help! Please provide as much context as possible.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: ❓ Your Question
+      description: What would you like to know?
+      placeholder: How do I...
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: 🖥️ Context
+      description: What are you trying to accomplish? What have you tried so far?
+      placeholder: |
+        I'm trying to...
+        I've already tried...
+    validations:
+      required: false
+
+  - type: textarea
+    id: references
+    attributes:
+      label: 📎 References
+      description: Any relevant documentation, links, or code snippets you've looked at.
+    validations:
+      required: false

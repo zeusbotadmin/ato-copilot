@@ -1,0 +1,49 @@
+name: 📚 Documentation Issue
+description: Report missing, incorrect, or unclear documentation
+labels: ["documentation", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Help us improve our documentation! Let us know what's missing or unclear.
+
+  - type: dropdown
+    id: doc-type
+    attributes:
+      label: 📖 Documentation Type
+      description: What kind of documentation issue is this?
+      options:
+        - "Missing documentation"
+        - "Incorrect / outdated information"
+        - "Unclear / confusing explanation"
+        - "Typo / grammatical error"
+        - "Missing example / code sample"
+    validations:
+      required: true
+
+  - type: input
+    id: location
+    attributes:
+      label: 📍 Location
+      description: Where is the documentation issue? (URL, file path, or section name)
+      placeholder: e.g., README.md#usage or docs/setup.md
+    validations:
+      required: false
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 📝 Description
+      description: Describe the documentation issue in detail.
+      placeholder: The section about... is missing information on...
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: 💡 Suggested Improvement
+      description: How would you improve the documentation?
+      placeholder: I think it should explain...
+    validations:
+      required: false

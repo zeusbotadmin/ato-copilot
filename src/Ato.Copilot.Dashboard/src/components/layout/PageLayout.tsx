@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
+import HelpPanel from '../help/HelpPanel';
 
 const navItems = [
   { to: '/', label: 'Portfolio' },
@@ -14,6 +15,7 @@ interface PageLayoutProps {
 
 export default function PageLayout({ title, children, sidePanel }: PageLayoutProps) {
   const [sidePanelOpen, setSidePanelOpen] = useState(true);
+  const [helpPanelOpen, setHelpPanelOpen] = useState(false);
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
@@ -53,7 +55,7 @@ export default function PageLayout({ title, children, sidePanel }: PageLayoutPro
                 <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" />
               </svg>
             </button>
-            <button type="button" className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-700" aria-label="Help" title="Help">
+            <button type="button" onClick={() => setHelpPanelOpen(!helpPanelOpen)} className={`rounded-lg p-2 hover:bg-gray-100 hover:text-gray-700 ${helpPanelOpen ? 'bg-blue-50 text-blue-600' : 'text-gray-500'}`} aria-label="Help" title="Help" aria-expanded={helpPanelOpen}>
               <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z" />
               </svg>
@@ -73,24 +75,32 @@ export default function PageLayout({ title, children, sidePanel }: PageLayoutPro
       {/* Content area */}
       <div className="flex flex-1 overflow-hidden">
         <main className="flex-1 overflow-y-auto p-6">{children}</main>
-        {sidePanel && (
+        {(sidePanel || helpPanelOpen) && (
           <div className="hidden xl:flex flex-shrink-0">
             {/* Toggle tab on the edge */}
-            <button
-              type="button"
-              onClick={() => setSidePanelOpen(!sidePanelOpen)}
-              className="flex h-8 w-5 items-center justify-center self-start mt-4 -mr-px rounded-l border border-r-0 border-gray-200 bg-gray-50 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
-              title={sidePanelOpen ? 'Collapse panel' : 'Expand panel'}
-              aria-label={sidePanelOpen ? 'Collapse panel' : 'Expand panel'}
-            >
-              <svg className={`h-3 w-3 transition-transform ${sidePanelOpen ? '' : 'rotate-180'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-            {sidePanelOpen && (
-              <aside className="w-80 overflow-y-auto border-l border-gray-200 bg-gray-50 p-4">
-                {sidePanel}
+            {!helpPanelOpen && (
+              <button
+                type="button"
+                onClick={() => setSidePanelOpen(!sidePanelOpen)}
+                className="flex h-8 w-5 items-center justify-center self-start mt-4 -mr-px rounded-l border border-r-0 border-gray-200 bg-gray-50 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+                title={sidePanelOpen ? 'Collapse panel' : 'Expand panel'}
+                aria-label={sidePanelOpen ? 'Collapse panel' : 'Expand panel'}
+              >
+                <svg className={`h-3 w-3 transition-transform ${sidePanelOpen ? '' : 'rotate-180'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            )}
+            {helpPanelOpen ? (
+              <aside className="w-80 overflow-y-auto border-l border-gray-200 bg-white">
+                <HelpPanel onClose={() => setHelpPanelOpen(false)} />
               </aside>
+            ) : (
+              sidePanelOpen && sidePanel && (
+                <aside className="w-80 overflow-y-auto border-l border-gray-200 bg-gray-50 p-4">
+                  {sidePanel}
+                </aside>
+              )
             )}
           </div>
         )}

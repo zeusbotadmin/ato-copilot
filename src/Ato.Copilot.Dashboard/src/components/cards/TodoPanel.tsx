@@ -3,6 +3,7 @@ import { usePolling } from '../../hooks/usePolling';
 import type { TodoList, TodoItem } from '../../types/dashboard';
 import apiClient from '../../api/client';
 import TodoActionDialog from './TodoActionDialog';
+import HelpTooltip from '../help/HelpTooltip';
 
 interface TodoPanelProps {
   systemId: string;
@@ -36,7 +37,10 @@ export default function TodoPanel({ systemId }: TodoPanelProps) {
     <>
       <div className="rounded-xl border border-gray-200 bg-white">
         <div className="px-5 pt-5 pb-1">
-          <h2 className="text-lg font-semibold text-gray-900">To do</h2>
+          <div className="flex items-center">
+            <h2 className="text-lg font-semibold text-gray-900">To do</h2>
+            <HelpTooltip helpKey="todo" />
+          </div>
           <p className="text-xs text-gray-500 mt-0.5">
             Phase: {data.currentPhase}{data.nextPhase ? ` → ${data.nextPhase}` : ''}
           </p>

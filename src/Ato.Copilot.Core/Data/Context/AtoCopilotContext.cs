@@ -73,6 +73,9 @@ public class AtoCopilotContext : DbContext
     /// <summary>Notification records for alert delivery audit.</summary>
     public DbSet<AlertNotification> AlertNotifications => Set<AlertNotification>();
 
+    /// <summary>Per-user notification preferences.</summary>
+    public DbSet<NotificationPreferences> NotificationPreferences => Set<NotificationPreferences>();
+
     /// <summary>Per-scope monitoring configurations.</summary>
     public DbSet<MonitoringConfiguration> MonitoringConfigurations => Set<MonitoringConfiguration>();
 
@@ -233,6 +236,11 @@ public class AtoCopilotContext : DbContext
 
     /// <summary>Named authorization boundary definitions within registered systems.</summary>
     public DbSet<AuthorizationBoundaryDefinition> AuthorizationBoundaryDefinitions => Set<AuthorizationBoundaryDefinition>();
+
+    // ─── Deferred Prerequisites (Force-Advanced Gate Tracking) ───────────
+
+    /// <summary>Prerequisites skipped during forced RMF phase advances.</summary>
+    public DbSet<DeferredPrerequisite> DeferredPrerequisites => Set<DeferredPrerequisite>();
 
     // ─── Implementation Roadmap (Feature 031) ────────────────────────────────
 
@@ -724,9 +732,20 @@ public class AtoCopilotContext : DbContext
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Recipient).HasMaxLength(500).IsRequired();
             entity.Property(e => e.Subject).HasMaxLength(500);
+            entity.Property(e => e.UserId).HasMaxLength(200);
 
             entity.HasIndex(e => new { e.AlertId, e.Channel }).HasDatabaseName("IX_AlertNotification_Alert_Channel");
             entity.HasIndex(e => e.SentAt).HasDatabaseName("IX_AlertNotification_SentAt");
+            entity.HasIndex(e => new { e.UserId, e.IsRead }).HasDatabaseName("IX_AlertNotification_User_Read");
+        });
+
+        // ─── NotificationPreferences ─────────────────────────────────────────
+        modelBuilder.Entity<NotificationPreferences>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.UserId).HasMaxLength(200).IsRequired();
+
+            entity.HasIndex(e => e.UserId).IsUnique().HasDatabaseName("IX_NotificationPreferences_UserId");
         });
 
         // ─── MonitoringConfiguration ─────────────────────────────────────────
@@ -2098,6 +2117,18 @@ public class AtoCopilotContext : DbContext
 
             entity.HasIndex(e => new { e.RegisteredSystemId, e.AuthorizationBoundaryDefinitionId, e.ControlId })
                 .HasDatabaseName("IX_CapabilityMapping_System_Boundary_Control");
+        });
+
+        // ─── DeferredPrerequisite ─────────────────────────────────────────────
+        modelBuilder.Entity<DeferredPrerequisite>(entity =>
+        {
+            entity.HasOne(d => d.RegisteredSystem)
+                .WithMany()
+                .HasForeignKey(d => d.RegisteredSystemId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(d => new { d.RegisteredSystemId, d.IsResolved })
+                .HasDatabaseName("IX_DeferredPrerequisite_System_Resolved");
         });
     }
 

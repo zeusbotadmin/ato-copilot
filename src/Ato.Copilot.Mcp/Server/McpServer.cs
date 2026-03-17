@@ -188,7 +188,7 @@ public class McpServer
                 }
             }
 
-            targetAgent ??= _orchestrator.SelectAgent(message) ?? _complianceAgent;
+            targetAgent ??= _orchestrator.SelectAgent(message, context) ?? _complianceAgent;
 
             progress?.Report(JsonSerializer.Serialize(
                 new SseAgentRoutedEvent { AgentName = targetAgent.AgentName, Confidence = targetAgent.CanHandle(message) }, _jsonOptions));

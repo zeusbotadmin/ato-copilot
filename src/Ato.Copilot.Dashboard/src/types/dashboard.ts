@@ -100,6 +100,24 @@ export interface SystemDetailResponse {
   rmfPhaseProgress: RmfPhaseProgress[];
   keyMetrics: KeyMetrics;
   recentActivity: RecentActivity[];
+  categorization: CategorizationInfo | null;
+}
+
+export interface CategorizationInfo {
+  confidentiality: string;
+  integrity: string;
+  availability: string;
+  overall: string;
+  formalNotation: string;
+  dodImpactLevel: string;
+  informationTypes: InfoTypeInfo[];
+}
+
+export interface InfoTypeInfo {
+  name: string;
+  confidentiality: string;
+  integrity: string;
+  availability: string;
 }
 
 // ─── Heatmap (US2) ────────────────────────────────────────────────────────────
@@ -381,6 +399,8 @@ export interface TodoItem {
   category: string;
   prompt?: string;
   link?: string;
+  /** Present when category === 'deferred' — the deferred prerequisite GUID */
+  deferredId?: string;
 }
 
 // ─── Boundary Definitions (Feature 033) ────────────────────────────────────────

@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import PageLayout from '../components/layout/PageLayout';
 import RmfPhaseProgressComponent from '../components/charts/RmfPhaseProgress';
+import PhaseReadinessPanel from '../components/cards/PhaseReadinessPanel';
 import ComplianceHeatmap from '../components/charts/ComplianceHeatmap';
 import { TrendChart } from '../components/charts/TrendChart';
 import MetricCard from '../components/cards/MetricCard';
@@ -100,6 +101,36 @@ export default function SystemDetail() {
       {/* To Do */}
       <TodoPanel systemId={detail.systemId} />
 
+      {/* Security Categorization */}
+      {detail.categorization && (
+        <div className="rounded-xl border border-gray-200 bg-white">
+          <div className="px-5 pt-5 pb-1">
+            <h2 className="text-lg font-semibold text-gray-900">Security Categorization</h2>
+            <p className="text-xs text-gray-400 mt-0.5">{detail.categorization.formalNotation}</p>
+          </div>
+          <div className="divide-y divide-gray-100 text-sm">
+            {(['confidentiality', 'integrity', 'availability'] as const).map((dim) => {
+              const val = detail.categorization![dim];
+              const color = val === 'High' ? 'bg-red-100 text-red-700' : val === 'Moderate' ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700';
+              return (
+                <div key={dim} className="flex items-center justify-between px-5 py-2.5">
+                  <span className="text-gray-500 capitalize">{dim}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${color}`}>{val}</span>
+                </div>
+              );
+            })}
+            <div className="flex items-center justify-between px-5 py-2.5">
+              <span className="text-gray-500">Overall</span>
+              <span className="font-medium text-gray-900">{detail.categorization.overall}</span>
+            </div>
+            <div className="flex items-center justify-between px-5 py-2.5">
+              <span className="text-gray-500">DoD IL</span>
+              <span className="font-medium text-gray-900">{detail.categorization.dodImpactLevel}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Navigation */}
       <div className="rounded-xl border border-gray-200 bg-white">
         <div className="px-5 pt-5 pb-1">
@@ -107,6 +138,8 @@ export default function SystemDetail() {
         </div>
         <div className="divide-y divide-gray-100">
           {[
+            { to: `/systems/${detail.systemId}/documents`, label: 'Documents', desc: 'ATO package, privacy, scans & exports' },
+            { to: `/systems/${detail.systemId}/narratives`, label: 'Narratives', desc: 'View and manage control narratives' },
             { to: `/systems/${detail.systemId}/gaps`, label: 'Gap Analysis', desc: 'View control gaps and coverage' },
             { to: `/systems/${detail.systemId}/components`, label: 'Component Inventory', desc: 'Hardware & software assets' },
             { to: `/systems/${detail.systemId}/boundaries`, label: 'Manage Boundaries', desc: 'Authorization boundary definitions' },
@@ -151,7 +184,17 @@ export default function SystemDetail() {
           <h2 className="mb-3 text-sm font-semibold text-gray-700">RMF Phase Progress</h2>
           <HelpTooltip helpKey="rmfProgress" />
         </div>
-        <RmfPhaseProgressComponent phases={detail.rmfPhaseProgress} />
+        <RmfPhaseProgressComponent
+          phases={detail.rmfPhaseProgress}
+        />
+      </div>
+
+      {/* Phase Readiness Panel */}
+      <div className="mb-6">
+        <PhaseReadinessPanel
+          systemId={detail.systemId}
+          onAdvanced={fetchData}
+        />
       </div>
 
       {/* Key Metrics */}

@@ -915,7 +915,7 @@ public class SspService : ISspService
                $"The {systemName} team is responsible for {customerPart}.";
     }
 
-    private static string GenerateCustomerNarrativeTemplate(
+    internal static string GenerateCustomerNarrativeTemplate(
         string family,
         string controlId,
         RegisteredSystem system)

@@ -189,6 +189,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ComplianceHistoryTool>();
         services.AddSingleton<ComplianceStatusTool>();
         services.AddSingleton<ComplianceMonitoringTool>();
+        services.AddSingleton<ShowFindingsTool>();
         services.AddSingleton<ComplianceChatTool>();
         services.AddSingleton<IacComplianceScanTool>();
 
@@ -410,6 +411,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<EscalationHostedService>();
         services.AddSingleton<IEscalationService>(sp => sp.GetRequiredService<EscalationHostedService>());
         services.AddHostedService(sp => sp.GetRequiredService<EscalationHostedService>());
+        services.AddHostedService<DigestSchedulerHostedService>();
 
         // Register tools as BaseTool collection
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ComplianceAssessmentTool>());
@@ -423,6 +425,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ComplianceHistoryTool>());
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ComplianceStatusTool>());
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ComplianceMonitoringTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ShowFindingsTool>());
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ComplianceChatTool>());
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<IacComplianceScanTool>());
 

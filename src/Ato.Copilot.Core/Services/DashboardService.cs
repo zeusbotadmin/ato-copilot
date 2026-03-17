@@ -238,6 +238,8 @@ public class DashboardService
     {
         var system = await _db.RegisteredSystems
             .Include(s => s.ControlBaseline)
+            .Include(s => s.SecurityCategorization!)
+                .ThenInclude(sc => sc.InformationTypes)
             .AsNoTracking()
             .FirstOrDefaultAsync(s => s.Id == systemId && s.IsActive, cancellationToken);
 
@@ -378,6 +380,22 @@ public class DashboardService
                 NarrativeCoverage = narrativeCoverage,
             },
             RecentActivity = activities,
+            Categorization = system.SecurityCategorization is null ? null : new CategorizationDto
+            {
+                Confidentiality = system.SecurityCategorization.ConfidentialityImpact.ToString(),
+                Integrity = system.SecurityCategorization.IntegrityImpact.ToString(),
+                Availability = system.SecurityCategorization.AvailabilityImpact.ToString(),
+                Overall = system.SecurityCategorization.OverallCategorization.ToString(),
+                FormalNotation = system.SecurityCategorization.FormalNotation,
+                DodImpactLevel = system.SecurityCategorization.DoDImpactLevel,
+                InformationTypes = system.SecurityCategorization.InformationTypes.Select(it => new InfoTypeDto
+                {
+                    Name = it.Name,
+                    Confidentiality = it.ConfidentialityImpact.ToString(),
+                    Integrity = it.IntegrityImpact.ToString(),
+                    Availability = it.AvailabilityImpact.ToString(),
+                }).ToList(),
+            },
         };
     }
 

@@ -40,6 +40,34 @@ public class SystemDetailDto
 
     /// <summary>Most recent dashboard activity events (max 10).</summary>
     public required IReadOnlyList<RecentActivityDto> RecentActivity { get; init; }
+
+    /// <summary>FIPS 199 security categorization (null if not yet categorized).</summary>
+    public CategorizationDto? Categorization { get; init; }
+}
+
+/// <summary>
+/// FIPS 199 security categorization for a system.
+/// </summary>
+public class CategorizationDto
+{
+    public required string Confidentiality { get; init; }
+    public required string Integrity { get; init; }
+    public required string Availability { get; init; }
+    public required string Overall { get; init; }
+    public required string FormalNotation { get; init; }
+    public required string DodImpactLevel { get; init; }
+    public required IReadOnlyList<InfoTypeDto> InformationTypes { get; init; }
+}
+
+/// <summary>
+/// SP 800-60 information type within a categorization.
+/// </summary>
+public class InfoTypeDto
+{
+    public required string Name { get; init; }
+    public required string Confidentiality { get; init; }
+    public required string Integrity { get; init; }
+    public required string Availability { get; init; }
 }
 
 /// <summary>

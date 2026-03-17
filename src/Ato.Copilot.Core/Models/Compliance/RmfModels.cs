@@ -877,3 +877,60 @@ public class AuthorizationBoundaryDefinition
     /// <summary>Boundary-scoped capability-to-control mappings.</summary>
     public ICollection<CapabilityControlMapping> CapabilityControlMappings { get; set; } = new List<CapabilityControlMapping>();
 }
+
+// ─── Deferred Prerequisites (Force-Advanced Gate Tracking) ──────────────────
+
+/// <summary>
+/// Tracks a prerequisite that was skipped during a forced RMF phase advance.
+/// Acts as a persistent reminder until the user resolves the deferred item.
+/// </summary>
+public class DeferredPrerequisite
+{
+    [Key]
+    [MaxLength(36)]
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    [Required]
+    [MaxLength(36)]
+    public string RegisteredSystemId { get; set; } = string.Empty;
+
+    /// <summary>Gate name that was skipped (e.g., "Privacy Readiness").</summary>
+    [Required]
+    [MaxLength(200)]
+    public string GateName { get; set; } = string.Empty;
+
+    /// <summary>Descriptive message about what needs to be completed.</summary>
+    [Required]
+    [MaxLength(1000)]
+    public string Message { get; set; } = string.Empty;
+
+    /// <summary>The phase from which the user force-advanced.</summary>
+    [Required]
+    [MaxLength(50)]
+    public string SkippedFromPhase { get; set; } = string.Empty;
+
+    /// <summary>The phase the user advanced to.</summary>
+    [Required]
+    [MaxLength(50)]
+    public string AdvancedToPhase { get; set; } = string.Empty;
+
+    /// <summary>When the forced advance occurred (UTC).</summary>
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>User who performed the force advance.</summary>
+    [MaxLength(200)]
+    public string CreatedBy { get; set; } = string.Empty;
+
+    /// <summary>Whether this deferred item has been resolved.</summary>
+    public bool IsResolved { get; set; }
+
+    /// <summary>When the item was resolved (UTC).</summary>
+    public DateTime? ResolvedAt { get; set; }
+
+    /// <summary>User who resolved the item.</summary>
+    [MaxLength(200)]
+    public string? ResolvedBy { get; set; }
+
+    // Navigation
+    public RegisteredSystem RegisteredSystem { get; set; } = null!;
+}

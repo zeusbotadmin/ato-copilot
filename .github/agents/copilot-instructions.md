@@ -67,6 +67,8 @@ Auto-generated from all feature plans. Last updated: 2026-02-21
 - N/A (help content is static, embedded in component code) (032-dashboard-documentation)
 - C# 13 / .NET 9.0 (backend), TypeScript 5.7 (dashboard) + ASP.NET Core, Entity Framework Core, Azure.Identity, Azure.ResourceManager.ResourceGraph (new for US8), React 19, Vite 6.0, Tailwind CSS 3.4 (033-boundary-scoped-model)
 - SQL Server (production), SQLite (development) via EF Core (033-boundary-scoped-model)
+- TypeScript 5.7 / React 19 / C# 13 (.NET 9.0 — backend, no changes expected) + React 19, react-router-dom 7, axios 1.7, react-markdown (new), remark-gfm (new), react-syntax-highlighter (new) (034-dashboard-chat)
+- Browser localStorage (conversations); no server-side DB changes (034-dashboard-chat)
 
 - C# 13 / .NET 9.0 + Azure.Identity 1.13, Azure.ResourceManager 1.13, Microsoft.Extensions.AI 9.4-preview, Microsoft.EntityFrameworkCore 9.0, Serilog 4.2, xUnit 2.9, FluentAssertions 7.0, Moq 4.20 (001-core-compliance)
 
@@ -86,9 +88,9 @@ dotnet build Ato.Copilot.sln [ONLY COMMANDS FOR ACTIVE TECHNOLOGIES][ONLY COMMAN
 C# .NET 9: Follow standard conventions
 
 ## Recent Changes
+- 034-dashboard-chat: Added TypeScript 5.7 / React 19 / C# 13 (.NET 9.0 — backend, no changes expected) + React 19, react-router-dom 7, axios 1.7, react-markdown (new), remark-gfm (new), react-syntax-highlighter (new)
 - 033-boundary-scoped-model: Added C# 13 / .NET 9.0 (backend), TypeScript 5.7 (dashboard) + ASP.NET Core, Entity Framework Core, Azure.Identity, Azure.ResourceManager.ResourceGraph (new for US8), React 19, Vite 6.0, Tailwind CSS 3.4
 - 032-dashboard-documentation: Added TypeScript 5.7 (frontend), C# 13 / .NET 9.0 (backend — no changes expected) + React 19, Tailwind CSS 3.4, Vite 6.0, React Router 7.0
-- 031-implementation-roadmap: Added C# 13 / .NET 9.0 + ASP.NET Core 9.0, EF Core 9.0 (SQL Server), Azure OpenAI (effort estimation), React 19, TypeScript 5, Recharts 2, Tailwind CSS 3
 
 
 <!-- MANUAL ADDITIONS START -->

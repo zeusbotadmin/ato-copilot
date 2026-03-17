@@ -301,10 +301,18 @@ public class DashboardService
             : 0;
 
         // Active deviations (Feature 035)
-        var activeDeviations = await _db.Deviations
-            .CountAsync(d => d.RegisteredSystemId == systemId
-                && (d.Status == DeviationStatus.Pending || d.Status == DeviationStatus.Approved),
-                cancellationToken);
+        int activeDeviations;
+        try
+        {
+            activeDeviations = await _db.Deviations
+                .CountAsync(d => d.RegisteredSystemId == systemId
+                    && (d.Status == DeviationStatus.Pending || d.Status == DeviationStatus.Approved),
+                    cancellationToken);
+        }
+        catch (Microsoft.Data.SqlClient.SqlException)
+        {
+            activeDeviations = 0;
+        }
 
         // RMF phase progress
         var currentPhaseOrdinal = (int)system.CurrentRmfStep;

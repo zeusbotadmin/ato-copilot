@@ -535,57 +535,61 @@ public class TodoService
 
     private async Task AddDeviationItems(List<TodoItemDto> items, string systemId, CancellationToken ct)
     {
-        var pendingCount = await _db.Deviations
-            .CountAsync(d => d.RegisteredSystemId == systemId && d.Status == DeviationStatus.Pending, ct);
-
-        if (pendingCount > 0)
+        try
         {
-            items.Add(new TodoItemDto
+            var pendingCount = await _db.Deviations
+                .CountAsync(d => d.RegisteredSystemId == systemId && d.Status == DeviationStatus.Pending, ct);
+
+            if (pendingCount > 0)
             {
-                Id = "deviation-pending",
-                Label = $"Review {pendingCount} pending deviation request{(pendingCount > 1 ? "s" : "")}",
-                Detail = "Deviation requests awaiting ISSM/AO review",
-                Category = "deviation",
-                Prompt = $"Show pending deviation requests for {_systemName}",
-                Link = $"/systems/{systemId}/deviations",
-            });
-        }
+                items.Add(new TodoItemDto
+                {
+                    Id = "deviation-pending",
+                    Label = $"Review {pendingCount} pending deviation request{(pendingCount > 1 ? "s" : "")}",
+                    Detail = "Deviation requests awaiting ISSM/AO review",
+                    Category = "deviation",
+                    Prompt = $"Show pending deviation requests for {_systemName}",
+                    Link = $"/systems/{systemId}/deviations",
+                });
+            }
 
-        var expiringCount = await _db.Deviations
-            .CountAsync(d => d.RegisteredSystemId == systemId
-                && d.Status == DeviationStatus.Approved
-                && d.ExpirationDate <= DateTime.UtcNow.AddDays(30), ct);
+            var expiringCount = await _db.Deviations
+                .CountAsync(d => d.RegisteredSystemId == systemId
+                    && d.Status == DeviationStatus.Approved
+                    && d.ExpirationDate <= DateTime.UtcNow.AddDays(30), ct);
 
-        if (expiringCount > 0)
-        {
-            items.Add(new TodoItemDto
+            if (expiringCount > 0)
             {
-                Id = "deviation-expiring",
-                Label = $"Renew {expiringCount} expiring deviation{(expiringCount > 1 ? "s" : "")}",
-                Detail = "Approved deviations expiring within 30 days",
-                Category = "deviation",
-                Prompt = $"Show deviations expiring soon for {_systemName} and help me extend them",
-                Link = $"/systems/{systemId}/deviations",
-            });
-        }
+                items.Add(new TodoItemDto
+                {
+                    Id = "deviation-expiring",
+                    Label = $"Renew {expiringCount} expiring deviation{(expiringCount > 1 ? "s" : "")}",
+                    Detail = "Approved deviations expiring within 30 days",
+                    Category = "deviation",
+                    Prompt = $"Show deviations expiring soon for {_systemName} and help me extend them",
+                    Link = $"/systems/{systemId}/deviations",
+                });
+            }
 
-        var catIAoCount = await _db.Deviations
-            .CountAsync(d => d.RegisteredSystemId == systemId
-                && d.Status == DeviationStatus.Pending
-                && d.CatSeverity == CatSeverity.CatI, ct);
+            var catIAoCount = await _db.Deviations
+                .CountAsync(d => d.RegisteredSystemId == systemId
+                    && d.Status == DeviationStatus.Pending
+                    && d.CatSeverity == CatSeverity.CatI, ct);
 
-        if (catIAoCount > 0)
-        {
-            items.Add(new TodoItemDto
+            if (catIAoCount > 0)
             {
-                Id = "deviation-cat-i-ao",
-                Label = $"{catIAoCount} CAT I deviation{(catIAoCount > 1 ? "s" : "")} require your approval",
-                Detail = "CAT I deviations require both ISSM recommendation and AO approval",
-                Category = "deviation",
-                Prompt = $"Show CAT I deviation requests for {_systemName} that need AO approval",
-                Link = $"/systems/{systemId}/deviations",
-            });
+                items.Add(new TodoItemDto
+                {
+                    Id = "deviation-cat-i-ao",
+                    Label = $"{catIAoCount} CAT I deviation{(catIAoCount > 1 ? "s" : "")} require your approval",
+                    Detail = "CAT I deviations require both ISSM recommendation and AO approval",
+                    Category = "deviation",
+                    Prompt = $"Show CAT I deviation requests for {_systemName} that need AO approval",
+                    Link = $"/systems/{systemId}/deviations",
+                });
+            }
         }
+        catch (Microsoft.Data.SqlClient.SqlException) { /* Deviations table may not exist yet */ }
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -614,23 +618,27 @@ public class TodoService
         }
 
         // Deviations without evidence
-        var devNoEvidence = await _db.Deviations
-            .CountAsync(d => d.RegisteredSystemId == systemId
-                && d.Status == DeviationStatus.Approved
-                && (d.EvidenceReferences == null || d.EvidenceReferences == "[]"), ct);
-
-        if (devNoEvidence > 0)
+        try
         {
-            items.Add(new TodoItemDto
+            var devNoEvidence = await _db.Deviations
+                .CountAsync(d => d.RegisteredSystemId == systemId
+                    && d.Status == DeviationStatus.Approved
+                    && (d.EvidenceReferences == null || d.EvidenceReferences == "[]"), ct);
+
+            if (devNoEvidence > 0)
             {
-                Id = "outstanding-deviation-evidence",
-                Label = $"{devNoEvidence} deviation{(devNoEvidence > 1 ? "s" : "")} without evidence",
-                Detail = "Approved deviations should have supporting evidence attached",
-                Category = "outstanding-info",
-                Prompt = $"Show deviations for {_systemName} that are missing evidence",
-                Link = $"/systems/{systemId}/deviations",
-            });
+                items.Add(new TodoItemDto
+                {
+                    Id = "outstanding-deviation-evidence",
+                    Label = $"{devNoEvidence} deviation{(devNoEvidence > 1 ? "s" : "")} without evidence",
+                    Detail = "Approved deviations should have supporting evidence attached",
+                    Category = "outstanding-info",
+                    Prompt = $"Show deviations for {_systemName} that are missing evidence",
+                    Link = $"/systems/{systemId}/deviations",
+                });
+            }
         }
+        catch (Microsoft.Data.SqlClient.SqlException) { /* Deviations table may not exist yet */ }
 
         // Authorization decision missing expiration
         var authNoExpiry = await _db.AuthorizationDecisions

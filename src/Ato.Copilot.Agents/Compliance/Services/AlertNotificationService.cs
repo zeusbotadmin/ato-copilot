@@ -94,11 +94,21 @@ public class AlertNotificationService : IAlertNotificationService
             .ToListAsync(cancellationToken);
 
         // Deviation digest section (Feature 035)
-        var pendingDeviations = await db.Deviations
-            .CountAsync(d => d.Status == DeviationStatus.Pending, cancellationToken);
-        var expiringDeviations = await db.Deviations
-            .CountAsync(d => d.Status == DeviationStatus.Approved
-                && d.ExpirationDate <= DateTime.UtcNow.AddDays(30), cancellationToken);
+        int pendingDeviations;
+        int expiringDeviations;
+        try
+        {
+            pendingDeviations = await db.Deviations
+                .CountAsync(d => d.Status == DeviationStatus.Pending, cancellationToken);
+            expiringDeviations = await db.Deviations
+                .CountAsync(d => d.Status == DeviationStatus.Approved
+                    && d.ExpirationDate <= DateTime.UtcNow.AddDays(30), cancellationToken);
+        }
+        catch (Microsoft.Data.SqlClient.SqlException)
+        {
+            pendingDeviations = 0;
+            expiringDeviations = 0;
+        }
 
         if (alerts.Count == 0 && pendingDeviations == 0 && expiringDeviations == 0) return;
 

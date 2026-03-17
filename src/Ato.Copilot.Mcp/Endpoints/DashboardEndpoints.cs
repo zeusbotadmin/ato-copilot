@@ -1690,10 +1690,18 @@ public static class DashboardEndpoints
                     .ToListAsync(ct);
 
                 // Active waivers (Feature 035)
-                var activeWaiverCount = await context.Deviations
-                    .CountAsync(d => d.RegisteredSystemId == systemId
-                        && d.DeviationType == DeviationType.Waiver
-                        && (d.Status == DeviationStatus.Pending || d.Status == DeviationStatus.Approved), ct);
+                int activeWaiverCount;
+                try
+                {
+                    activeWaiverCount = await context.Deviations
+                        .CountAsync(d => d.RegisteredSystemId == systemId
+                            && d.DeviationType == DeviationType.Waiver
+                            && (d.Status == DeviationStatus.Pending || d.Status == DeviationStatus.Approved), ct);
+                }
+                catch (Microsoft.Data.SqlClient.SqlException)
+                {
+                    activeWaiverCount = 0;
+                }
 
                 // Narrative governance
                 var narrativeStatuses = await context.ControlImplementations
@@ -1956,12 +1964,20 @@ public static class DashboardEndpoints
                 .Select(f => f.DeviationId!)
                 .Distinct()
                 .ToList();
-            var deviationTypes = findingDeviationIds.Count > 0
-                ? await context.Deviations
-                    .Where(d => findingDeviationIds.Contains(d.Id))
-                    .Select(d => new { d.Id, Type = d.DeviationType.ToString() })
-                    .ToDictionaryAsync(d => d.Id, d => d.Type, ct)
-                : new Dictionary<string, string>();
+            Dictionary<string, string> deviationTypes;
+            try
+            {
+                deviationTypes = findingDeviationIds.Count > 0
+                    ? await context.Deviations
+                        .Where(d => findingDeviationIds.Contains(d.Id))
+                        .Select(d => new { d.Id, Type = d.DeviationType.ToString() })
+                        .ToDictionaryAsync(d => d.Id, d => d.Type, ct)
+                    : new Dictionary<string, string>();
+            }
+            catch (Microsoft.Data.SqlClient.SqlException)
+            {
+                deviationTypes = new Dictionary<string, string>();
+            }
 
             var findingDtos = assessment.Findings
                 .OrderBy(f => f.ControlId)

@@ -3190,7 +3190,7 @@ public static class DashboardEndpoints
             if (!string.IsNullOrEmpty(systemId))
             {
                 var boardIds = await context.RemediationBoards
-                    .Where(b => b.SubscriptionId == systemId || b.AssessmentId != null)
+                    .Where(b => b.SubscriptionId == systemId)
                     .Select(b => b.Id)
                     .ToListAsync(ct);
                 // Also include tasks linked to POA&M items for this system
@@ -3296,7 +3296,7 @@ public static class DashboardEndpoints
             if (!string.IsNullOrEmpty(systemId))
             {
                 var boardIds = await context.RemediationBoards
-                    .Where(b => b.SubscriptionId == systemId || b.AssessmentId != null)
+                    .Where(b => b.SubscriptionId == systemId)
                     .Select(b => b.Id)
                     .ToListAsync(ct);
                 // Also include tasks linked to POA&M items for this system

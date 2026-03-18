@@ -611,6 +611,14 @@ export default function Documents() {
 
   return (
     <>
+      {/* Header */}
+      <div className="mb-6">
+        <h2 className="text-2xl font-bold text-gray-900">Documents</h2>
+        <p className="mt-1 text-sm text-gray-500">
+          Authorization package artifacts, SSP sections, narrative governance, privacy documents, and export history.
+        </p>
+      </div>
+
       {/* Phase indicator */}
       <div className="mb-6 flex items-center gap-2">
         <span className="text-xs text-gray-500">Current Phase:</span>

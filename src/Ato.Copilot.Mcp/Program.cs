@@ -595,6 +595,17 @@ async Task EnsureSchemaAdditionsAsync(AtoCopilotContext db, Microsoft.Extensions
 
         IF COL_LENGTH('Findings', 'DeviationId') IS NULL
             ALTER TABLE Findings ADD DeviationId NVARCHAR(450) NULL;
+
+        -- Feature 036: Make RegisteredSystemId nullable for org-wide components
+        IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('SystemComponents') AND name = 'RegisteredSystemId' AND is_nullable = 0)
+            ALTER TABLE SystemComponents ALTER COLUMN RegisteredSystemId NVARCHAR(36) NULL;
+
+        -- Person fields on SystemComponents
+        IF COL_LENGTH('SystemComponents', 'PersonName') IS NULL
+            ALTER TABLE SystemComponents ADD PersonName NVARCHAR(200) NULL;
+
+        IF COL_LENGTH('SystemComponents', 'Email') IS NULL
+            ALTER TABLE SystemComponents ADD Email NVARCHAR(200) NULL;
         """;
 
     try
@@ -605,6 +616,92 @@ async Task EnsureSchemaAdditionsAsync(AtoCopilotContext db, Microsoft.Extensions
     catch (Exception ex)
     {
         logger.LogWarning(ex, "Could not apply schema additions — non-fatal");
+    }
+
+    // Feature 036: Migrate existing system-scoped components to org-wide assignments
+    try
+    {
+        var componentsToMigrate = await db.SystemComponents
+            .Where(c => c.RegisteredSystemId != null)
+            .Where(c => !db.ComponentSystemAssignments.Any(a => a.SystemComponentId == c.Id && a.RegisteredSystemId == c.RegisteredSystemId))
+            .ToListAsync(ct);
+
+        if (componentsToMigrate.Count > 0)
+        {
+            foreach (var comp in componentsToMigrate)
+            {
+                db.ComponentSystemAssignments.Add(new Ato.Copilot.Core.Models.Compliance.ComponentSystemAssignment
+                {
+                    SystemComponentId = comp.Id,
+                    RegisteredSystemId = comp.RegisteredSystemId!,
+                    AuthorizationBoundaryDefinitionId = comp.AuthorizationBoundaryDefinitionId,
+                    CreatedBy = "system-migration",
+                });
+                comp.RegisteredSystemId = null;
+            }
+
+            await db.SaveChangesAsync(ct);
+            logger.LogInformation("Migrated {Count} system-scoped components to org-wide assignments", componentsToMigrate.Count);
+        }
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "Could not migrate system-scoped components — non-fatal");
+    }
+
+    // Feature 037: SSP Document Export tables
+    const string sspExportSql = """
+        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'SspExports')
+        CREATE TABLE SspExports (
+            Id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWSEQUENTIALID(),
+            SystemId NVARCHAR(36) NOT NULL,
+            Format NVARCHAR(10) NOT NULL,
+            Status NVARCHAR(20) NOT NULL DEFAULT 'Pending',
+            FilePath NVARCHAR(500) NULL,
+            FileSize BIGINT NULL,
+            ContentHash NVARCHAR(128) NULL,
+            TemplateId UNIQUEIDENTIFIER NULL,
+            GeneratedBy NVARCHAR(200) NOT NULL,
+            GeneratedAt DATETIMEOFFSET NOT NULL DEFAULT SYSDATETIMEOFFSET(),
+            CompletedAt DATETIMEOFFSET NULL,
+            ExpiresAt DATETIMEOFFSET NOT NULL,
+            ErrorMessage NVARCHAR(2000) NULL,
+            ControlCount INT NULL
+        );
+
+        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_SspExports_SystemId_GeneratedAt')
+            CREATE INDEX IX_SspExports_SystemId_GeneratedAt ON SspExports (SystemId, GeneratedAt DESC);
+
+        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_SspExports_ExpiresAt')
+            CREATE INDEX IX_SspExports_ExpiresAt ON SspExports (ExpiresAt);
+
+        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'SspTemplates')
+        CREATE TABLE SspTemplates (
+            Id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWSEQUENTIALID(),
+            Name NVARCHAR(200) NOT NULL,
+            Description NVARCHAR(1000) NULL,
+            FilePath NVARCHAR(500) NOT NULL,
+            FileSize BIGINT NOT NULL,
+            MergeFields NVARCHAR(MAX) NULL,
+            IsDefault BIT NOT NULL DEFAULT 0,
+            IsActive BIT NOT NULL DEFAULT 1,
+            UploadedBy NVARCHAR(200) NOT NULL,
+            UploadedAt DATETIMEOFFSET NOT NULL DEFAULT SYSDATETIMEOFFSET(),
+            UpdatedAt DATETIMEOFFSET NULL
+        );
+
+        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_SspTemplates_IsActive_Name')
+            CREATE INDEX IX_SspTemplates_IsActive_Name ON SspTemplates (IsActive, Name);
+        """;
+
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(sspExportSql, ct);
+        logger.LogInformation("Verified SSP Export schema (Feature 037)");
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "Could not apply SSP Export schema — non-fatal");
     }
 }
 
@@ -636,7 +733,13 @@ void RegisterCoreServices(IServiceCollection services, IConfiguration configurat
     services.AddScoped<Ato.Copilot.Core.Services.TodoService>();
     services.AddScoped<Ato.Copilot.Core.Services.CapabilityService>();
     services.AddScoped<Ato.Copilot.Core.Services.ComponentService>();
-    services.AddSingleton<Ato.Copilot.Core.Services.NarrativeTemplateService>();
+    services.AddSingleton<Ato.Copilot.Core.Services.NarrativeTemplateService>(sp =>
+    {
+        var chatClient = sp.GetService<Microsoft.Extensions.AI.IChatClient>();
+        var aiOptions = sp.GetService<Microsoft.Extensions.Options.IOptions<Ato.Copilot.Core.Configuration.AzureAiOptions>>()?.Value;
+        var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<Ato.Copilot.Core.Services.NarrativeTemplateService>>();
+        return new Ato.Copilot.Core.Services.NarrativeTemplateService(chatClient, aiOptions, logger);
+    });
     services.AddSingleton<Ato.Copilot.Core.Services.ComplianceTrendSnapshotService>();
     services.AddHostedService(sp => sp.GetRequiredService<Ato.Copilot.Core.Services.ComplianceTrendSnapshotService>());
 
@@ -650,6 +753,18 @@ void RegisterCoreServices(IServiceCollection services, IConfiguration configurat
     // Deviation services (Feature 035)
     services.AddScoped<Ato.Copilot.Core.Interfaces.Compliance.IDeviationService, Ato.Copilot.Core.Services.DeviationService>();
     services.AddHostedService<Ato.Copilot.Agents.Compliance.Services.DeviationExpirationService>();
+
+    // SSP Export services (Feature 037)
+    services.Configure<Ato.Copilot.Core.Configuration.ExportSettings>(
+        configuration.GetSection(Ato.Copilot.Core.Configuration.ExportSettings.SectionName));
+    services.AddSingleton(System.Threading.Channels.Channel.CreateBounded<Ato.Copilot.Core.Dtos.Dashboard.SspExportJob>(
+        new System.Threading.Channels.BoundedChannelOptions(100) { FullMode = System.Threading.Channels.BoundedChannelFullMode.Wait }));
+    services.AddScoped<Ato.Copilot.Core.Interfaces.Compliance.ISspExportService,
+        Ato.Copilot.Agents.Compliance.Services.SspExportService>();
+    services.AddSingleton<Ato.Copilot.Core.Interfaces.Compliance.ISspExportNotifier,
+        Ato.Copilot.Mcp.Services.SignalRSspExportNotifier>();
+    services.AddHostedService<Ato.Copilot.Agents.Compliance.Services.SspExportBackgroundService>();
+    services.AddHostedService<Ato.Copilot.Agents.Compliance.Services.SspExportRetentionService>();
 }
 
 // ────────────────────────────────────────────────────────────────

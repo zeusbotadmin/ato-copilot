@@ -340,14 +340,181 @@ public static class DashboardEndpoints
             })
             .WithName("GetGapAnalysis");
 
-        // ─── Components (US5) ────────────────────────────────────────────────
+        // ─── Org-Wide Component Library (Feature 036) ────────────────────────
+        group.MapGet("/components", async (
+                [AsParameters] OrgComponentQuery query,
+                ComponentService compService,
+                CancellationToken ct) =>
+            {
+                var result = await compService.GetAllComponentsAsync(query, ct);
+                return Results.Ok(result);
+            })
+            .WithName("GetAllComponents");
+
+        group.MapGet("/components/{componentId}", async (
+                string componentId,
+                ComponentService compService,
+                CancellationToken ct) =>
+            {
+                var result = await compService.GetComponentByIdAsync(componentId, ct);
+                return result is not null
+                    ? Results.Ok(result)
+                    : Results.NotFound(new ErrorResponse
+                    {
+                        Error = "Component not found",
+                        ErrorCode = "COMPONENT_NOT_FOUND",
+                        Suggestion = "Check the component ID and try again",
+                    });
+            })
+            .WithName("GetComponentById");
+
+        group.MapPost("/components", async (
+                CreateComponentRequest request,
+                ComponentService compService,
+                CancellationToken ct) =>
+            {
+                var result = await compService.CreateOrgComponentAsync(request, "dashboard-user", ct);
+                return Results.Created($"/api/dashboard/components/{result.Id}", result);
+            })
+            .WithName("CreateOrgComponent");
+
+        group.MapPut("/components/{componentId}", async (
+                string componentId,
+                CreateComponentRequest request,
+                ComponentService compService,
+                CancellationToken ct) =>
+            {
+                var result = await compService.UpdateOrgComponentAsync(componentId, request, ct);
+                return result is not null
+                    ? Results.Ok(result)
+                    : Results.NotFound(new ErrorResponse
+                    {
+                        Error = "Component not found",
+                        ErrorCode = "COMPONENT_NOT_FOUND",
+                        Suggestion = "Check the component ID and try again",
+                    });
+            })
+            .WithName("UpdateOrgComponent");
+
+        group.MapDelete("/components/{componentId}", async (
+                string componentId,
+                ComponentService compService,
+                CancellationToken ct) =>
+            {
+                var result = await compService.DeleteComponentAsync(componentId, "dashboard-user", ct);
+                return result is not null
+                    ? Results.Ok(result)
+                    : Results.NotFound(new ErrorResponse
+                    {
+                        Error = "Component not found",
+                        ErrorCode = "COMPONENT_NOT_FOUND",
+                        Suggestion = "Check the component ID and try again",
+                    });
+            })
+            .WithName("DeleteOrgComponent");
+
+        group.MapPost("/components/{componentId}/assignments", async (
+                string componentId,
+                AssignComponentRequest request,
+                ComponentService compService,
+                CancellationToken ct) =>
+            {
+                var (assignment, error) = await compService.AssignToSystemAsync(componentId, request, "dashboard-user", ct);
+                if (error == "Component not found" || error == "System not found")
+                    return Results.NotFound(new ErrorResponse { Error = error, ErrorCode = "NOT_FOUND" });
+                if (error == "Assignment already exists")
+                    return Results.Conflict(new ErrorResponse { Error = error, ErrorCode = "DUPLICATE_ASSIGNMENT" });
+                return Results.Created($"/api/dashboard/components/{componentId}/assignments/{assignment!.Id}", assignment);
+            })
+            .WithName("AssignComponentToSystem");
+
+        group.MapDelete("/components/{componentId}/assignments/{assignmentId}", async (
+                string componentId,
+                string assignmentId,
+                ComponentService compService,
+                CancellationToken ct) =>
+            {
+                var result = await compService.RemoveAssignmentAsync(componentId, assignmentId, ct);
+                return result
+                    ? Results.NoContent()
+                    : Results.NotFound(new ErrorResponse
+                    {
+                        Error = "Assignment not found",
+                        ErrorCode = "ASSIGNMENT_NOT_FOUND",
+                    });
+            })
+            .WithName("RemoveComponentAssignment");
+
+        group.MapGet("/components/{componentId}/impact-preview", async (
+                string componentId,
+                ComponentService compService,
+                CancellationToken ct) =>
+            {
+                var result = await compService.GetComponentImpactPreviewAsync(componentId, ct);
+                return result is not null
+                    ? Results.Ok(result)
+                    : Results.NotFound(new ErrorResponse
+                    {
+                        Error = "Component not found",
+                        ErrorCode = "COMPONENT_NOT_FOUND",
+                        Suggestion = "Check the component ID and try again",
+                    });
+            })
+            .WithName("GetComponentImpactPreview");
+
+        // ─── AI Narrative Regeneration ─────────────────────────────────────────
+        group.MapPost("/systems/{systemId}/controls/{controlId}/regenerate-ai", async (
+                string systemId,
+                string controlId,
+                CapabilityService capService,
+                CancellationToken ct) =>
+            {
+                var (narrative, errorCode) = await capService.RegenerateNarrativeWithAiAsync(
+                    systemId, controlId, "dashboard-user", ct);
+                return errorCode switch
+                {
+                    "NOT_FOUND" => Results.NotFound(new ErrorResponse
+                    {
+                        Error = "Control implementation not found",
+                        ErrorCode = "CONTROL_NOT_FOUND",
+                    }),
+                    "NO_CAPABILITY" => Results.BadRequest(new ErrorResponse
+                    {
+                        Error = "No capability linked to this control implementation",
+                        ErrorCode = "NO_CAPABILITY",
+                    }),
+                    "AI_NOT_ENABLED" => Results.StatusCode(503),
+                    _ => Results.Ok(new { narrative }),
+                };
+            })
+            .WithName("RegenerateNarrativeWithAi");
+
+        // ─── Capability Coverage (US5) ────────────────────────────────────────
+        group.MapGet("/systems/{systemId}/capability-coverage", async (
+                string systemId,
+                CapabilityService capService,
+                CancellationToken ct) =>
+            {
+                var result = await capService.GetCapabilityCoverageAsync(systemId, ct);
+                return result is not null
+                    ? Results.Ok(result)
+                    : Results.NotFound(new ErrorResponse
+                    {
+                        Error = "System not found",
+                        ErrorCode = "SYSTEM_NOT_FOUND",
+                        Suggestion = "Check the system ID and try again",
+                    });
+            })
+            .WithName("GetCapabilityCoverage");
+
+        // ─── Components — System-Scoped (US5, modified by Feature 036) ───────
         group.MapGet("/systems/{systemId}/components", async (
                 string systemId,
                 [AsParameters] ComponentQuery query,
                 ComponentService compService,
                 CancellationToken ct) =>
             {
-                var result = await compService.GetComponentsAsync(systemId, query, ct);
+                var result = await compService.GetSystemScopedComponentsAsync(systemId, query, ct);
                 return result is not null
                     ? Results.Ok(result)
                     : Results.NotFound(new ErrorResponse
@@ -389,75 +556,6 @@ public static class DashboardEndpoints
                 return Results.Created($"/api/dashboard/components/{result.Id}", result);
             })
             .WithName("CreateComponent");
-
-        group.MapPut("/components/{id}", async (
-                string id,
-                CreateComponentRequest request,
-                ComponentService compService,
-                AtoCopilotContext context,
-                CancellationToken ct) =>
-            {
-                var result = await compService.UpdateComponentAsync(id, request, ct);
-                if (result is null)
-                    return Results.NotFound(new ErrorResponse
-                    {
-                        Error = "Component not found",
-                        ErrorCode = "COMPONENT_NOT_FOUND",
-                        Suggestion = "Check the component ID and try again",
-                    });
-
-                var comp = await context.SystemComponents.FindAsync([id], ct);
-                if (comp != null)
-                {
-                    context.DashboardActivities.Add(new DashboardActivity
-                    {
-                        RegisteredSystemId = comp.RegisteredSystemId,
-                        EventType = "ComponentUpdated",
-                        Actor = "dashboard-user",
-                        Summary = $"Component '{request.Name}' updated",
-                        RelatedEntityType = "SystemComponent",
-                        RelatedEntityId = id,
-                    });
-                    await context.SaveChangesAsync(ct);
-                }
-
-                return Results.Ok(result);
-            })
-            .WithName("UpdateComponent");
-
-        group.MapDelete("/components/{id}", async (
-                string id,
-                ComponentService compService,
-                AtoCopilotContext context,
-                CancellationToken ct) =>
-            {
-                var comp = await context.SystemComponents.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id, ct);
-                var result = await compService.DeleteComponentAsync(id, "system", ct);
-                if (result is null)
-                    return Results.NotFound(new ErrorResponse
-                    {
-                        Error = "Component not found",
-                        ErrorCode = "COMPONENT_NOT_FOUND",
-                        Suggestion = "Check the component ID and try again",
-                    });
-
-                if (comp != null)
-                {
-                    context.DashboardActivities.Add(new DashboardActivity
-                    {
-                        RegisteredSystemId = comp.RegisteredSystemId,
-                        EventType = "ComponentDeleted",
-                        Actor = "dashboard-user",
-                        Summary = $"Component '{comp.Name}' deleted",
-                        RelatedEntityType = "SystemComponent",
-                        RelatedEntityId = id,
-                    });
-                    await context.SaveChangesAsync(ct);
-                }
-
-                return Results.Ok(result);
-            })
-            .WithName("DeleteComponent");
 
         // ─── AI Component Description ────────────────────────────────────────
         group.MapPost("/ai/component-description", async (
@@ -539,7 +637,6 @@ public static class DashboardEndpoints
         group.MapPost("/capabilities", async (
                 CreateCapabilityRequest request,
                 CapabilityService service,
-                AtoCopilotContext context,
                 CancellationToken ct) =>
             {
                 var result = await service.CreateCapabilityAsync(request, "system", ct);
@@ -550,16 +647,6 @@ public static class DashboardEndpoints
                         ErrorCode = "CAPABILITY_NAME_DUPLICATE",
                         Suggestion = "Use a unique name or update the existing capability",
                     });
-
-                context.DashboardActivities.Add(new DashboardActivity
-                {
-                    EventType = "CapabilityCreated",
-                    Actor = "dashboard-user",
-                    Summary = $"Security capability '{request.Name}' created",
-                    RelatedEntityType = "SecurityCapability",
-                    RelatedEntityId = result.Id,
-                });
-                await context.SaveChangesAsync(ct);
 
                 return Results.Created($"/api/dashboard/capabilities/{result.Id}", result);
             })
@@ -589,6 +676,23 @@ public static class DashboardEndpoints
                     });
             })
             .WithName("UpdateCapability");
+
+        group.MapGet("/capabilities/{id}/impact-preview", async (
+                string id,
+                CapabilityService service,
+                CancellationToken ct) =>
+            {
+                var result = await service.GetCapabilityImpactPreviewAsync(id, ct);
+                return result is not null
+                    ? Results.Ok(result)
+                    : Results.NotFound(new ErrorResponse
+                    {
+                        Error = "Capability not found",
+                        ErrorCode = "CAPABILITY_NOT_FOUND",
+                        Suggestion = "Check the capability ID and try again",
+                    });
+            })
+            .WithName("GetCapabilityImpactPreview");
 
         group.MapDelete("/capabilities/{id}", async (
                 string id,
@@ -968,6 +1072,16 @@ public static class DashboardEndpoints
                 return Results.Ok(new { items = resources, totalCount = resources.Count });
             })
             .WithName("GetBoundaryResources");
+
+        group.MapGet("/boundary-definitions/{id}/components", async (
+                string id,
+                ComponentService compService,
+                CancellationToken ct) =>
+            {
+                var items = await compService.GetComponentsByBoundaryAsync(id, ct);
+                return Results.Ok(new { items, totalCount = items.Count });
+            })
+            .WithName("GetBoundaryComponents");
 
         group.MapPost("/boundary-definitions/{id}/resources", async (
                 string id,
@@ -2434,6 +2548,84 @@ public static class DashboardEndpoints
 
         // ───────────── Narratives ─────────────────────────────────────────────
 
+        // List NIST controls that don't yet have a narrative for this system
+        app.MapGet("/api/dashboard/systems/{systemId}/available-controls", async (
+            string systemId,
+            string? search,
+            AtoCopilotContext context,
+            CancellationToken ct) =>
+        {
+            var existingControlIds = await context.ControlImplementations
+                .Where(ci => ci.RegisteredSystemId == systemId)
+                .Select(ci => ci.ControlId)
+                .ToListAsync(ct);
+
+            var query = context.NistControls.AsNoTracking().AsQueryable();
+
+            if (!string.IsNullOrEmpty(search))
+                query = query.Where(n => n.Id.Contains(search) || n.Title.Contains(search));
+
+            var controls = await query
+                .Where(n => !existingControlIds.Contains(n.Id))
+                .OrderBy(n => n.Family).ThenBy(n => n.Id)
+                .Select(n => new { n.Id, n.Family, n.Title })
+                .Take(200)
+                .ToListAsync(ct);
+
+            return Results.Ok(controls);
+        })
+        .WithName("ListAvailableControls");
+
+        // Create a new narrative (ControlImplementation) for a control
+        app.MapPost("/api/dashboard/systems/{systemId}/narratives", async (
+            string systemId,
+            CreateNarrativeRequest request,
+            AtoCopilotContext context,
+            CancellationToken ct) =>
+        {
+            // Validate the control exists
+            var control = await context.NistControls
+                .AsNoTracking()
+                .FirstOrDefaultAsync(n => n.Id == request.ControlId, ct);
+            if (control is null)
+                return Results.NotFound(new ErrorResponse { Error = "NIST control not found", ErrorCode = "CONTROL_NOT_FOUND" });
+
+            // Check for duplicate
+            var exists = await context.ControlImplementations
+                .AnyAsync(ci => ci.RegisteredSystemId == systemId && ci.ControlId == request.ControlId, ct);
+            if (exists)
+                return Results.Conflict(new ErrorResponse { Error = "Narrative already exists for this control", ErrorCode = "DUPLICATE" });
+
+            var now = DateTime.UtcNow;
+            var impl = new ControlImplementation
+            {
+                ControlId = request.ControlId,
+                RegisteredSystemId = systemId,
+                ImplementationStatus = Enum.TryParse<ImplementationStatus>(request.ImplementationStatus, true, out var s)
+                    ? s : ImplementationStatus.Planned,
+                ApprovalStatus = SspSectionStatus.Draft,
+                Narrative = request.Narrative,
+                AiSuggested = false,
+                AuthoredBy = "dashboard-user",
+                AuthoredAt = now,
+                CurrentVersion = 1,
+            };
+
+            context.ControlImplementations.Add(impl);
+            await context.SaveChangesAsync(ct);
+
+            return Results.Created($"/api/dashboard/systems/{systemId}/narratives", new
+            {
+                impl.Id,
+                impl.ControlId,
+                family = control.Family,
+                impl.Narrative,
+                implementationStatus = impl.ImplementationStatus.ToString(),
+                approvalStatus = impl.ApprovalStatus.ToString(),
+            });
+        })
+        .WithName("CreateNarrative");
+
         app.MapGet("/api/dashboard/systems/{systemId}/narratives", async (
             string systemId,
             string? family,
@@ -2533,6 +2725,28 @@ public static class DashboardEndpoints
             return Results.Ok(new { updatedCount = narratives.Count, controlIds = narratives.Select(n => n.ControlId).ToList() });
         })
         .WithName("BulkUpdateNarratives");
+
+        // ─── Save single narrative text ────────────────────────────────────
+        app.MapPatch("/api/dashboard/systems/{systemId}/controls/{controlId}/narrative", async (
+            string systemId,
+            string controlId,
+            SaveNarrativeRequest request,
+            AtoCopilotContext context,
+            CancellationToken ct) =>
+        {
+            var impl = await context.ControlImplementations
+                .FirstOrDefaultAsync(ci => ci.RegisteredSystemId == systemId && ci.ControlId == controlId, ct);
+            if (impl is null)
+                return Results.NotFound(new ErrorResponse { Error = "Control implementation not found", ErrorCode = "CONTROL_NOT_FOUND" });
+
+            impl.Narrative = request.Narrative;
+            impl.AiSuggested = false;
+            impl.ModifiedAt = DateTime.UtcNow;
+            await context.SaveChangesAsync(ct);
+
+            return Results.Ok(new { controlId, narrative = impl.Narrative });
+        })
+        .WithName("SaveNarrativeText");
 
         // ───────────── Deferred Prerequisites ─────────────────────────────────
 
@@ -3482,6 +3696,242 @@ public static class DashboardEndpoints
                 }
             })
             .WithName("ExtendDeviation");
+
+        // ─── SSP Export (Feature 037) ─────────────────────────────────────────
+
+        // T010: POST /systems/{systemId}/exports — enqueue SSP export
+        group.MapPost("/systems/{systemId}/exports", async (
+                string systemId,
+                CreateExportRequest body,
+                ISspExportService exportService,
+                HttpContext httpContext,
+                CancellationToken ct) =>
+            {
+                var format = body.Format?.ToLowerInvariant();
+                if (format is not ("docx" or "pdf" or "json"))
+                    return Results.BadRequest(new ErrorResponse
+                    {
+                        Error = "Invalid format",
+                        ErrorCode = "INVALID_FORMAT",
+                        Details = $"Format '{body.Format}' not supported.",
+                        Suggestion = "Use: docx, pdf, json",
+                    });
+
+                var userId = httpContext.User?.Identity?.Name ?? "dashboard-user";
+
+                try
+                {
+                    var export = await exportService.EnqueueExportAsync(systemId, format, body.TemplateId, userId, ct);
+                    return Results.Accepted($"/api/dashboard/systems/{systemId}/exports/{export.Id}", new ExportSummaryDto
+                    {
+                        ExportId = export.Id,
+                        Format = export.Format,
+                        Status = export.Status,
+                        GeneratedBy = export.GeneratedBy,
+                        GeneratedAt = export.GeneratedAt,
+                    });
+                }
+                catch (ArgumentException ex)
+                {
+                    return Results.BadRequest(new ErrorResponse
+                    {
+                        Error = ex.Message,
+                        ErrorCode = "VALIDATION_ERROR",
+                    });
+                }
+            })
+            .WithName("CreateSspExport");
+
+        // T014: GET /systems/{systemId}/exports — list exports
+        group.MapGet("/systems/{systemId}/exports", async (
+                string systemId,
+                string? format,
+                bool? includeFailed,
+                int? limit,
+                int? offset,
+                ISspExportService exportService,
+                CancellationToken ct) =>
+            {
+                var exports = await exportService.ListExportsAsync(
+                    systemId,
+                    includeFailed ?? false,
+                    Math.Clamp(limit ?? 25, 1, 100),
+                    Math.Max(offset ?? 0, 0),
+                    ct);
+                return Results.Ok(new { items = exports, totalCount = exports.Count });
+            })
+            .WithName("ListSspExports");
+
+        // T015: GET /systems/{systemId}/exports/{exportId} — get export detail
+        group.MapGet("/systems/{systemId}/exports/{exportId:guid}", async (
+                string systemId,
+                Guid exportId,
+                ISspExportService exportService,
+                CancellationToken ct) =>
+            {
+                var detail = await exportService.GetExportAsync(exportId, ct);
+                if (detail is null || detail.SystemId != systemId)
+                    return Results.NotFound(new ErrorResponse
+                    {
+                        Error = "Export not found",
+                        ErrorCode = "NOT_FOUND",
+                    });
+                return Results.Ok(detail);
+            })
+            .WithName("GetSspExport");
+
+        // T011: GET /systems/{systemId}/exports/{exportId}/download — download file
+        group.MapGet("/systems/{systemId}/exports/{exportId:guid}/download", async (
+                string systemId,
+                Guid exportId,
+                ISspExportService exportService,
+                CancellationToken ct) =>
+            {
+                var result = await exportService.GetExportFileStreamAsync(exportId, ct);
+                if (result is null)
+                    return Results.NotFound(new ErrorResponse
+                    {
+                        Error = "Export not found",
+                        ErrorCode = "NOT_FOUND",
+                    });
+
+                var (stream, fileName, contentType) = result.Value;
+                if (stream is null)
+                    return Results.NotFound(new ErrorResponse
+                    {
+                        Error = "Export file not ready or missing",
+                        ErrorCode = "EXPORT_NOT_READY",
+                        Suggestion = "Wait for the export to complete before downloading.",
+                    });
+
+                return Results.File(stream, contentType ?? "application/octet-stream", fileName);
+            })
+            .WithName("DownloadSspExport");
+
+        // ─── SSP Template Management (Feature 037 US4) ───────────────────────
+
+        // T022: POST /templates — upload custom DOCX template
+        group.MapPost("/templates", async (
+                HttpRequest request,
+                ISspExportService exportService,
+                HttpContext httpContext,
+                CancellationToken ct) =>
+            {
+                if (!request.HasFormContentType)
+                    return Results.BadRequest(new ErrorResponse
+                    {
+                        Error = "Request must be multipart/form-data",
+                        ErrorCode = "INVALID_CONTENT_TYPE",
+                    });
+
+                var form = await request.ReadFormAsync(ct);
+                var file = form.Files.GetFile("file");
+                var name = form["name"].ToString();
+
+                if (file is null || file.Length == 0)
+                    return Results.BadRequest(new ErrorResponse
+                    {
+                        Error = "File is required",
+                        ErrorCode = "MISSING_FILE",
+                    });
+
+                if (string.IsNullOrWhiteSpace(name))
+                    return Results.BadRequest(new ErrorResponse
+                    {
+                        Error = "Name is required",
+                        ErrorCode = "MISSING_NAME",
+                    });
+
+                var description = form["description"].ToString();
+                var userId = httpContext.User?.Identity?.Name ?? "dashboard-user";
+
+                try
+                {
+                    using var stream = file.OpenReadStream();
+                    var result = await exportService.UploadTemplateAsync(
+                        name,
+                        string.IsNullOrWhiteSpace(description) ? null : description,
+                        stream,
+                        file.FileName,
+                        userId,
+                        ct);
+                    return Results.Created($"/api/dashboard/templates/{result.Id}", result);
+                }
+                catch (ArgumentException ex)
+                {
+                    return Results.BadRequest(new ErrorResponse
+                    {
+                        Error = ex.Message,
+                        ErrorCode = "VALIDATION_ERROR",
+                    });
+                }
+            })
+            .WithName("UploadSspTemplate")
+            .DisableAntiforgery();
+
+        // T023: GET /templates — list templates with pagination
+        group.MapGet("/templates", async (
+                int? limit,
+                int? offset,
+                ISspExportService exportService,
+                CancellationToken ct) =>
+            {
+                var templates = await exportService.ListTemplatesAsync(
+                    Math.Clamp(limit ?? 25, 1, 100),
+                    Math.Max(offset ?? 0, 0),
+                    ct);
+                return Results.Ok(new { items = templates, totalCount = templates.Count });
+            })
+            .WithName("ListSspTemplates");
+
+        // T024: DELETE /templates/{templateId} — soft-delete template
+        group.MapDelete("/templates/{templateId:guid}", async (
+                Guid templateId,
+                HttpContext httpContext,
+                ISspExportService exportService,
+                CancellationToken ct) =>
+            {
+                var userId = httpContext.User?.Identity?.Name ?? "dashboard-user";
+                var deleted = await exportService.DeleteTemplateAsync(templateId, userId, ct);
+                return deleted ? Results.NoContent() : Results.NotFound(new ErrorResponse
+                {
+                    Error = "Template not found",
+                    ErrorCode = "NOT_FOUND",
+                });
+            })
+            .WithName("DeleteSspTemplate");
+
+        // T024a: PUT /templates/{templateId} — rename/update template
+        group.MapPut("/templates/{templateId:guid}", async (
+                Guid templateId,
+                UpdateTemplateRequest body,
+                HttpContext httpContext,
+                ISspExportService exportService,
+                CancellationToken ct) =>
+            {
+                try
+                {
+                    var userId = httpContext.User?.Identity?.Name ?? "dashboard-user";
+                    var result = await exportService.UpdateTemplateAsync(
+                        templateId, body.Name, body.Description, userId, ct);
+                    return result is not null
+                        ? Results.Ok(result)
+                        : Results.NotFound(new ErrorResponse
+                        {
+                            Error = "Template not found",
+                            ErrorCode = "NOT_FOUND",
+                        });
+                }
+                catch (ArgumentException ex)
+                {
+                    return Results.BadRequest(new ErrorResponse
+                    {
+                        Error = ex.Message,
+                        ErrorCode = "VALIDATION_ERROR",
+                    });
+                }
+            })
+            .WithName("UpdateSspTemplate");
 
         return app;
     }

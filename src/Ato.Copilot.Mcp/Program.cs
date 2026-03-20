@@ -792,6 +792,7 @@ void RegisterCoreServices(IServiceCollection services, IConfiguration configurat
     services.AddScoped<Ato.Copilot.Core.Services.TodoService>();
     services.AddScoped<Ato.Copilot.Core.Services.CapabilityService>();
     services.AddScoped<Ato.Copilot.Core.Services.ComponentService>();
+    services.AddScoped<Ato.Copilot.Core.Services.SystemCapabilityLinkService>();
     services.AddSingleton<Ato.Copilot.Core.Services.BoundaryLockService>();
     services.AddHostedService<Ato.Copilot.Core.Services.BoundaryMigrationService>();
     services.AddScoped<Ato.Copilot.Agents.Compliance.Services.EntraIdDiscoveryService>();

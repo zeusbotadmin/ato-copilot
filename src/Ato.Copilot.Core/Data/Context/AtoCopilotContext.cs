@@ -246,6 +246,11 @@ public class AtoCopilotContext : DbContext
     /// <summary>Per-boundary component assignments with scope status (In Scope / Excluded).</summary>
     public DbSet<BoundaryComponentAssignment> BoundaryComponentAssignments => Set<BoundaryComponentAssignment>();
 
+    // ─── System Capability Links (Feature 042) ──────────────────────────────
+
+    /// <summary>Many-to-many links between registered systems and security capabilities.</summary>
+    public DbSet<SystemCapabilityLink> SystemCapabilityLinks => Set<SystemCapabilityLink>();
+
     // ─── Deferred Prerequisites (Force-Advanced Gate Tracking) ───────────
 
     /// <summary>Prerequisites skipped during forced RMF phase advances.</summary>
@@ -2122,6 +2127,30 @@ public class AtoCopilotContext : DbContext
                 .WithMany(b => b.ComponentAssignments)
                 .HasForeignKey(e => e.AuthorizationBoundaryDefinitionId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ─── SystemCapabilityLink (Feature 042) ─────────────────────────────────
+        modelBuilder.Entity<SystemCapabilityLink>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasMaxLength(36);
+            entity.Property(e => e.RegisteredSystemId).HasMaxLength(36).IsRequired();
+            entity.Property(e => e.SecurityCapabilityId).HasMaxLength(36).IsRequired();
+            entity.Property(e => e.LinkedBy).HasMaxLength(200).IsRequired();
+
+            entity.HasIndex(e => new { e.RegisteredSystemId, e.SecurityCapabilityId })
+                .IsUnique()
+                .HasDatabaseName("IX_SCL_SystemCapability");
+
+            entity.HasOne(e => e.RegisteredSystem)
+                .WithMany()
+                .HasForeignKey(e => e.RegisteredSystemId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.SecurityCapability)
+                .WithMany()
+                .HasForeignKey(e => e.SecurityCapabilityId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         // ─── ComponentSystemAssignment (Feature 036) ─────────────────────────────

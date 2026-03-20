@@ -528,6 +528,95 @@ public static class DashboardEndpoints
             })
             .WithName("GetCapabilityCoverage");
 
+        // ─── Capability Links (Feature 042 — System Intake Wizard) ───────────
+        group.MapPost("/systems/{systemId}/capability-links", async (
+                string systemId,
+                LinkCapabilitiesRequest body,
+                SystemCapabilityLinkService linkService,
+                CancellationToken ct) =>
+            {
+                if (body.CapabilityIds is null || body.CapabilityIds.Count == 0)
+                    return Results.BadRequest(new ErrorResponse
+                    {
+                        Error = "At least one capability ID is required",
+                        ErrorCode = "INVALID_INPUT",
+                    });
+                try
+                {
+                    var (linkedCount, items) = await linkService.LinkCapabilitiesAsync(
+                        systemId, body.CapabilityIds, "dashboard-user", ct);
+                    return Results.Ok(new
+                    {
+                        linkedCount,
+                        items = items.Select(l => new
+                        {
+                            id = l.Id,
+                            systemId = l.RegisteredSystemId,
+                            capabilityId = l.SecurityCapabilityId,
+                            capabilityName = l.SecurityCapability?.Name,
+                            linkedAt = l.LinkedAt,
+                        }),
+                    });
+                }
+                catch (KeyNotFoundException)
+                {
+                    return Results.NotFound(new ErrorResponse
+                    {
+                        Error = "System not found",
+                        ErrorCode = "SYSTEM_NOT_FOUND",
+                    });
+                }
+                catch (ArgumentException ex)
+                {
+                    return Results.BadRequest(new ErrorResponse
+                    {
+                        Error = ex.Message,
+                        ErrorCode = "INVALID_CAPABILITY_IDS",
+                    });
+                }
+            })
+            .WithName("LinkCapabilities");
+
+        group.MapGet("/systems/{systemId}/capability-links", async (
+                string systemId,
+                SystemCapabilityLinkService linkService,
+                CancellationToken ct) =>
+            {
+                var links = await linkService.GetLinksForSystemAsync(systemId, ct);
+                return Results.Ok(new
+                {
+                    items = links.Select(l => new
+                    {
+                        id = l.Id,
+                        capabilityId = l.SecurityCapabilityId,
+                        capabilityName = l.SecurityCapability?.Name,
+                        provider = l.SecurityCapability?.Provider,
+                        category = l.SecurityCapability?.Category,
+                        implementationStatus = l.SecurityCapability?.ImplementationStatus.ToString(),
+                        linkedAt = l.LinkedAt,
+                    }),
+                    totalCount = links.Count,
+                });
+            })
+            .WithName("GetCapabilityLinks");
+
+        group.MapDelete("/systems/{systemId}/capability-links/{linkId}", async (
+                string systemId,
+                string linkId,
+                SystemCapabilityLinkService linkService,
+                CancellationToken ct) =>
+            {
+                var removed = await linkService.RemoveLinkAsync(systemId, linkId, ct);
+                return removed
+                    ? Results.Ok(new { deletedId = linkId, message = "Capability link removed" })
+                    : Results.NotFound(new ErrorResponse
+                    {
+                        Error = "Capability link not found",
+                        ErrorCode = "LINK_NOT_FOUND",
+                    });
+            })
+            .WithName("RemoveCapabilityLink");
+
         // ─── Components — System-Scoped (US5, modified by Feature 036) ───────
         group.MapGet("/systems/{systemId}/components", async (
                 string systemId,
@@ -5739,4 +5828,9 @@ public static class DashboardEndpoints
     private record AcquireLockRequest(
         string UserId,
         string UserDisplayName);
+
+    // ─── Feature 042: System Capability Link DTOs ───────────────────────────
+
+    private record LinkCapabilitiesRequest(
+        List<string> CapabilityIds);
 }

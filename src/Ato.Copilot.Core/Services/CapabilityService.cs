@@ -447,7 +447,24 @@ public class CapabilityService
         // Group by capability
         var capabilityGroups = mappings
             .GroupBy(m => m.SecurityCapabilityId)
-            .ToList();
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        // Also include capabilities linked via SystemCapabilityLink that have no mappings yet
+        var linkedCapIds = await _db.SystemCapabilityLinks
+            .Where(l => l.RegisteredSystemId == systemId)
+            .Select(l => l.SecurityCapabilityId)
+            .ToListAsync(cancellationToken);
+
+        var missingCapIds = linkedCapIds.Except(capabilityGroups.Keys).ToList();
+        if (missingCapIds.Count > 0)
+        {
+            var linkedCaps = await _db.SecurityCapabilities
+                .Where(c => missingCapIds.Contains(c.Id))
+                .AsNoTracking()
+                .ToListAsync(cancellationToken);
+            foreach (var lc in linkedCaps)
+                capabilityGroups[lc.Id] = new List<CapabilityControlMapping>();
+        }
 
         // Get all control implementations for this system
         var implementations = await _db.ControlImplementations
@@ -458,11 +475,29 @@ public class CapabilityService
 
         var capabilities = new List<CapabilityCoverageDto>();
 
-        foreach (var group in capabilityGroups)
+        foreach (var kvp in capabilityGroups)
         {
-            var cap = group.First().SecurityCapability;
-            var controlIds = group.Select(m => m.ControlId).Distinct().ToList();
-            var primaryRole = group.OrderByDescending(m => m.Role).First().Role;
+            var capId = kvp.Key;
+            var groupMappings = kvp.Value;
+
+            // Resolve the capability entity
+            SecurityCapability? cap;
+            if (groupMappings.Count > 0 && groupMappings[0].SecurityCapability is not null)
+            {
+                cap = groupMappings[0].SecurityCapability;
+            }
+            else
+            {
+                cap = await _db.SecurityCapabilities
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(c => c.Id == capId, cancellationToken);
+                if (cap is null) continue;
+            }
+
+            var controlIds = groupMappings.Select(m => m.ControlId).Distinct().ToList();
+            var primaryRole = groupMappings.Count > 0
+                ? groupMappings.OrderByDescending(m => m.Role).First().Role
+                : CapabilityMappingRole.Shared;
 
             // Narrative status
             int populated = 0, custom = 0, empty = 0, aiGenerated = 0;

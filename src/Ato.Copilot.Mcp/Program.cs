@@ -843,6 +843,10 @@ void RegisterCoreServices(IServiceCollection services, IConfiguration configurat
     // Feature 043: CSP Profile Service
     services.AddSingleton<Ato.Copilot.Mcp.Services.CspProfileService>();
 
+    // Feature 044: Org-Level Inheritance Service
+    services.AddScoped<Ato.Copilot.Core.Interfaces.Compliance.IOrgInheritanceService,
+        Ato.Copilot.Agents.Compliance.Services.OrgInheritanceService>();
+
     // Feature 041: Authorization Package generation pipeline
     services.AddSingleton(System.Threading.Channels.Channel.CreateBounded<Ato.Copilot.Core.Dtos.Dashboard.PackageExportJob>(
         new System.Threading.Channels.BoundedChannelOptions(20) { FullMode = System.Threading.Channels.BoundedChannelFullMode.Wait }));

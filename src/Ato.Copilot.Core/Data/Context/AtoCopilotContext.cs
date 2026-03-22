@@ -126,6 +126,9 @@ public class AtoCopilotContext : DbContext
     /// <summary>Immutable audit log for inheritance designation changes (Feature 043).</summary>
     public DbSet<InheritanceAuditEntry> InheritanceAuditEntries => Set<InheritanceAuditEntry>();
 
+    /// <summary>Org-level default inheritance designations derived from capabilities (Feature 044).</summary>
+    public DbSet<OrgInheritanceDefault> OrgInheritanceDefaults => Set<OrgInheritanceDefault>();
+
     /// <summary>Per-control implementation narratives for SSP authoring (Feature 015 US5).</summary>
     public DbSet<ControlImplementation> ControlImplementations => Set<ControlImplementation>();
 
@@ -1231,10 +1234,19 @@ public class AtoCopilotContext : DbContext
             entity.Property(e => e.CustomerResponsibility).HasMaxLength(2000);
             entity.Property(e => e.SetBy).HasMaxLength(200).IsRequired();
 
+            // Feature 044: Org-level inheritance tracking
+            entity.Property(e => e.DesignationSource).HasMaxLength(20);
+            entity.Property(e => e.OrgInheritanceDefaultId).HasMaxLength(36);
+            entity.HasOne(e => e.OrgInheritanceDefault)
+                .WithMany()
+                .HasForeignKey(e => e.OrgInheritanceDefaultId)
+                .OnDelete(DeleteBehavior.SetNull);
+
             // Indexes
             entity.HasIndex(e => e.ControlBaselineId).HasDatabaseName("IX_ControlInheritance_BaselineId");
             entity.HasIndex(e => new { e.ControlBaselineId, e.ControlId }).HasDatabaseName("IX_ControlInheritance_Baseline_Control");
             entity.HasIndex(e => e.InheritanceType).HasDatabaseName("IX_ControlInheritance_Type");
+            entity.HasIndex(e => e.DesignationSource).HasDatabaseName("IX_ControlInheritance_DesignationSource");
         });
 
         // ─── InheritanceAuditEntry (Feature 043) ────────────────────────────────
@@ -1261,6 +1273,26 @@ public class AtoCopilotContext : DbContext
                 .HasDatabaseName("IX_InheritanceAuditEntries_Baseline_Timestamp");
             entity.HasIndex(e => e.Timestamp)
                 .HasDatabaseName("IX_InheritanceAuditEntries_Timestamp");
+        });
+
+        // ─── OrgInheritanceDefault (Feature 044) ────────────────────────────────
+        modelBuilder.Entity<OrgInheritanceDefault>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasMaxLength(36);
+            entity.Property(e => e.ControlId).HasMaxLength(20).IsRequired();
+            entity.Property(e => e.InheritanceType).HasConversion<string>().HasMaxLength(20);
+            entity.Property(e => e.Provider).HasMaxLength(500).IsRequired();
+            entity.Property(e => e.SourceCapabilityIds).HasMaxLength(2000).IsRequired();
+            entity.Property(e => e.SourceCapabilityNames).HasMaxLength(2000).IsRequired();
+            entity.Property(e => e.MappingRole).HasConversion<string>().HasMaxLength(20);
+
+            // Unique index: one org default per control
+            entity.HasIndex(e => e.ControlId)
+                .IsUnique()
+                .HasDatabaseName("IX_OrgInheritanceDefault_ControlId");
+            entity.HasIndex(e => e.InheritanceType)
+                .HasDatabaseName("IX_OrgInheritanceDefault_InheritanceType");
         });
 
         // ─── ControlImplementation (Feature 015 US5 — SSP Authoring) ─────────────

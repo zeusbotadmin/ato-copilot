@@ -54,7 +54,8 @@ public class InheritanceAuditTests : IDisposable
         _service = new BaselineService(
             _sp.GetRequiredService<IServiceScopeFactory>(),
             Mock.Of<IReferenceDataService>(),
-            NullLogger<BaselineService>.Instance);
+            NullLogger<BaselineService>.Instance,
+            Mock.Of<IOrgInheritanceService>());
     }
 
     public void Dispose()

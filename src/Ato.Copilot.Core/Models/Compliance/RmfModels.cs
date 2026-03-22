@@ -641,10 +641,67 @@ public class ControlInheritance
     /// <summary>Timestamp (UTC).</summary>
     public DateTime SetAt { get; set; } = DateTime.UtcNow;
 
+    /// <summary>How this designation was set (OrgDerived, Manual, ProfileApply, CrmImport, BulkUpdate).</summary>
+    [MaxLength(20)]
+    public string? DesignationSource { get; set; }
+
+    /// <summary>FK to the org-level default this designation was derived from (nullable).</summary>
+    [MaxLength(36)]
+    public string? OrgInheritanceDefaultId { get; set; }
+
     // ─── Navigation ──────────────────────────────────────────────────────────
 
     /// <summary>Parent baseline.</summary>
     public ControlBaseline ControlBaseline { get; set; } = null!;
+
+    /// <summary>Org-level default this designation links to (if org-derived or diverged-from).</summary>
+    public OrgInheritanceDefault? OrgInheritanceDefault { get; set; }
+}
+
+// ──────────────────────── Org-Level Inheritance Defaults (Feature 044) ────────────────────────
+
+/// <summary>
+/// Org-level default inheritance designation for a specific NIST control,
+/// derived automatically from org-wide capabilities and their control mappings.
+/// </summary>
+public class OrgInheritanceDefault
+{
+    /// <summary>Unique identifier (GUID).</summary>
+    [Key]
+    [MaxLength(36)]
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>NIST control ID (e.g., "AC-2"). Unique — one org default per control.</summary>
+    [Required]
+    [MaxLength(20)]
+    public string ControlId { get; set; } = string.Empty;
+
+    /// <summary>Derived inheritance type: "Inherited" or "Shared".</summary>
+    [Required]
+    public InheritanceType InheritanceType { get; set; }
+
+    /// <summary>Comma-separated component names providing this control.</summary>
+    [Required]
+    [MaxLength(500)]
+    public string Provider { get; set; } = string.Empty;
+
+    /// <summary>Comma-separated capability IDs that contributed to this default.</summary>
+    [Required]
+    [MaxLength(2000)]
+    public string SourceCapabilityIds { get; set; } = string.Empty;
+
+    /// <summary>Comma-separated capability names for display.</summary>
+    [Required]
+    [MaxLength(2000)]
+    public string SourceCapabilityNames { get; set; } = string.Empty;
+
+    /// <summary>Winning mapping role: Primary, Supporting, or Shared.</summary>
+    [Required]
+    public CapabilityMappingRole MappingRole { get; set; }
+
+    /// <summary>UTC timestamp of last derivation.</summary>
+    [Required]
+    public DateTime DerivedAt { get; set; } = DateTime.UtcNow;
 }
 
 // ──────────────────────── Inheritance Audit (Feature 043) ────────────────────────
@@ -659,7 +716,11 @@ public enum InheritanceChangeSource
     /// <summary>CSP profile application.</summary>
     ProfileApply,
     /// <summary>CRM spreadsheet import.</summary>
-    CrmImport
+    CrmImport,
+    /// <summary>Set during org-default propagation to a system on baseline selection (Feature 044).</summary>
+    OrgDerived,
+    /// <summary>Set when org defaults change and cascade to systems (Feature 044).</summary>
+    OrgPropagation
 }
 
 /// <summary>
@@ -1021,3 +1082,41 @@ public class DeferredPrerequisite
     // Navigation
     public RegisteredSystem RegisteredSystem { get; set; } = null!;
 }
+
+// ──────────────────────── Org Inheritance Result Types (Feature 044) ────────────────────────
+
+/// <summary>Result of deriving org-level defaults from capabilities.</summary>
+public record OrgDerivationResult(
+    int DerivedCount,
+    int InheritedCount,
+    int SharedCount,
+    int RemovedCount,
+    int AffectedSystems,
+    DateTime DerivedAt);
+
+/// <summary>Result of propagating org defaults to a system's baseline.</summary>
+public record OrgPropagationResult(
+    int PropagatedCount,
+    int SkippedCount,
+    List<string> PropagatedControlIds);
+
+/// <summary>Result of reverting system overrides back to org defaults.</summary>
+public record RevertResult(
+    int RevertedCount,
+    int SkippedCount,
+    List<RevertSkip> Skipped);
+
+/// <summary>A control that was skipped during revert with a reason.</summary>
+public record RevertSkip(string ControlId, string Reason);
+
+/// <summary>Paginated list result for org-level defaults.</summary>
+public record OrgDefaultsListResult(
+    List<OrgInheritanceDefault> Items,
+    int TotalCount,
+    OrgDefaultsSummary Summary);
+
+/// <summary>Summary counts for org-level defaults.</summary>
+public record OrgDefaultsSummary(
+    int InheritedCount,
+    int SharedCount,
+    int TotalControls);

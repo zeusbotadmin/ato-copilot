@@ -1733,6 +1733,20 @@ Query parameters for discovery GET: `resourceGroup`, `resourceType`, `search`, `
 | POST | `/api/dashboard/systems/{systemId}/inheritance/import/preview` | Parse uploaded CRM file, return column mapping |
 | POST | `/api/dashboard/systems/{systemId}/inheritance/import/apply` | Apply imported CRM with column mapping |
 
-Query parameters for inheritance GET: `family`, `inheritanceType`, `search`, `page`, `pageSize`, `sortBy`, `sortDirection`
+Query parameters for inheritance GET: `family`, `inheritanceType`, `search`, `source`, `page`, `pageSize`, `sortBy`, `sortDirection`
+
+The `source` parameter filters by designation source: `org` (org defaults only), `override` (system overrides only), `undesignated`.
 
 Query parameters for CRM export GET: `format` (csv/excel), `layout` (custom/fedramp/emass)
+
+#### Org-Level Inheritance Defaults (Feature 044)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/dashboard/inheritance/org-defaults` | List org-level inheritance defaults (paginated) |
+| POST | `/api/dashboard/inheritance/org-defaults/derive` | Derive org defaults from capability mappings, cascade to systems |
+| POST | `/api/dashboard/systems/{systemId}/inheritance/revert-to-org-defaults` | Revert selected controls to org defaults |
+
+Query parameters for org-defaults GET: `family`, `inheritanceType`, `search`, `page`, `pageSize`
+
+The list inheritance response now includes `designationSource` and `orgDefault` fields per item, plus `orgDefaultCount`, `systemOverrideCount`, and `sourceBreakdown` in the summary. CRM export includes a "Designation Source" column.

@@ -4,6 +4,50 @@ All notable changes to ATO Copilot are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.28.0] - 2026-03-22
+
+### Added
+
+#### Feature 044: Org-Level Control Inheritance
+
+- **Org Inheritance Defaults** — Derive org-wide inheritance designations from the Security Capabilities Library. Scans org-wide capability-control mappings to produce `OrgInheritanceDefault` records with correct inheritance type, provider, and source capability references.
+- **Cascade Propagation** — Derived org defaults automatically cascade to every registered system baseline, creating `OrgDerived` designations for unmapped controls. Includes `OrgPropagation` audit entries per affected system.
+- **Automatic Re-derivation Hooks** — Org defaults are re-derived and cascaded when capability-control mappings are created/deleted, capability status changes, or capabilities are removed.
+- **Revert to Org Defaults** — Per-system bulk revert action restores overridden controls to their org-level default designation.
+- **Designation Source Tracking** — Every `ControlInheritance` record tracks how it was set: OrgDerived, OrgPropagation, Manual, BulkUpdate, ProfileApply, or CrmImport.
+- **CRM Designation Source Column** — "Designation Source" column added to all three CRM export layouts (Custom, FedRAMP, eMASS).
+- **Dashboard UI Enhancements**:
+  - Org Defaults and Overrides summary cards in the summary bar
+  - Source filter dropdown (All Sources, Org Defaults, System Overrides, Undesignated)
+  - Source badges on table rows (teal=Org Default, purple=CSP Profile, sky=CRM Import)
+  - Org default tooltip on designated rows (teal checkmark for org-derived, amber warning for overrides)
+  - Org-default coverage banner showing N of M controls with org-level defaults
+  - View Org Defaults modal with search and pagination
+  - "More Actions" dropdown reorganization when org defaults are active
+- **REST API Endpoints**:
+  - `GET /api/dashboard/inheritance/org-defaults` — List org-level defaults (paginated, filterable)
+  - `POST /api/dashboard/inheritance/org-defaults/derive` — Derive and cascade org defaults
+  - `POST /api/dashboard/systems/{systemId}/inheritance/revert-to-org-defaults` — Revert controls to org defaults
+  - Enhanced `GET /systems/{systemId}/inheritance` with `source` filter parameter and `designationSource`/`orgDefault` fields
+  - Enhanced audit trail endpoint with `changeSourceLabel` human-readable labels
+- **Entity Model** — `OrgInheritanceDefault` entity, extended `ControlInheritance` with `DesignationSource` and `OrgInheritanceDefaultId` FK, `OrgDerived`/`OrgPropagation` enum values.
+- **44 Tests** — 17 unit tests (OrgInheritanceService), 19 CRM export tests (including designation source), 10 integration tests (endpoints, audit, performance).
+
+### Documentation
+
+- **Control Inheritance Guide** — Full org-level inheritance defaults section with derive, view, filter, badge, coverage banner, and revert documentation.
+- **Architecture Overview** — Org-Level Control Inheritance section with cascade diagram, key components, and hook descriptions.
+- **Data Model** — `OrgInheritanceDefault` entity and extended `ControlInheritance` fields.
+- **MCP Server API** — Feature 044 endpoint table with request/response examples.
+- **Agent Tool Catalog** — Org-Level Inheritance Defaults section with endpoint reference.
+- **RMF Step Map** — Derive Org Defaults and Revert to Org Defaults in Phase 3 Select.
+- **Tool Inventory** — Three new dashboard REST endpoints listed.
+- **Glossary** — Feature 044 terms: Org Default, Org Propagation, Designation Source, Cascade Propagation, System Override.
+- **ISSM Guide** — Option A (Org Defaults) added to Step 7 as recommended approach.
+- **Select Phase** — Org-Level Inheritance Defaults subsection added.
+
+---
+
 ## [1.25.0] - 2026-03-15
 
 ### Added

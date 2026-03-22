@@ -503,6 +503,93 @@ Generate a Customer Responsibility Matrix (CRM) for the system. Groups controls 
 
 ---
 
+### Org-Level Inheritance Defaults (Feature 044)
+
+Dashboard REST endpoints for managing org-wide inheritance defaults derived from the Security Capabilities Library. These are not MCP tools but REST API endpoints consumed by the Dashboard UI.
+
+#### `GET /api/dashboard/inheritance/org-defaults`
+
+List paginated org-level inheritance defaults.
+
+**Query Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `family` | string | No | Filter by control family (e.g., "AC") |
+| `inheritanceType` | string | No | Filter by inheritance type |
+| `search` | string | No | Search by control ID or provider |
+| `page` | int | No | Page number (default: 1) |
+| `pageSize` | int | No | Items per page (default: 50) |
+
+**Response:**
+```json
+{
+  "items": [
+    {
+      "id": "guid",
+      "controlId": "AC-2",
+      "inheritanceType": 0,
+      "provider": "Microsoft Entra ID",
+      "sourceCapabilityIds": "guid1,guid2",
+      "sourceCapabilityNames": "RBAC, MFA",
+      "mappingRole": 0,
+      "derivedAt": "2026-03-22T03:44:27Z"
+    }
+  ],
+  "total": 24,
+  "page": 1,
+  "pageSize": 50
+}
+```
+
+#### `POST /api/dashboard/inheritance/org-defaults/derive`
+
+Derive org-level defaults from org-wide capability-control mappings and cascade to all system baselines.
+
+**Request:** No body required.
+
+**Response:**
+```json
+{
+  "derivedCount": 24,
+  "inheritedCount": 24,
+  "sharedCount": 0,
+  "removedCount": 0,
+  "affectedSystems": 6,
+  "derivedAt": "2026-03-22T03:44:24Z"
+}
+```
+
+**Cascade behavior:**
+- Creates `OrgDerived` designations on every system baseline for newly derived defaults
+- Updates existing `OrgDerived` designations when inheritance type/provider changes
+- Removes stale `OrgDerived` designations for controls no longer in org defaults
+- Creates `OrgPropagation` audit entries per affected system
+
+#### `POST /api/dashboard/systems/{systemId}/inheritance/revert-to-org-defaults`
+
+Revert selected controls back to their org-level default designation.
+
+**Request:**
+```json
+{
+  "controlIds": ["AC-2", "AC-3"],
+  "revertedBy": "dashboard-user"
+}
+```
+
+**Response:**
+```json
+{
+  "revertedCount": 2,
+  "skipped": [
+    { "controlId": "AC-99", "reason": "No org default exists" }
+  ]
+}
+```
+
+---
+
 ## US5: SSP Authoring & Narrative Management Tools
 
 ### `compliance_write_narrative`

@@ -17,15 +17,18 @@ public class BaselineService : IBaselineService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IReferenceDataService _referenceData;
     private readonly ILogger<BaselineService> _logger;
+    private readonly IOrgInheritanceService _orgInheritanceService;
 
     public BaselineService(
         IServiceScopeFactory scopeFactory,
         IReferenceDataService referenceData,
-        ILogger<BaselineService> logger)
+        ILogger<BaselineService> logger,
+        IOrgInheritanceService orgInheritanceService)
     {
         _scopeFactory = scopeFactory;
         _referenceData = referenceData;
         _logger = logger;
+        _orgInheritanceService = orgInheritanceService;
     }
 
     /// <inheritdoc />
@@ -273,6 +276,18 @@ public class BaselineService : IBaselineService
             }
         }
 
+        // ─── Feature 044: Propagate org-level inheritance defaults ─────────
+        var baselineControlIdSet = new HashSet<string>(controlIds, StringComparer.OrdinalIgnoreCase);
+        var propagation = await _orgInheritanceService.PropagateToSystemAsync(
+            systemId, baseline.Id, baselineControlIdSet, selectedBy, cancellationToken);
+
+        if (propagation.PropagatedCount > 0)
+        {
+            _logger.LogInformation(
+                "Propagated {Count} org-level defaults to system '{SystemId}' during baseline selection, {Skipped} existing overrides preserved",
+                propagation.PropagatedCount, systemId, propagation.SkippedCount);
+        }
+
         _logger.LogInformation(
             "Selected {Level} baseline for system '{SystemId}': {Count} controls, overlay={Overlay}, {Reapplied} inheritances reapplied",
             baselineLevel, systemId, controlIds.Count, appliedOverlay ?? "none", reappliedCount);
@@ -486,12 +501,24 @@ public class BaselineService : IBaselineService
             var prevType = existing?.InheritanceType.ToString();
             var prevProvider = existing?.Provider;
             var prevResponsibility = existing?.CustomerResponsibility;
+            var prevOrgDefaultId = existing?.OrgInheritanceDefaultId;
 
             if (existing != null)
             {
                 context.ControlInheritances.Remove(existing);
                 baseline.Inheritances.Remove(existing);
             }
+
+            // Feature 044: Determine designation source and preserve org default reference
+            var designationSource = changeSource switch
+            {
+                InheritanceChangeSource.OrgDerived => "OrgDerived",
+                InheritanceChangeSource.OrgPropagation => "OrgDerived",
+                InheritanceChangeSource.ProfileApply => "ProfileApply",
+                InheritanceChangeSource.CrmImport => "CrmImport",
+                InheritanceChangeSource.BulkUpdate => "Manual",
+                _ => "Manual",
+            };
 
             var inheritance = new ControlInheritance
             {
@@ -500,6 +527,8 @@ public class BaselineService : IBaselineService
                 InheritanceType = inheritanceType,
                 Provider = mapping.Provider,
                 CustomerResponsibility = mapping.CustomerResponsibility,
+                DesignationSource = designationSource,
+                OrgInheritanceDefaultId = prevOrgDefaultId, // Preserve "diverged from" reference
                 SetBy = setBy,
                 SetAt = DateTime.UtcNow
             };
@@ -682,7 +711,8 @@ public class BaselineService : IBaselineService
                                     ControlId = controlId,
                                     InheritanceType = inheritance.InheritanceType.ToString(),
                                     Provider = inheritance.Provider,
-                                    CustomerResponsibility = inheritance.CustomerResponsibility
+                                    CustomerResponsibility = inheritance.CustomerResponsibility,
+                                    DesignationSource = MapDesignationSourceForCrm(inheritance.DesignationSource)
                                 };
                             }
 
@@ -721,6 +751,16 @@ public class BaselineService : IBaselineService
             FamilyGroups = familyGroups
         };
     }
+
+    private static string? MapDesignationSourceForCrm(string? source) => source switch
+    {
+        "OrgDerived" => "Org Default",
+        "Manual" => "System Override",
+        "ProfileApply" => "CSP Profile",
+        "CrmImport" => "CRM Import",
+        "BulkUpdate" => "Bulk Update",
+        _ => source
+    };
 
     // ─── Control ID comparer ─────────────────────────────────────────────────
 

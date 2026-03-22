@@ -336,6 +336,7 @@ The dashboard is a **standalone React SPA** that communicates with the MCP serve
 │  • Capabilities Library  │                     │  • ComponentService      │
 │  • Component Inventory   │                     │  • NarrativeTemplate     │
 │  • Gap Analysis          │                     │  • TrendSnapshotService  │
+│  • Control Inheritance   │                     │  • OrgInheritanceService │
 │  • Compliance Trends     │                     │    (BackgroundService)   │
 └─────────────────────────┘                     └──────────────────────────┘
                                                          │
@@ -362,6 +363,58 @@ The dashboard is a **standalone React SPA** that communicates with the MCP serve
 - `ComponentCapabilityLink` — Component-to-capability join table
 - `ComplianceTrendSnapshot` — Point-in-time compliance metrics
 - `DashboardActivity` — Dashboard-specific audit trail
+- `OrgInheritanceDefault` — Org-level inheritance defaults derived from capability mappings (Feature 044)
+
+---
+
+## Org-Level Control Inheritance (Feature 044)
+
+### Architecture
+
+Centralizes inheritance designations at the organization level by deriving them from the Security Capabilities Library. Org defaults propagate to all system baselines via cascade, reducing per-system configuration effort.
+
+```
+┌──────────────────────────┐     Derive     ┌─────────────────────────────┐
+│  SecurityCapabilities    │ ─────────────► │  OrgInheritanceDefaults     │
+│  + CapabilityControl     │                │  (one per NIST control)     │
+│    Mappings (org-wide)   │                └──────────────┬──────────────┘
+└──────────────────────────┘                               │
+                                                    Cascade │
+                                                    Propagation
+                                                           │
+             ┌─────────────┬───────────────┬───────────────┼───────────────┐
+             ▼             ▼               ▼               ▼               ▼
+      ┌─────────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
+      │ System 1    │ │ System 2 │ │ System 3 │ │ System 4 │ │ System N │
+      │ Baseline    │ │ Baseline │ │ Baseline │ │ Baseline │ │ Baseline │
+      │ OrgDerived  │ │ OrgDerived│ │ OrgDerived│ │ OrgDerived│ │ OrgDerived│
+      └─────────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘
+```
+
+### Key Components
+
+| Component | Purpose |
+|-----------|---------|
+| `OrgInheritanceService` | Core service: derive, cascade propagate, revert |
+| `OrgInheritanceDefault` | Entity storing org-level defaults per control |
+| `DesignationSource` | Tracks origin: OrgDerived, Manual, ProfileApply, CrmImport, BulkUpdate |
+| `InheritanceChangeSource` | Enum for audit entries: OrgDerived, OrgPropagation, Manual, etc. |
+
+### Cascade Hooks
+
+Org defaults are automatically re-derived and propagated when:
+- Capability-control mappings are created or deleted (`CapabilityService.CreateMappingsAsync`)
+- A capability status changes (e.g., Active → Deprecated) (`CapabilityService.UpdateCapabilityAsync`)
+- A capability is deleted (`CapabilityService.DeleteCapabilityAsync`)
+
+### Dashboard UI
+
+- **Summary bar**: Org Defaults / Overrides cards shown when org defaults exist
+- **Source badges**: Teal (Org Default), Purple (CSP Profile), Sky (CRM Import)
+- **Source filter**: All Sources, Org Defaults, System Overrides, Undesignated
+- **Coverage banner**: Shows N of M controls with org-level defaults
+- **Org defaults modal**: View all derived defaults with search/pagination
+- **CRM export**: Designation Source column added to all layouts
 
 ---
 

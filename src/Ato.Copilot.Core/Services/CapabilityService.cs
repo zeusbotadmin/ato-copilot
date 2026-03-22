@@ -17,18 +17,21 @@ public class CapabilityService
     private readonly ILogger<CapabilityService> _logger;
     private readonly NarrativeTemplateService _narrativeService;
     private readonly IDeviationService _deviationService;
+    private readonly IOrgInheritanceService _orgInheritanceService;
 
     /// <summary>Initializes a new instance of <see cref="CapabilityService"/>.</summary>
     public CapabilityService(
         AtoCopilotContext db,
         ILogger<CapabilityService> logger,
         NarrativeTemplateService narrativeService,
-        IDeviationService deviationService)
+        IDeviationService deviationService,
+        IOrgInheritanceService orgInheritanceService)
     {
         _db = db;
         _logger = logger;
         _narrativeService = narrativeService;
         _deviationService = deviationService;
+        _orgInheritanceService = orgInheritanceService;
     }
 
     // ─── List / Search ───────────────────────────────────────────────────────
@@ -191,6 +194,7 @@ public class CapabilityService
 
         var descriptionChanged = entity.Description != request.Description ||
                                  entity.Provider != request.Provider;
+        var previousStatus = entity.ImplementationStatus;
 
         entity.Name = request.Name;
         entity.Provider = request.Provider;
@@ -345,6 +349,12 @@ public class CapabilityService
         }
 
         await _db.SaveChangesAsync(cancellationToken);
+
+        // Feature 044: Re-derive org defaults when ImplementationStatus changes
+        if (entity.ImplementationStatus != previousStatus)
+        {
+            await _orgInheritanceService.DeriveOrgDefaultsAsync(modifiedBy, cancellationToken);
+        }
 
         _logger.LogInformation(
             "Updated capability {CapabilityId} '{Name}': {Updated} narratives regenerated, {Skipped} customized skipped",
@@ -637,6 +647,9 @@ public class CapabilityService
 
         _db.SecurityCapabilities.Remove(entity);
         await _db.SaveChangesAsync(cancellationToken);
+
+        // Feature 044: Re-derive org defaults after capability deletion
+        await _orgInheritanceService.DeriveOrgDefaultsAsync(deletedBy, cancellationToken);
 
         _logger.LogInformation(
             "Deleted capability {CapabilityId} '{Name}': {Count} narratives flagged for review",
@@ -1166,6 +1179,9 @@ public class CapabilityService
         }
 
         await _db.SaveChangesAsync(cancellationToken);
+
+        // Feature 044: Re-derive org-level inheritance defaults after mapping changes
+        await _orgInheritanceService.DeriveOrgDefaultsAsync("system", cancellationToken);
 
         _logger.LogInformation(
             "Created {Created} mappings for capability {CapabilityId}, generated {Narratives} narratives, {Warnings} warnings",

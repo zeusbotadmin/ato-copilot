@@ -15,6 +15,10 @@ import type {
   ImportPreview,
   ImportApplyRequest,
   ImportApplyResult,
+  OrgDefaultsQuery,
+  OrgDefaultsListResult,
+  OrgDerivationResult,
+  RevertResult,
 } from '../types/inheritance';
 
 // ─── Phase 1: Core CRUD + CRM ──────────────────────────────────────────────
@@ -29,6 +33,7 @@ export async function listInheritance(
   if (query?.search) params.search = query.search;
   if (query?.page) params.page = query.page;
   if (query?.pageSize) params.pageSize = query.pageSize;
+  if (query?.source) params.source = query.source;
   if (query?.sortBy) params.sortBy = query.sortBy;
   if (query?.sortDirection) params.sortDirection = query.sortDirection;
 
@@ -128,6 +133,43 @@ export async function importApply(
   const { data } = await apiClient.post<ImportApplyResult>(
     `/systems/${systemId}/inheritance/import/apply`,
     request,
+  );
+  return data;
+}
+
+// ─── Phase 4: Org-Level Inheritance Defaults ────────────────────────────────
+
+export async function getOrgDefaults(
+  query?: OrgDefaultsQuery,
+): Promise<OrgDefaultsListResult> {
+  const params: Record<string, string | number> = {};
+  if (query?.family) params.family = query.family;
+  if (query?.inheritanceType) params.inheritanceType = query.inheritanceType;
+  if (query?.page) params.page = query.page;
+  if (query?.pageSize) params.pageSize = query.pageSize;
+
+  const { data } = await apiClient.get<OrgDefaultsListResult>(
+    '/inheritance/org-defaults',
+    { params },
+  );
+  return data;
+}
+
+export async function deriveOrgDefaults(): Promise<OrgDerivationResult> {
+  const { data } = await apiClient.post<OrgDerivationResult>(
+    '/inheritance/org-defaults/derive',
+  );
+  return data;
+}
+
+export async function revertToOrgDefaults(
+  systemId: string,
+  controlIds: string[],
+  revertedBy?: string,
+): Promise<RevertResult> {
+  const { data } = await apiClient.post<RevertResult>(
+    `/systems/${systemId}/inheritance/revert-to-org-defaults`,
+    { controlIds, revertedBy },
   );
   return data;
 }

@@ -67,9 +67,9 @@ public class CrmExportService
 
     private static string[] GetHeaders(string layout) => layout.ToLowerInvariant() switch
     {
-        "fedramp" => ["Control ID", "Control Family", "Responsible Role", "CSP/CP Name", "Customer Responsibility"],
-        "emass" => ["Control Number", "Family", "Implementation Status", "Responsible Entity", "Customer Responsibility Description"],
-        _ => ["Control ID", "Family", "Inheritance Type", "Provider", "Customer Responsibility"],
+        "fedramp" => ["Control ID", "Control Family", "Responsible Role", "CSP/CP Name", "Customer Responsibility", "Designation Source"],
+        "emass" => ["Control Number", "Family", "Implementation Status", "Responsible Entity", "Customer Responsibility Description", "Designation Source"],
+        _ => ["Control ID", "Family", "Inheritance Type", "Provider", "Customer Responsibility", "Designation Source"],
     };
 
     private static string[] GetRowValues(string layout, CrmFamilyGroup group, CrmEntry control) => layout.ToLowerInvariant() switch
@@ -80,7 +80,8 @@ public class CrmExportService
             group.FamilyName,
             control.InheritanceType,
             control.Provider ?? "",
-            control.CustomerResponsibility ?? ""
+            control.CustomerResponsibility ?? "",
+            control.DesignationSource ?? ""
         ],
         "emass" =>
         [
@@ -88,7 +89,8 @@ public class CrmExportService
             group.Family,
             control.InheritanceType == "Undesignated" ? "Not Implemented" : "Implemented",
             control.Provider ?? "Customer",
-            control.CustomerResponsibility ?? ""
+            control.CustomerResponsibility ?? "",
+            control.DesignationSource ?? ""
         ],
         _ =>
         [
@@ -96,7 +98,8 @@ public class CrmExportService
             group.Family,
             control.InheritanceType,
             control.Provider ?? "",
-            control.CustomerResponsibility ?? ""
+            control.CustomerResponsibility ?? "",
+            control.DesignationSource ?? ""
         ],
     };
 

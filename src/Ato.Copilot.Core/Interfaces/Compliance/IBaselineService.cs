@@ -250,4 +250,7 @@ public class CrmEntry
 
     /// <summary>Customer responsibility if shared.</summary>
     public string? CustomerResponsibility { get; set; }
+
+    /// <summary>Source of the designation (Org Default, System Override, CSP Profile, CRM Import, etc.).</summary>
+    public string? DesignationSource { get; set; }
 }

@@ -347,6 +347,23 @@ Parameters:
 
 ## Step 7: Set Control Inheritance
 
+### Option A: Apply Org-Level Defaults (Recommended)
+
+If your organization has defined security capabilities with NIST control mappings, use **Derive Org Defaults** to automatically set inheritance designations across all systems:
+
+1. Navigate to the **Control Inheritance** page for any system.
+2. Click **Derive Org Defaults** — this scans org-wide capability-control mappings and creates inheritance defaults.
+3. All systems receive `OrgDerived` designations for mapped controls.
+4. Review the results: the summary bar shows Org Defaults and Overrides counts.
+
+Org defaults cascade automatically — when you add or update capabilities in the Security Capabilities Library, defaults are re-derived and propagated to all system baselines.
+
+To override an org default for a specific system, use the inline editor or bulk update — the designation source changes to Manual.
+
+To restore an org default after overriding, select the control(s) and click **Revert to Org Defaults**.
+
+### Option B: Manual Inheritance Setting
+
 Use `compliance_set_inheritance` to map controls to their inheritance provider (e.g., a FedRAMP-authorized CSP):
 
 ```

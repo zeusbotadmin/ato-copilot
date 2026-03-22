@@ -59,14 +59,14 @@ public class CrmExportServiceTests
     public void GenerateCsv_Custom_ContainsExpectedHeaders()
     {
         var csv = Encoding.UTF8.GetString(_service.GenerateCsv(CreateSampleCrm(), "custom"));
-        csv.Should().StartWith("Control ID,Family,Inheritance Type,Provider,Customer Responsibility");
+        csv.Should().StartWith("Control ID,Family,Inheritance Type,Provider,Customer Responsibility,Designation Source");
     }
 
     [Fact]
     public void GenerateCsv_FedRamp_ContainsExpectedHeaders()
     {
         var csv = Encoding.UTF8.GetString(_service.GenerateCsv(CreateSampleCrm(), "fedramp"));
-        csv.Should().StartWith("Control ID,Control Family,Responsible Role,CSP/CP Name,Customer Responsibility");
+        csv.Should().StartWith("Control ID,Control Family,Responsible Role,CSP/CP Name,Customer Responsibility,Designation Source");
     }
 
     [Fact]
@@ -171,4 +171,64 @@ public class CrmExportServiceTests
         mapping["controlId"].Should().Be("Control Number");
         mapping["inheritanceType"].Should().Be("Implementation Status");
     }
+
+    // ─── Feature 044: Designation Source in CRM ─────────────────────────────
+
+    [Fact]
+    public void GenerateCsv_Custom_IncludesDesignationSourceColumn()
+    {
+        var crm = CreateCrmWithDesignationSources();
+        var csv = Encoding.UTF8.GetString(_service.GenerateCsv(crm, "custom"));
+        var lines = csv.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+
+        lines[0].Should().Contain("Designation Source");
+        lines[1].Should().Contain("Org Default");
+        lines[2].Should().Contain("System Override");
+        lines[3].Should().EndWith(","); // Undesignated has empty source
+    }
+
+    [Fact]
+    public void GenerateCsv_FedRamp_IncludesDesignationSourceColumn()
+    {
+        var crm = CreateCrmWithDesignationSources();
+        var csv = Encoding.UTF8.GetString(_service.GenerateCsv(crm, "fedramp"));
+        csv.Should().Contain("Designation Source");
+        csv.Should().Contain("Org Default");
+    }
+
+    [Fact]
+    public void GenerateCsv_Emass_IncludesDesignationSourceColumn()
+    {
+        var crm = CreateCrmWithDesignationSources();
+        var csv = Encoding.UTF8.GetString(_service.GenerateCsv(crm, "emass"));
+        csv.Should().Contain("Designation Source");
+        csv.Should().Contain("System Override");
+    }
+
+    [Fact]
+    public void GenerateExcel_WithDesignationSource_ProducesValidXlsx()
+    {
+        var crm = CreateCrmWithDesignationSources();
+        var bytes = _service.GenerateExcel(crm, "custom");
+        bytes.Should().NotBeEmpty();
+        bytes[0].Should().Be(0x50); // PK ZIP header
+    }
+
+    private static CrmResult CreateCrmWithDesignationSources() => new()
+    {
+        FamilyGroups =
+        [
+            new CrmFamilyGroup
+            {
+                Family = "AC",
+                FamilyName = "Access Control",
+                Controls =
+                [
+                    new CrmEntry { ControlId = "AC-1", InheritanceType = "Inherited", Provider = "Azure Gov", DesignationSource = "Org Default" },
+                    new CrmEntry { ControlId = "AC-2", InheritanceType = "Shared", Provider = "Custom", CustomerResponsibility = "Manage accounts", DesignationSource = "System Override" },
+                    new CrmEntry { ControlId = "AC-3", InheritanceType = "Undesignated", DesignationSource = null },
+                ]
+            }
+        ]
+    };
 }

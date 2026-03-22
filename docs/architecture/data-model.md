@@ -56,6 +56,7 @@ erDiagram
 
     ControlBaseline ||--o{ ControlTailoring : has
     ControlBaseline ||--o{ ControlInheritance : has
+    ControlInheritance }o--o| OrgInheritanceDefault : "derived from"
 
     AssessmentRecord ||--o{ ControlEffectiveness : has
 
@@ -273,7 +274,26 @@ Inheritance designation for controls in a baseline.
 | `InheritanceType` | `InheritanceType` | Inherited, Shared, Customer |
 | `Provider` | `string?` | CSP or provider name |
 | `CustomerResponsibility` | `string?` | Customer-specific responsibility |
+| `DesignationSource` | `string?` (20) | Source of designation: OrgDerived, Manual, ProfileApply, CrmImport, BulkUpdate (Feature 044) |
+| `OrgInheritanceDefaultId` | `string?` (36) | FK → OrgInheritanceDefault — tracks which org default this was derived from (Feature 044) |
 | `DesignatedAt` | `DateTime` | Timestamp |
+
+### OrgInheritanceDefault (Feature 044)
+
+Org-level inheritance defaults derived from capability control mappings. One per control ID.
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `Id` | `Guid` | Primary key |
+| `ControlId` | `string` (20) | NIST control ID (unique index) |
+| `InheritanceType` | `InheritanceType` | Inherited or Shared |
+| `Provider` | `string` (500) | Merged provider names from capabilities |
+| `SourceCapabilityIds` | `string` (2000) | Comma-separated capability IDs |
+| `SourceCapabilityNames` | `string` (2000) | Comma-separated capability names |
+| `MappingRole` | `CapabilityMappingRole` | Winning role: Primary, Supporting, or Shared |
+| `DerivedAt` | `DateTime` | When the default was last derived |
+
+**Relationships:** Referenced by `ControlInheritance.OrgInheritanceDefaultId`
 
 ---
 

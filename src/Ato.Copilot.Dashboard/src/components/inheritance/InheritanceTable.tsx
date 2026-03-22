@@ -14,6 +14,60 @@ function TypeBadge({ type }: { type: string }) {
   return <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${map[type] ?? 'bg-gray-100 text-gray-700'}`}>{type}</span>;
 }
 
+function SourceBadge({ source }: { source: string | null }) {
+  if (!source || source === 'Manual') return null;
+  const map: Record<string, string> = {
+    OrgDerived: 'bg-teal-100 text-teal-700',
+    OrgPropagation: 'bg-teal-100 text-teal-700',
+    ProfileApply: 'bg-purple-100 text-purple-700',
+    CrmImport: 'bg-sky-100 text-sky-700',
+    BulkUpdate: 'bg-gray-100 text-gray-600',
+  };
+  const labels: Record<string, string> = {
+    OrgDerived: 'Org Default',
+    OrgPropagation: 'Org Default',
+    ProfileApply: 'CSP Profile',
+    CrmImport: 'CRM Import',
+    BulkUpdate: 'Bulk',
+  };
+  return (
+    <span className={`ml-1 inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${map[source] ?? 'bg-gray-100 text-gray-600'}`}>
+      {labels[source] ?? source}
+    </span>
+  );
+}
+
+function OrgDefaultTooltip({ item }: { item: InheritanceDesignation }) {
+  const ds = item.designationSource;
+  const org = item.orgDefault;
+  if (!ds && !org) return null;
+
+  const isOverride = ds === 'Manual' && org;
+  const isOrgDerived = ds === 'OrgDerived';
+
+  if (isOverride && org) {
+    return (
+      <span className="ml-1 inline-flex cursor-help items-center" title={`Override: Org default is ${org.inheritanceType} (from ${org.sourceCapabilities ?? 'unknown'})`}>
+        <svg className="h-3.5 w-3.5 text-amber-500" fill="currentColor" viewBox="0 0 20 20">
+          <path d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" />
+        </svg>
+      </span>
+    );
+  }
+
+  if (isOrgDerived && org) {
+    return (
+      <span className="ml-1 inline-flex cursor-help items-center" title={`Org default from ${org.sourceCapabilities ?? 'org-level derivation'} (${org.mappingRole ?? ''})`}>
+        <svg className="h-3.5 w-3.5 text-teal-500" fill="currentColor" viewBox="0 0 20 20">
+          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+        </svg>
+      </span>
+    );
+  }
+
+  return null;
+}
+
 // ─── Inline Editing ─────────────────────────────────────────────────────────
 
 interface InlineEditState {
@@ -100,6 +154,16 @@ export default function InheritanceTable({
           <option value="Customer">Customer</option>
           <option value="Undesignated">Undesignated</option>
         </select>
+        <select
+          className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+          value={query.source ?? ''}
+          onChange={e => onQueryChange(q => ({ ...q, source: (e.target.value || undefined) as InheritanceListQuery['source'], page: 1 }))}
+        >
+          <option value="">All Sources</option>
+          <option value="org">Org Defaults Only</option>
+          <option value="override">System Overrides Only</option>
+          <option value="undesignated">Undesignated</option>
+        </select>
       </div>
 
       {/* Table */}
@@ -185,7 +249,11 @@ export default function InheritanceTable({
                       </>
                     ) : (
                       <>
-                        <td className="whitespace-nowrap px-4 py-3 text-sm"><TypeBadge type={item.inheritanceType} /></td>
+                        <td className="whitespace-nowrap px-4 py-3 text-sm">
+                          <TypeBadge type={item.inheritanceType} />
+                          <SourceBadge source={item.designationSource} />
+                          <OrgDefaultTooltip item={item} />
+                        </td>
                         <td className="max-w-xs truncate px-4 py-3 text-sm text-gray-600">{item.provider ?? '—'}</td>
                         <td className="max-w-xs truncate px-4 py-3 text-sm text-gray-600">{item.customerResponsibility ?? '—'}</td>
                         <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-500">{item.setBy ?? '—'}</td>

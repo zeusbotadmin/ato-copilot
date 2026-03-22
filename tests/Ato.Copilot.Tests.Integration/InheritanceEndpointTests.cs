@@ -45,7 +45,8 @@ public class InheritanceEndpointTests : IDisposable
         _sut = new BaselineService(
             _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
             _serviceProvider.GetRequiredService<IReferenceDataService>(),
-            NullLogger<BaselineService>.Instance);
+            NullLogger<BaselineService>.Instance,
+            Mock.Of<IOrgInheritanceService>());
 
         SeedData();
     }

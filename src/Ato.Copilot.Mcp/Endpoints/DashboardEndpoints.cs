@@ -5641,6 +5641,7 @@ public static class DashboardEndpoints
             [FromQuery] string? family,
             [FromQuery] string? inheritanceType,
             [FromQuery] string? search,
+            [FromQuery] string? source,
             [FromQuery] int page,
             [FromQuery] int pageSize,
             [FromQuery] string? sortBy,
@@ -5662,11 +5663,17 @@ public static class DashboardEndpoints
                     Suggestion = "Ensure the system has a control baseline configured"
                 });
 
+            // Load org defaults for LEFT JOIN
+            var orgDefaultLookup = await context.OrgInheritanceDefaults
+                .AsNoTracking()
+                .ToDictionaryAsync(d => d.ControlId, d => d, StringComparer.OrdinalIgnoreCase, ct);
+
             // Build designation list from all control IDs + inheritance records
-            var inheritanceLookup = baseline.Inheritances.ToDictionary(i => i.ControlId, i => i);
+            var inheritanceLookup = baseline.Inheritances.ToDictionary(i => i.ControlId, i => i, StringComparer.OrdinalIgnoreCase);
             var allDesignations = baseline.ControlIds.Select(cid =>
             {
                 inheritanceLookup.TryGetValue(cid, out var inh);
+                orgDefaultLookup.TryGetValue(cid, out var orgDefault);
                 return new
                 {
                     id = inh?.Id ?? string.Empty,
@@ -5675,6 +5682,15 @@ public static class DashboardEndpoints
                     inheritanceType = inh?.InheritanceType.ToString() ?? "Undesignated",
                     provider = inh?.Provider,
                     customerResponsibility = inh?.CustomerResponsibility,
+                    designationSource = inh?.DesignationSource,
+                    orgDefault = orgDefault == null ? null : new
+                    {
+                        id = orgDefault.Id,
+                        inheritanceType = orgDefault.InheritanceType.ToString(),
+                        provider = orgDefault.Provider,
+                        sourceCapabilities = orgDefault.SourceCapabilityNames,
+                        mappingRole = orgDefault.MappingRole.ToString(),
+                    },
                     setBy = inh?.SetBy,
                     setAt = inh?.SetAt
                 };
@@ -5690,6 +5706,16 @@ public static class DashboardEndpoints
                 filtered = filtered.Where(d =>
                     d.controlId.Contains(search, StringComparison.OrdinalIgnoreCase) ||
                     (d.provider != null && d.provider.Contains(search, StringComparison.OrdinalIgnoreCase)));
+            if (!string.IsNullOrWhiteSpace(source))
+            {
+                filtered = source.ToLowerInvariant() switch
+                {
+                    "org" or "orgdefault" or "orgderived" => filtered.Where(d => d.designationSource == "OrgDerived"),
+                    "override" or "manual" => filtered.Where(d => d.designationSource is "Manual" or "ProfileApply" or "CrmImport" or "BulkUpdate"),
+                    "undesignated" => filtered.Where(d => d.designationSource == null && d.inheritanceType == "Undesignated"),
+                    _ => filtered,
+                };
+            }
 
             // Sort
             var sortField = sortBy?.ToLowerInvariant() ?? "controlid";
@@ -5713,6 +5739,10 @@ public static class DashboardEndpoints
             var undesignatedCount = totalControls - inheritedCount - sharedCount - customerCount;
             var pct = totalControls > 0 ? Math.Round((double)(inheritedCount + sharedCount + customerCount) / totalControls * 100, 1) : 0;
 
+            // Source breakdown
+            var orgDefaultCount = baseline.Inheritances.Count(i => i.DesignationSource == "OrgDerived");
+            var systemOverrideCount = baseline.Inheritances.Count(i => i.DesignationSource is "Manual" or "ProfileApply" or "CrmImport" or "BulkUpdate");
+
             return Results.Ok(new
             {
                 items,
@@ -5726,7 +5756,18 @@ public static class DashboardEndpoints
                     sharedCount,
                     customerCount,
                     undesignatedCount,
-                    inheritancePercentage = pct
+                    inheritancePercentage = pct,
+                    orgDefaultCount,
+                    systemOverrideCount,
+                    sourceBreakdown = new
+                    {
+                        orgDerived = orgDefaultCount,
+                        manual = baseline.Inheritances.Count(i => i.DesignationSource == "Manual"),
+                        profileApply = baseline.Inheritances.Count(i => i.DesignationSource == "ProfileApply"),
+                        crmImport = baseline.Inheritances.Count(i => i.DesignationSource == "CrmImport"),
+                        bulkUpdate = baseline.Inheritances.Count(i => i.DesignationSource == "BulkUpdate"),
+                        undesignated = undesignatedCount,
+                    }
                 }
             });
         }).WithName("ListInheritanceDesignations");
@@ -5752,6 +5793,9 @@ public static class DashboardEndpoints
 
                 if ((iType == InheritanceType.Inherited || iType == InheritanceType.Shared) && string.IsNullOrWhiteSpace(d.Provider))
                     return Results.BadRequest(new ErrorResponse { Error = $"Provider is required for '{d.InheritanceType}' on control {d.ControlId}", ErrorCode = "INVALID_INPUT" });
+
+                if (iType == InheritanceType.Customer && string.IsNullOrWhiteSpace(d.CustomerResponsibility))
+                    return Results.BadRequest(new ErrorResponse { Error = $"Customer responsibility is required for 'Customer' on control {d.ControlId}", ErrorCode = "INVALID_INPUT" });
             }
 
             var changeSource = InheritanceChangeSource.Manual;
@@ -5803,6 +5847,37 @@ public static class DashboardEndpoints
             });
         }).WithName("SetInheritanceDesignations");
 
+        // ── POST /systems/{systemId}/inheritance/revert-to-org-defaults — revert selected controls
+        group.MapPost("/systems/{systemId}/inheritance/revert-to-org-defaults", async (
+            string systemId,
+            Feature044RevertRequest req,
+            IOrgInheritanceService orgService,
+            AtoCopilotContext context,
+            CancellationToken ct) =>
+        {
+            if (req.ControlIds == null || req.ControlIds.Count == 0)
+                return Results.BadRequest(new ErrorResponse { Error = "At least one control ID is required.", ErrorCode = "INVALID_INPUT" });
+
+            var revertedBy = req.RevertedBy ?? "dashboard-user";
+            var result = await orgService.RevertToOrgDefaultsAsync(systemId, req.ControlIds, revertedBy, ct);
+
+            context.DashboardActivities.Add(new DashboardActivity
+            {
+                RegisteredSystemId = systemId,
+                EventType = "InheritanceReverted",
+                Actor = revertedBy,
+                Summary = $"Reverted {result.RevertedCount} controls to org defaults, {result.Skipped.Count} skipped",
+                RelatedEntityType = "ControlInheritance",
+            });
+            await context.SaveChangesAsync(ct);
+
+            return Results.Ok(new
+            {
+                revertedCount = result.RevertedCount,
+                skipped = result.Skipped.Select(s => new { s.ControlId, s.Reason }),
+            });
+        }).WithName("RevertToOrgDefaults");
+
         // ── GET /systems/{systemId}/inheritance/{controlId}/audit — per-control audit trail
         group.MapGet("/systems/{systemId}/inheritance/{controlId}/audit", async (
             string systemId,
@@ -5834,6 +5909,12 @@ public static class DashboardEndpoints
                     previousCustomerResponsibility = e.PreviousCustomerResponsibility,
                     newCustomerResponsibility = e.NewCustomerResponsibility,
                     changeSource = e.ChangeSource.ToString(),
+                    changeSourceLabel = e.ChangeSource == InheritanceChangeSource.OrgDerived ? "Org Default"
+                        : e.ChangeSource == InheritanceChangeSource.OrgPropagation ? "Org Propagation"
+                        : e.ChangeSource == InheritanceChangeSource.ProfileApply ? "CSP Profile"
+                        : e.ChangeSource == InheritanceChangeSource.CrmImport ? "CRM Import"
+                        : e.ChangeSource == InheritanceChangeSource.BulkUpdate ? "Bulk Update"
+                        : "Manual",
                     timestamp = e.Timestamp
                 })
                 .ToListAsync(ct);
@@ -6155,6 +6236,37 @@ public static class DashboardEndpoints
                 }
             });
         }).WithName("ImportCrmApply");
+
+        // ─── Feature 044: Org-Level Inheritance Endpoints ──────────────────────
+
+        // ── GET /inheritance/org-defaults — list org-level inheritance defaults with filters & pagination
+        group.MapGet("/inheritance/org-defaults", async (
+            [FromQuery] string? family,
+            [FromQuery] string? inheritanceType,
+            [FromQuery] string? search,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 50,
+            IOrgInheritanceService orgService = default!,
+            CancellationToken ct = default) =>
+        {
+            if (page < 1) page = 1;
+            if (pageSize < 1) pageSize = 50;
+            if (pageSize > 200) pageSize = 200;
+
+            var result = await orgService.GetOrgDefaultsAsync(family, inheritanceType, search, page, pageSize, ct);
+            return Results.Ok(result);
+        }).WithName("GetOrgInheritanceDefaults");
+
+        // ── POST /inheritance/org-defaults/derive — trigger org-level inheritance derivation
+        group.MapPost("/inheritance/org-defaults/derive", async (
+            IOrgInheritanceService orgService,
+            AtoCopilotContext context,
+            CancellationToken ct) =>
+        {
+            var result = await orgService.DeriveOrgDefaultsAsync("dashboard-user", ct);
+
+            return Results.Ok(result);
+        }).WithName("DeriveOrgInheritanceDefaults");
 
         // ─── Control Catalog (top-level, not system-scoped) ────────────────────
         group.MapGet("/controls", async (
@@ -6898,4 +7010,9 @@ public static class DashboardEndpoints
         string InheritanceType,
         string Provider,
         string CustomerResponsibility);
+
+    // Feature 044 request types
+    private record Feature044RevertRequest(
+        List<string> ControlIds,
+        string? RevertedBy = null);
 }

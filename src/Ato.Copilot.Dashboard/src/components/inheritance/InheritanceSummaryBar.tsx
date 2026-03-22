@@ -40,6 +40,12 @@ export default function InheritanceSummaryBar({ summary, loading }: InheritanceS
       <SummaryCard label="Customer" value={summary.customerCount} color="amber" />
       <SummaryCard label="Undesignated" value={summary.undesignatedCount} color="gray" />
       <SummaryCard label="Inheritance %" value={`${summary.inheritancePercentage}%`} color="blue" />
+      {summary.orgDefaultCount != null && (
+        <>
+          <SummaryCard label="Org Defaults" value={summary.orgDefaultCount} color="green" />
+          <SummaryCard label="Overrides" value={summary.systemOverrideCount} color="amber" />
+        </>
+      )}
     </div>
   );
 }

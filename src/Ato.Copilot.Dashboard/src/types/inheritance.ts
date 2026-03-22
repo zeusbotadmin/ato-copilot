@@ -2,7 +2,63 @@
 
 export type InheritanceType = 'Inherited' | 'Shared' | 'Customer';
 export type InheritanceTypeOrUndesignated = InheritanceType | 'Undesignated';
-export type InheritanceChangeSource = 'Manual' | 'BulkUpdate' | 'ProfileApply' | 'CrmImport';
+export type InheritanceChangeSource = 'Manual' | 'BulkUpdate' | 'ProfileApply' | 'CrmImport' | 'OrgDerived' | 'OrgPropagation';
+
+export type DesignationSource = 'OrgDerived' | 'Manual' | 'ProfileApply' | 'CrmImport' | 'BulkUpdate';
+export type DesignationSourceFilter = 'org' | 'override' | 'undesignated';
+
+// ─── Org-Level Defaults ─────────────────────────────────────────────────────
+
+export interface OrgDefaultInfo {
+  id: string;
+  inheritanceType: string;
+  provider: string;
+  sourceCapabilities: string;
+  mappingRole: string;
+}
+
+export interface OrgInheritanceDefault {
+  id: string;
+  controlId: string;
+  inheritanceType: string;
+  provider: string;
+  sourceCapabilityIds: string;
+  sourceCapabilityNames: string;
+  mappingRole: string;
+  derivedAt: string;
+}
+
+export interface OrgDefaultsQuery {
+  family?: string;
+  inheritanceType?: string;
+  search?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface OrgDefaultsListResult {
+  items: OrgInheritanceDefault[];
+  totalCount: number;
+  summary: {
+    inheritedCount: number;
+    sharedCount: number;
+    totalControls: number;
+  };
+}
+
+export interface OrgDerivationResult {
+  derivedCount: number;
+  inheritedCount: number;
+  sharedCount: number;
+  removedCount: number;
+  affectedSystems: number;
+  derivedAt: string;
+}
+
+export interface RevertResult {
+  revertedCount: number;
+  skipped: { controlId: string; reason: string }[];
+}
 
 // ─── List / Table ───────────────────────────────────────────────────────────
 
@@ -13,8 +69,19 @@ export interface InheritanceDesignation {
   inheritanceType: InheritanceTypeOrUndesignated;
   provider: string | null;
   customerResponsibility: string | null;
+  designationSource: DesignationSource | null;
+  orgDefault: OrgDefaultInfo | null;
   setBy: string;
   setAt: string;
+}
+
+export interface SourceBreakdown {
+  orgDerived: number;
+  manual: number;
+  profileApply: number;
+  crmImport: number;
+  bulkUpdate: number;
+  undesignated: number;
 }
 
 export interface InheritanceSummary {
@@ -24,6 +91,9 @@ export interface InheritanceSummary {
   customerCount: number;
   undesignatedCount: number;
   inheritancePercentage: number;
+  orgDefaultCount: number;
+  systemOverrideCount: number;
+  sourceBreakdown: SourceBreakdown;
 }
 
 export interface InheritanceListResponse {
@@ -37,6 +107,7 @@ export interface InheritanceListResponse {
 export interface InheritanceListQuery {
   family?: string;
   inheritanceType?: string;
+  source?: DesignationSourceFilter;
   search?: string;
   page?: number;
   pageSize?: number;

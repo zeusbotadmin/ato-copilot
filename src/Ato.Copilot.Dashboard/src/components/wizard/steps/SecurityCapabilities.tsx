@@ -78,6 +78,26 @@ export default function SecurityCapabilities({ systemId, onNext, onErrors }: Sec
     }
   };
 
+  // Auto-link any checked-but-unsaved capabilities, then advance
+  const handleNext = async () => {
+    if (selectedIds.size > 0) {
+      setSaving(true);
+      try {
+        const result = await linkCapabilities(systemId, Array.from(selectedIds));
+        setLinkedItems((prev) => [...prev, ...(result.items ?? [])]);
+        setSelectedIds(new Set());
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'Failed to link capabilities';
+        onErrors({ _form: [msg] });
+        setSaving(false);
+        return; // don't advance if save failed
+      } finally {
+        setSaving(false);
+      }
+    }
+    onNext();
+  };
+
   const handleRemove = async (linkId: string) => {
     try {
       await removeCapabilityLink(systemId, linkId);
@@ -169,10 +189,11 @@ export default function SecurityCapabilities({ systemId, onNext, onErrors }: Sec
 
       <div className="mt-6 flex justify-end">
         <button
-          onClick={onNext}
-          className="rounded-md bg-blue-600 px-6 py-2 text-sm font-medium text-white hover:bg-blue-700"
+          onClick={handleNext}
+          disabled={saving}
+          className="rounded-md bg-blue-600 px-6 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
         >
-          Next
+          {saving ? 'Saving...' : 'Next'}
         </button>
       </div>
     </div>

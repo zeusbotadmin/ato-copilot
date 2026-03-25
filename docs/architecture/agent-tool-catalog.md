@@ -503,6 +503,183 @@ Generate a Customer Responsibility Matrix (CRM) for the system. Groups controls 
 
 ---
 
+### Org-Level Inheritance Defaults (Feature 044)
+
+Dashboard REST endpoints for managing org-wide inheritance defaults derived from the Security Capabilities Library. These are not MCP tools but REST API endpoints consumed by the Dashboard UI.
+
+#### `GET /api/dashboard/inheritance/org-defaults`
+
+List paginated org-level inheritance defaults.
+
+**Query Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `family` | string | No | Filter by control family (e.g., "AC") |
+| `inheritanceType` | string | No | Filter by inheritance type |
+| `search` | string | No | Search by control ID or provider |
+| `page` | int | No | Page number (default: 1) |
+| `pageSize` | int | No | Items per page (default: 50) |
+
+**Response:**
+```json
+{
+  "items": [
+    {
+      "id": "guid",
+      "controlId": "AC-2",
+      "inheritanceType": 0,
+      "provider": "Microsoft Entra ID",
+      "sourceCapabilityIds": "guid1,guid2",
+      "sourceCapabilityNames": "RBAC, MFA",
+      "mappingRole": 0,
+      "derivedAt": "2026-03-22T03:44:27Z"
+    }
+  ],
+  "total": 24,
+  "page": 1,
+  "pageSize": 50
+}
+```
+
+#### `POST /api/dashboard/inheritance/org-defaults/derive`
+
+Derive org-level defaults from org-wide capability-control mappings and cascade to all system baselines.
+
+**Request:** No body required.
+
+**Response:**
+```json
+{
+  "derivedCount": 24,
+  "inheritedCount": 24,
+  "sharedCount": 0,
+  "removedCount": 0,
+  "affectedSystems": 6,
+  "derivedAt": "2026-03-22T03:44:24Z"
+}
+```
+
+**Cascade behavior:**
+- Creates `OrgDerived` designations on every system baseline for newly derived defaults
+- Updates existing `OrgDerived` designations when inheritance type/provider changes
+- Removes stale `OrgDerived` designations for controls no longer in org defaults
+- Creates `OrgPropagation` audit entries per affected system
+
+#### `POST /api/dashboard/systems/{systemId}/inheritance/revert-to-org-defaults`
+
+Revert selected controls back to their org-level default designation.
+
+**Request:**
+```json
+{
+  "controlIds": ["AC-2", "AC-3"],
+  "revertedBy": "dashboard-user"
+}
+```
+
+**Response:**
+```json
+{
+  "revertedCount": 2,
+  "skipped": [
+    { "controlId": "AC-99", "reason": "No org default exists" }
+  ]
+}
+```
+
+---
+
+### Security Capabilities Hub (Feature 045)
+
+Dashboard REST endpoints for the unified Capabilities Hub. CSP profile and CRM import have moved from the inheritance page to these capability-scoped endpoints.
+
+#### `GET /api/dashboard/capabilities/coverage`
+
+Compute coverage dashboard showing provider cards, KPI metrics, and gap controls.
+
+**Response:**
+```json
+{
+  "providers": [
+    {
+      "provider": "Azure Government",
+      "controlledCount": 24,
+      "totalControls": 339,
+      "capabilities": 8,
+      "components": 3
+    }
+  ],
+  "totalCapabilities": 12,
+  "totalControls": 339,
+  "coveredControls": 42,
+  "coveragePercent": 12.4,
+  "gapControls": ["AC-4", "AC-5", "AC-6"]
+}
+```
+
+#### `POST /api/dashboard/capabilities/import/csp-profile`
+
+Import a CSP profile to create components, capabilities, and control mappings. Use `?dryRun=true` for preview.
+
+**Request:**
+```json
+{
+  "profileId": "azure-gov-high",
+  "conflictResolution": "Skip"
+}
+```
+
+**Response (dryRun=true):**
+```json
+{
+  "profileName": "Azure Government — FedRAMP High",
+  "newCapabilities": 8,
+  "existingCapabilities": 2,
+  "newMappings": 42,
+  "conflicts": 3,
+  "newComponents": 3
+}
+```
+
+#### `POST /api/dashboard/capabilities/import/crm`
+
+Import CRM spreadsheet (CSV/Excel) as `multipart/form-data`. Use `?dryRun=true` for preview.
+
+**Form Fields:**
+- `file` — CSV or Excel file
+- `columnMapping` (optional) — JSON column mapping
+
+**Response (dryRun=true):**
+```json
+{
+  "totalRows": 120,
+  "newCapabilities": 6,
+  "existingCapabilities": 4,
+  "newMappings": 35,
+  "unmatchedControlIds": ["ZZ-99"],
+  "detectedColumns": ["Control ID", "Inheritance", "Provider"],
+  "sampleRows": [{"Control ID": "AC-2", "Inheritance": "Inherited"}]
+}
+```
+
+#### `POST /api/dashboard/components/{componentId}/capabilities`
+
+Bulk link capabilities to a component.
+
+**Request:**
+```json
+{
+  "capabilityIds": ["guid1", "guid2"]
+}
+```
+
+#### `DELETE /api/dashboard/components/{componentId}/capabilities/{capabilityId}`
+
+Unlink a capability from a component. Idempotent — returns 204 even if not linked.
+
+---
+
 ## US5: SSP Authoring & Narrative Management Tools
 
 ### `compliance_write_narrative`

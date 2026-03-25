@@ -837,6 +837,19 @@ void RegisterCoreServices(IServiceCollection services, IConfiguration configurat
     services.AddHostedService<Ato.Copilot.Agents.Compliance.Services.SspExportBackgroundService>();
     services.AddHostedService<Ato.Copilot.Agents.Compliance.Services.SspExportRetentionService>();
 
+    // Feature 043: Control Inheritance CRM Export
+    services.AddSingleton<Ato.Copilot.Mcp.Services.CrmExportService>();
+
+    // Feature 043: CSP Profile Service
+    services.AddSingleton<Ato.Copilot.Mcp.Services.CspProfileService>();
+
+    // Feature 045: Capabilities Hub Import Service
+    services.AddScoped<Ato.Copilot.Mcp.Services.CapabilityImportService>();
+
+    // Feature 044: Org-Level Inheritance Service
+    services.AddScoped<Ato.Copilot.Core.Interfaces.Compliance.IOrgInheritanceService,
+        Ato.Copilot.Agents.Compliance.Services.OrgInheritanceService>();
+
     // Feature 041: Authorization Package generation pipeline
     services.AddSingleton(System.Threading.Channels.Channel.CreateBounded<Ato.Copilot.Core.Dtos.Dashboard.PackageExportJob>(
         new System.Threading.Channels.BoundedChannelOptions(20) { FullMode = System.Threading.Channels.BoundedChannelFullMode.Wait }));

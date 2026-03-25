@@ -7,7 +7,7 @@ const STEPS = [
   { step: WizardStep.AuthorizationBoundaries, label: 'Authorization Boundaries' },
   { step: WizardStep.AssignRoles, label: 'Assign RMF Roles' },
   { step: WizardStep.VerifyRoles, label: 'Verify Roles' },
-  { step: WizardStep.Categorization, label: 'Set Categorization' },
+  { step: WizardStep.Categorization, label: 'Categorization & Baseline' },
   { step: WizardStep.PrivacyAnalysis, label: 'Privacy Analysis' },
 ];
 

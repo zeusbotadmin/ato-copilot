@@ -1718,3 +1718,51 @@ Query parameters for discovery GET: `resourceGroup`, `resourceType`, `search`, `
 | `compliance_delete_boundary_definition` | Delete a boundary (reassigns resources to Primary) |
 | `compliance_boundary_gap_analysis` | Run boundary-scoped gap analysis with optional boundary filter |
 | `compliance_define_boundary` (modified) | Optionally assigns resources to a named boundary definition |
+
+#### Control Inheritance & CRM (Feature 043)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/dashboard/systems/{systemId}/inheritance` | List inheritance designations with filter/search/pagination |
+| PUT | `/api/dashboard/systems/{systemId}/inheritance` | Set inheritance designations (single or bulk) |
+| GET | `/api/dashboard/systems/{systemId}/inheritance/{controlId}/audit` | Get audit trail for a control |
+| GET | `/api/dashboard/systems/{systemId}/inheritance/crm` | Generate CRM data |
+| GET | `/api/dashboard/systems/{systemId}/inheritance/crm/export` | Export CRM as CSV or Excel |
+| GET | `/api/dashboard/systems/{systemId}/inheritance/csp-profiles` | List available CSP profiles |
+
+Query parameters for inheritance GET: `family`, `inheritanceType`, `search`, `source`, `page`, `pageSize`, `sortBy`, `sortDirection`
+
+The `source` parameter filters by designation source: `org` (org defaults only), `override` (system overrides only), `undesignated`.
+
+Query parameters for CRM export GET: `format` (csv/excel), `layout` (custom/fedramp/emass)
+
+#### Org-Level Inheritance Defaults (Feature 044)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/dashboard/inheritance/org-defaults` | List org-level inheritance defaults (paginated) |
+| POST | `/api/dashboard/inheritance/org-defaults/derive` | Derive org defaults from capability mappings, cascade to systems |
+| POST | `/api/dashboard/systems/{systemId}/inheritance/revert-to-org-defaults` | Revert selected controls to org defaults |
+
+Query parameters for org-defaults GET: `family`, `inheritanceType`, `search`, `page`, `pageSize`
+
+The list inheritance response now includes `designationSource` and `orgDefault` fields per item, plus `orgDefaultCount`, `systemOverrideCount`, and `sourceBreakdown` in the summary. CRM export includes a "Designation Source" column.
+
+#### Security Capabilities Hub (Feature 045)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/dashboard/capabilities` | List security capabilities (paginated, filterable) |
+| POST | `/api/dashboard/capabilities` | Create a new security capability |
+| PUT | `/api/dashboard/capabilities/{id}` | Update a security capability |
+| DELETE | `/api/dashboard/capabilities/{id}` | Delete a security capability |
+| GET | `/api/dashboard/capabilities/coverage` | Compute coverage dashboard (provider cards, KPI, gap controls) |
+| GET | `/api/dashboard/capabilities/csp-profiles` | List available CSP profiles with service counts |
+| POST | `/api/dashboard/capabilities/import/csp-profile` | Import CSP profile (preview with `?dryRun=true` or apply) |
+| POST | `/api/dashboard/capabilities/import/crm` | Import CRM spreadsheet (preview with `?dryRun=true` or apply) |
+| POST | `/api/dashboard/components/{componentId}/capabilities` | Bulk link capabilities to a component |
+| DELETE | `/api/dashboard/components/{componentId}/capabilities/{capabilityId}` | Unlink a capability from a component |
+
+Query parameters for capabilities GET: `search`, `category`, `provider`, `status`, `page`, `pageSize`
+
+The CSP profile import accepts JSON body with `profileId` and `conflictResolution` (Skip/Overwrite). The CRM import accepts `multipart/form-data` with a file and optional `columnMapping` JSON field. Both endpoints support `?dryRun=true` to return a preview without committing changes.

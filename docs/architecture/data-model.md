@@ -56,6 +56,7 @@ erDiagram
 
     ControlBaseline ||--o{ ControlTailoring : has
     ControlBaseline ||--o{ ControlInheritance : has
+    ControlInheritance }o--o| OrgInheritanceDefault : "derived from"
 
     AssessmentRecord ||--o{ ControlEffectiveness : has
 
@@ -273,7 +274,26 @@ Inheritance designation for controls in a baseline.
 | `InheritanceType` | `InheritanceType` | Inherited, Shared, Customer |
 | `Provider` | `string?` | CSP or provider name |
 | `CustomerResponsibility` | `string?` | Customer-specific responsibility |
+| `DesignationSource` | `string?` (20) | Source of designation: OrgDerived, Manual, ProfileApply, CrmImport, BulkUpdate (Feature 044) |
+| `OrgInheritanceDefaultId` | `string?` (36) | FK → OrgInheritanceDefault — tracks which org default this was derived from (Feature 044) |
 | `DesignatedAt` | `DateTime` | Timestamp |
+
+### OrgInheritanceDefault (Feature 044)
+
+Org-level inheritance defaults derived from capability control mappings. One per control ID.
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `Id` | `Guid` | Primary key |
+| `ControlId` | `string` (20) | NIST control ID (unique index) |
+| `InheritanceType` | `InheritanceType` | Inherited or Shared |
+| `Provider` | `string` (500) | Merged provider names from capabilities |
+| `SourceCapabilityIds` | `string` (2000) | Comma-separated capability IDs |
+| `SourceCapabilityNames` | `string` (2000) | Comma-separated capability names |
+| `MappingRole` | `CapabilityMappingRole` | Winning role: Primary, Supporting, or Shared |
+| `DerivedAt` | `DateTime` | When the default was last derived |
+
+**Relationships:** Referenced by `ControlInheritance.OrgInheritanceDefaultId`
 
 ---
 
@@ -1025,6 +1045,57 @@ EF Core migrations run automatically at startup (`MigrateDatabaseAsync`) with a 
 ---
 
 ## Dashboard Entities (Feature 030)
+
+### CspProfile (JSON — in-memory)
+
+Pre-built Cloud Service Provider profile loaded from embedded JSON. Not persisted in the database.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| ProfileId | string | Unique profile identifier |
+| Name | string | Display name (e.g., "Azure Government — FedRAMP High") |
+| Provider | string | CSP provider name |
+| BaselineLevel | string | NIST baseline (Low / Moderate / High) |
+| Description | string | Profile description |
+| Version | string | Profile version |
+| Controls | List&lt;ProfileControlMapping&gt; | Top-level control mappings |
+| Services | List&lt;CspService&gt; | Grouped capabilities by service |
+
+### CspService (JSON — in-memory)
+
+A service grouping within a CSP profile that maps to one or more capabilities.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| Name | string | Service name (e.g., "Azure Active Directory") |
+| Category | string | NIST control family code |
+| Description | string | Service description |
+| Controls | List&lt;ProfileControlMapping&gt; | Controls covered by this service |
+
+### Import Pipeline Data Flow (Feature 045)
+
+The Capabilities Hub import pipeline transforms CSP profile and CRM data into the entity graph:
+
+```
+CSP Profile JSON / CRM Spreadsheet
+        │
+        ▼
+  CapabilityImportService
+        │
+        ├─► SystemComponent (Thing — one per provider/service)
+        │       └─► ComponentCapabilityLink
+        │
+        ├─► SecurityCapability (one per service or CRM grouping)
+        │       └─► CapabilityControlMapping (per control ID)
+        │
+        ▼
+  OrgInheritanceService.DeriveOrgDefaultsAsync()
+        │
+        ├─► OrgInheritanceDefault (per control)
+        │
+        └─► ControlBaseline (OrgDerived designations per system)
+                └─► NarrativeSection (auto-generated if template matches)
+```
 
 ### SecurityCapability
 

@@ -95,7 +95,7 @@ public class SystemCapabilityLinkService
                     _db.ControlImplementations.Add(new ControlImplementation
                     {
                         RegisteredSystemId = systemId,
-                        ControlId = mapping.ControlId,
+                        ControlId = mapping.ControlId.ToUpperInvariant(),
                         SecurityCapabilityId = mapping.SecurityCapabilityId,
                         ImplementationStatus = ImplementationStatus.Planned,
                         ApprovalStatus = SspSectionStatus.Draft,

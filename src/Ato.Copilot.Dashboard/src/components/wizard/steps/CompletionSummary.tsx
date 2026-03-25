@@ -17,7 +17,7 @@ const STEP_LABELS = [
   'Authorization Boundaries',
   'Assign RMF Roles',
   'Verify Roles',
-  'Set Categorization',
+  'Categorization & Baseline',
   'Privacy Analysis',
 ];
 

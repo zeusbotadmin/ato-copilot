@@ -71,7 +71,7 @@ function wizardReducer(state: WizardState, action: WizardAction): WizardState {
       return { ...initialState };
 
     case 'NEXT_STEP': {
-      if (state.currentStep >= WizardStep.Categorization) return state;
+      if (state.currentStep >= WizardStep.PrivacyAnalysis) return state;
       const stepIndex = state.currentStep - 1;
       const newCompleted = [...state.completedSteps];
       newCompleted[stepIndex] = true;
@@ -98,7 +98,7 @@ function wizardReducer(state: WizardState, action: WizardAction): WizardState {
 
     case 'SKIP_STEP': {
       if (state.currentStep <= WizardStep.Registration) return state;
-      if (state.currentStep >= WizardStep.Categorization) return state;
+      if (state.currentStep >= WizardStep.PrivacyAnalysis) return state;
       const stepIndex = state.currentStep - 1;
       const newCompleted = [...state.completedSteps];
       newCompleted[stepIndex] = true;

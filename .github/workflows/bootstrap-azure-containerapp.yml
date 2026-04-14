@@ -86,12 +86,12 @@ jobs:
           LOCATION="${{ github.event.inputs.location }}"
           SQL_SERVER="${{ github.event.inputs.sql_server_name }}"
           SQL_DB="${{ github.event.inputs.sql_database_name }}"
-          SQL_ADMIN="${{ github.event.inputs.sql_admin_login }}"
-          SQL_PASSWORD="${{ secrets.ATO_SQL_ADMIN_PASSWORD }}"
 
-          if [[ -z "$SQL_PASSWORD" ]]; then
-            echo "::error::Secret ATO_SQL_ADMIN_PASSWORD is not set. Add it to GitHub Secrets before running bootstrap."
-            exit 1
+          # Policy requires Azure SQL server creation with Entra ID-only auth enabled.
+          AAD_ADMIN_SID="${{ secrets.AZURE_CLIENT_ID }}"
+          AAD_ADMIN_NAME=$(az ad sp show --id "$AAD_ADMIN_SID" --query displayName -o tsv 2>/dev/null || true)
+          if [[ -z "$AAD_ADMIN_NAME" ]]; then
+            AAD_ADMIN_NAME="$AAD_ADMIN_SID"
           fi
 
           EXISTING_SERVER=$(az sql server show \
@@ -101,13 +101,23 @@ jobs:
           if [[ -n "$EXISTING_SERVER" ]]; then
             FQDN="$EXISTING_SERVER"
             echo "SQL Server '$SQL_SERVER' already exists at $FQDN. Reusing."
+
+            AAD_ONLY=$(az sql server ad-only-auth get \
+              --resource-group "$RG" --name "$SQL_SERVER" \
+              --query azureADOnlyAuthentication -o tsv 2>/dev/null || echo "false")
+            if [[ "$AAD_ONLY" != "true" ]]; then
+              echo "Enabling Azure AD-only authentication on existing server '$SQL_SERVER'..."
+              az sql server ad-only-auth enable --resource-group "$RG" --name "$SQL_SERVER" >/dev/null
+            fi
           else
             FQDN=$(az sql server create \
               --resource-group "$RG" \
               --name "$SQL_SERVER" \
               --location "$LOCATION" \
-              --admin-user "$SQL_ADMIN" \
-              --admin-password "$SQL_PASSWORD" \
+              --enable-ad-only-auth \
+              --external-admin-principal-type Application \
+              --external-admin-name "$AAD_ADMIN_NAME" \
+              --external-admin-sid "$AAD_ADMIN_SID" \
               --query fullyQualifiedDomainName -o tsv)
             echo "Created SQL Server '$SQL_SERVER'."
           fi
@@ -135,10 +145,11 @@ jobs:
             echo "Created database '$SQL_DB'."
           fi
 
-          CONN="Server=tcp:${FQDN},1433;Database=${SQL_DB};User Id=${SQL_ADMIN};Password=<ATO_SQL_ADMIN_PASSWORD>;TrustServerCertificate=False;Encrypt=True;"
+          CONN="Server=tcp:${FQDN},1433;Database=${SQL_DB};Authentication=Active Directory Managed Identity;Encrypt=True;TrustServerCertificate=False;"
           echo "### SQL Server" >> "$GITHUB_STEP_SUMMARY"
           echo "- Server: ${FQDN}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Database: ${SQL_DB}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Azure AD-only auth: enabled" >> "$GITHUB_STEP_SUMMARY"
           echo "- Set GitHub secret: ATO_DB_CONNECTION_STRING=${CONN}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Create Log Analytics Workspace (idempotent)

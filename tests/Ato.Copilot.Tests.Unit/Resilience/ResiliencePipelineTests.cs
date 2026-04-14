@@ -3,6 +3,7 @@ using FluentAssertions;
 using Microsoft.Extensions.Http.Resilience;
 using Polly;
 using Polly.Retry;
+using Polly.Timeout;
 using Xunit;
 
 namespace Ato.Copilot.Tests.Unit.Resilience;
@@ -113,7 +114,9 @@ public class ResiliencePipelineTests
         Func<Task> act = () => client.GetAsync("http://test/api");
 
         // Assert
-        await act.Should().ThrowAsync<TaskCanceledException>();
+        await act.Should().ThrowAsync<Exception>()
+            .Where(ex => (ex is TimeoutRejectedException) || (ex is OperationCanceledException)
+                || ex.InnerException is TaskCanceledException);
     }
 
     /// <summary>

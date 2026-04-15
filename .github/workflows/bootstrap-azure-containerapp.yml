@@ -110,16 +110,45 @@ jobs:
               az sql server ad-only-auth enable --resource-group "$RG" --name "$SQL_SERVER" >/dev/null
             fi
           else
-            FQDN=$(az sql server create \
-              --resource-group "$RG" \
-              --name "$SQL_SERVER" \
-              --location "$LOCATION" \
-              --enable-ad-only-auth \
-              --external-admin-principal-type Application \
-              --external-admin-name "$AAD_ADMIN_NAME" \
-              --external-admin-sid "$AAD_ADMIN_SID" \
-              --query fullyQualifiedDomainName -o tsv)
-            echo "Created SQL Server '$SQL_SERVER'."
+            SQL_LOCATION="$LOCATION"
+            if [[ "$LOCATION" == usgov* ]]; then
+              SQL_LOCATION_CANDIDATES=("$LOCATION" "usgovvirginia" "usgovarizona" "usgovtexas")
+            else
+              SQL_LOCATION_CANDIDATES=("$LOCATION" "eastus2" "centralus" "westus2")
+            fi
+
+            CREATE_SQL_SUCCESS="false"
+            for CANDIDATE in "${SQL_LOCATION_CANDIDATES[@]}"; do
+              echo "Attempting SQL Server create in location '$CANDIDATE'..."
+              if FQDN=$(az sql server create \
+                --resource-group "$RG" \
+                --name "$SQL_SERVER" \
+                --location "$CANDIDATE" \
+                --enable-ad-only-auth \
+                --external-admin-principal-type Application \
+                --external-admin-name "$AAD_ADMIN_NAME" \
+                --external-admin-sid "$AAD_ADMIN_SID" \
+                --query fullyQualifiedDomainName -o tsv 2>/tmp/sql-create.err); then
+                SQL_LOCATION="$CANDIDATE"
+                CREATE_SQL_SUCCESS="true"
+                echo "Created SQL Server '$SQL_SERVER' in location '$SQL_LOCATION'."
+                break
+              fi
+
+              if grep -Eq "RegionDoesNotAllowProvisioning|is not accepting creation of new Windows Azure SQL Database servers" /tmp/sql-create.err; then
+                echo "Location '$CANDIDATE' is capacity blocked for SQL server creation. Trying next candidate..."
+                continue
+              fi
+
+              echo "::error::Failed to create SQL Server in '$CANDIDATE'."
+              cat /tmp/sql-create.err
+              exit 1
+            done
+
+            if [[ "$CREATE_SQL_SUCCESS" != "true" ]]; then
+              echo "::error::Unable to create SQL Server '$SQL_SERVER' in any candidate location: ${SQL_LOCATION_CANDIDATES[*]}"
+              exit 1
+            fi
           fi
 
           az sql server firewall-rule create \
@@ -149,6 +178,7 @@ jobs:
           echo "### SQL Server" >> "$GITHUB_STEP_SUMMARY"
           echo "- Server: ${FQDN}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Database: ${SQL_DB}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- SQL Location: ${SQL_LOCATION:-$LOCATION}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Azure AD-only auth: enabled" >> "$GITHUB_STEP_SUMMARY"
           echo "- Set GitHub secret: ATO_DB_CONNECTION_STRING=${CONN}" >> "$GITHUB_STEP_SUMMARY"
 

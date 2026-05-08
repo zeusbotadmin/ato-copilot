@@ -381,11 +381,11 @@
 
 ### Tests for User Story 8
 
-- [ ] T172 [P] [US8] Create `tests/Ato.Copilot.Tests.Integration/Tenancy/CspDashboardContractTests.cs` — validates `GET /api/csp/dashboard/summary|tenants|atos` against [contracts/csp-dashboard.openapi.yaml](contracts/csp-dashboard.openapi.yaml) (status codes, pagination bounds, sort/filter parameters)
-- [ ] T173 [P] [US8] Create `tests/Ato.Copilot.Tests.Integration/Tenancy/CspDashboardSummaryAggregationTests.cs` — seed 3 tenants × 5 systems × mixed ATO statuses + varied findings/POA&Ms/deviations; assert `summary` counts equal cross-tenant sums (acceptance scenario 1, SC-007)
-- [ ] T174 [P] [US8] Create `tests/Ato.Copilot.Tests.Integration/Tenancy/CspDashboardDisabledTenantTests.cs` — disable one tenant; assert it appears in `tenants` list with `Disabled` status; assert it is excluded from `summary` rollups; assert `disabledTenantCount` equals 1 (acceptance scenario 4, FR-098)
-- [ ] T175 [P] [US8] Create `tests/Ato.Copilot.Tests.Integration/Tenancy/CspDashboardAuthorizationTests.cs` — non-CSP-Admin gets `403 FORBIDDEN_NOT_CSP_ADMIN` on every dashboard endpoint (acceptance scenario 3); when `CspProfile` is not `Active`, every dashboard endpoint returns `503 CSP_ONBOARDING_INCOMPLETE` (FR-097, acceptance scenario 6)
-- [ ] T176 [P] [US8] Create `tests/Ato.Copilot.Tests.Integration/Tenancy/CspDashboardDrillThroughTests.cs` — simulate dashboard-row click → `POST /api/tenants/{id}/impersonate`; assert subsequent `GET /api/dashboard/systems` scopes to that tenant (acceptance scenario 5)
+- [X] T172 [P] [US8] Create `tests/Ato.Copilot.Tests.Integration/Tenancy/CspDashboardContractTests.cs` — validates `GET /api/csp/dashboard/summary|tenants|atos` against [contracts/csp-dashboard.openapi.yaml](contracts/csp-dashboard.openapi.yaml) (status codes, pagination bounds, sort/filter parameters)
+- [X] T173 [P] [US8] Create `tests/Ato.Copilot.Tests.Integration/Tenancy/CspDashboardSummaryAggregationTests.cs` — seed 3 tenants × 5 systems × mixed ATO statuses + varied findings/POA&Ms/deviations; assert `summary` counts equal cross-tenant sums (acceptance scenario 1, SC-007)
+- [X] T174 [P] [US8] Create `tests/Ato.Copilot.Tests.Integration/Tenancy/CspDashboardDisabledTenantTests.cs` — disable one tenant; assert it appears in `tenants` list with `Disabled` status; assert it is excluded from `summary` rollups; assert `disabledTenantCount` equals 1 (acceptance scenario 4, FR-098)
+- [X] T175 [P] [US8] Create `tests/Ato.Copilot.Tests.Integration/Tenancy/CspDashboardAuthorizationTests.cs` — non-CSP-Admin gets `403 FORBIDDEN_NOT_CSP_ADMIN` on every dashboard endpoint (acceptance scenario 3); when `CspProfile` is not `Active`, every dashboard endpoint returns `503 CSP_ONBOARDING_INCOMPLETE` (FR-097, acceptance scenario 6)
+- [X] T176 [P] [US8] Create `tests/Ato.Copilot.Tests.Integration/Tenancy/CspDashboardDrillThroughTests.cs` — simulate dashboard-row click → `POST /api/tenants/{id}/impersonate`; assert subsequent `GET /api/dashboard/systems` scopes to that tenant (acceptance scenario 5)
 
 ### Implementation for User Story 8
 

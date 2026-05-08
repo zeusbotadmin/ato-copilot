@@ -30,6 +30,13 @@ public class CspOnboardingGateTests
         _factory = factory;
         _client = factory.CreateClient();
 
+        // Wipe any CspProfile row left over from prior tests in the shared
+        // `[Collection("Tenancy")]` (e.g. CspOnboardingContractTests's
+        // submit-success path). Without this reset the gate's cache-aside
+        // would see an Active singleton and let traffic through, masking
+        // the gate behavior under test.
+        factory.ResetCspProfileAsync().GetAwaiter().GetResult();
+
         var ctx = factory.GetActiveContext();
         ctx.TenantId = MultiTenantWebApplicationFactory<McpProgram>.TenantAId;
         ctx.IsCspAdmin = true;

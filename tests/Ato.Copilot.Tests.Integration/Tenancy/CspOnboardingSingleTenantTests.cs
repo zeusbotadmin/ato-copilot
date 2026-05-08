@@ -7,6 +7,7 @@ using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Xunit;
@@ -78,9 +79,23 @@ public class CspOnboardingSingleTenantTests
         // Act
         await using var scope = _factory.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AtoCopilotContext>();
-        var profileCount = await db.Set<Ato.Copilot.Core.Models.Tenancy.CspProfile>()
-            .IgnoreQueryFilters()
-            .CountAsync();
+
+        // The SingleTenant fixture intentionally does NOT pre-create the
+        // `CspProfiles` table — the endpoints must short-circuit so far
+        // upstream that the table never even gets touched. Treat
+        // "no such table" as a stronger form of "0 rows".
+        int profileCount;
+        try
+        {
+            profileCount = await db.Set<Ato.Copilot.Core.Models.Tenancy.CspProfile>()
+                .IgnoreQueryFilters()
+                .CountAsync();
+        }
+        catch (Microsoft.Data.Sqlite.SqliteException ex)
+            when (ex.Message.Contains("no such table", StringComparison.OrdinalIgnoreCase))
+        {
+            profileCount = 0;
+        }
 
         // Assert
         profileCount.Should().Be(0,
@@ -89,7 +104,9 @@ public class CspOnboardingSingleTenantTests
 
     /// <summary>
     /// Single-tenant fixture: same SQLite-backed boot as the multi-tenant
-    /// fixture but with <c>ATO_Deployment__Mode=SingleTenant</c>.
+    /// fixture but pins <c>Deployment:Mode = SingleTenant</c> via in-memory
+    /// configuration (NOT env vars — env vars are process-global and race
+    /// with the sibling <c>MultiTenantWebApplicationFactory</c>).
     /// </summary>
     public sealed class SingleTenantFactory : WebApplicationFactory<McpProgram>
     {
@@ -99,10 +116,14 @@ public class CspOnboardingSingleTenantTests
 
         public SingleTenantFactory()
         {
+            // Set env vars for ALL config that does NOT differ between
+            // sibling fixtures (DB provider/connection use SQLite in both).
+            // Anything fixture-specific (Deployment:Mode) MUST go through
+            // ConfigureAppConfiguration to avoid cross-fixture contamination
+            // since env vars are process-global.
             Environment.SetEnvironmentVariable("ATO_Database__Provider", "Sqlite");
             Environment.SetEnvironmentVariable("ATO_ConnectionStrings__DefaultConnection",
                 $"Data Source={_sqliteFile};Mode=ReadWriteCreate");
-            Environment.SetEnvironmentVariable("ATO_Deployment__Mode", "SingleTenant");
             Environment.SetEnvironmentVariable("ATO_Auth__Impersonation__SigningKey",
                 "ato-copilot-tests-impersonation-signing-key-stable-32B!");
             Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
@@ -113,10 +134,37 @@ public class CspOnboardingSingleTenantTests
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Testing");
+
+            // Pin Deployment:Mode = SingleTenant via in-memory configuration,
+            // NOT env vars — env vars are process-global and would race with
+            // the sibling MultiTenantWebApplicationFactory.
+            builder.ConfigureAppConfiguration(cfg =>
+            {
+                cfg.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["Deployment:Mode"] = "SingleTenant",
+                });
+            });
+
             builder.ConfigureServices(services =>
             {
                 services.Configure<HostOptions>(o =>
                     o.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore);
+
+                // Same SQL-Server-only hosted service the multi-tenant factory
+                // strips out — its StartAsync hard-fails on SQLite which would
+                // tear down the test host. (Mirrors the multi-tenant fixture's
+                // teardown protection per Feature 048 / T112.)
+                for (var i = services.Count - 1; i >= 0; i--)
+                {
+                    var d = services[i];
+                    if (d.ServiceType == typeof(IHostedService) &&
+                        (d.ImplementationType == typeof(Ato.Copilot.Core.Services.BoundaryMigrationService) ||
+                         d.ImplementationInstance?.GetType() == typeof(Ato.Copilot.Core.Services.BoundaryMigrationService)))
+                    {
+                        services.RemoveAt(i);
+                    }
+                }
             });
         }
     }

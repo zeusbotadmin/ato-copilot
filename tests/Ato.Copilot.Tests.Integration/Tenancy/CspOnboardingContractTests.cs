@@ -34,6 +34,11 @@ public class CspOnboardingContractTests
         _factory = factory;
         _client = factory.CreateClient();
 
+        // Wipe any CspProfile row left over from prior tests / classes in
+        // the shared `[Collection("Tenancy")]` so each contract test method
+        // starts from a fresh "Pending" deployment.
+        factory.ResetCspProfileAsync().GetAwaiter().GetResult();
+
         var ctx = factory.GetActiveContext();
         ctx.TenantId = MultiTenantWebApplicationFactory<McpProgram>.TenantAId;
         ctx.IsCspAdmin = true;

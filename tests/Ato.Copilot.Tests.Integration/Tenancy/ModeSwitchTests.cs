@@ -100,13 +100,20 @@ public class ModeSwitchTests : IAsyncLifetime
     private sealed class SharedSqliteFactory<TStartup> : MultiTenantWebApplicationFactory<TStartup>
         where TStartup : class
     {
+        private readonly DeploymentMode _mode;
+
         public SharedSqliteFactory(string sqliteFile, DeploymentMode mode)
         {
             // Override env vars set by the parent ctor.
             Environment.SetEnvironmentVariable("ATO_ConnectionStrings__DefaultConnection",
                 $"Data Source={sqliteFile};Mode=ReadWriteCreate");
+            // Env-var fallback only — IOptions<DeploymentOptions> is pinned
+            // via the DeploymentModeOverride hook below.
             Environment.SetEnvironmentVariable("ATO_Deployment__Mode", mode.ToString());
+            _mode = mode;
         }
+
+        protected override string DeploymentModeOverride => _mode.ToString();
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {

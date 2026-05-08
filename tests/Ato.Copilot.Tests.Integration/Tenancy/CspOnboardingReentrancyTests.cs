@@ -33,6 +33,11 @@ public class CspOnboardingReentrancyTests
         _factory = factory;
         _client = factory.CreateClient();
 
+        // Wipe any CspProfile row left over from prior tests in the shared
+        // `[Collection("Tenancy")]` so each re-entrancy test method starts
+        // from a fresh "Pending" deployment.
+        factory.ResetCspProfileAsync().GetAwaiter().GetResult();
+
         var ctx = factory.GetActiveContext();
         ctx.TenantId = MultiTenantWebApplicationFactory<McpProgram>.TenantAId;
         ctx.IsCspAdmin = true;

@@ -73,7 +73,12 @@ public class SingleTenantUiHidesTenantPickerTests
     {
         public SingleTenantWebApplicationFactory()
         {
+            // Env-var fallback for any code path that reads the var directly
+            // (NOT relied on for IOptions<DeploymentOptions> — that's pinned
+            // via DeploymentModeOverride below).
             Environment.SetEnvironmentVariable("ATO_Deployment__Mode", "SingleTenant");
         }
+
+        protected override string DeploymentModeOverride => "SingleTenant";
     }
 }

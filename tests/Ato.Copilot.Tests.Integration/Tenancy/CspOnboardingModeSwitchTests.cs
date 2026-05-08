@@ -10,6 +10,7 @@ using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Xunit;
@@ -63,8 +64,20 @@ public class CspOnboardingModeSwitchTests : IAsyncLifetime
             any.Should().NotBeNull("SingleTenant boot must create the default tenant");
             existingTenantId = any!.Id;
 
-            // Confirm there is no CspProfile row.
-            var cspCount = await db.Set<CspProfile>().IgnoreQueryFilters().CountAsync();
+            // Confirm there is no CspProfile row. The CspProfiles table does
+            // not exist on first boot in our SQLite test fixture (production
+            // creates it via EnsureCreatedAsync on the SQL-Server path) — a
+            // missing table is a stronger guarantee than zero rows.
+            int cspCount;
+            try
+            {
+                cspCount = await db.Set<CspProfile>().IgnoreQueryFilters().CountAsync();
+            }
+            catch (Microsoft.Data.Sqlite.SqliteException ex)
+                when (ex.Message.Contains("no such table", StringComparison.OrdinalIgnoreCase))
+            {
+                cspCount = 0;
+            }
             cspCount.Should().Be(0, "SingleTenant mode never creates a CspProfile");
         }
 
@@ -121,24 +134,55 @@ public class CspOnboardingModeSwitchTests : IAsyncLifetime
 
         public ModeFactory(string sqliteFile, DeploymentMode mode)
         {
+            // DB env vars are safe to set process-globally — both modes use
+            // SQLite. Deployment:Mode is per-host via in-memory configuration
+            // below to avoid contention with sibling fixtures (the env var
+            // would race with MultiTenantWebApplicationFactory and
+            // SingleTenantFactory ctors).
             Environment.SetEnvironmentVariable("ATO_Database__Provider", "Sqlite");
             Environment.SetEnvironmentVariable("ATO_ConnectionStrings__DefaultConnection",
                 $"Data Source={sqliteFile};Mode=ReadWriteCreate");
-            Environment.SetEnvironmentVariable("ATO_Deployment__Mode", mode.ToString());
             Environment.SetEnvironmentVariable("ATO_Auth__Impersonation__SigningKey",
                 "ato-copilot-tests-impersonation-signing-key-stable-32B!");
             Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
             Environment.SetEnvironmentVariable("ATO_Tenant__Resolution__BypassForTests", "true");
             Environment.SetEnvironmentVariable("ATO_Auth__BypassForTests", "true");
+            _mode = mode;
         }
+
+        private readonly DeploymentMode _mode;
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Testing");
+
+            // Pin Deployment:Mode for THIS host without env-var contention.
+            builder.ConfigureAppConfiguration(cfg =>
+            {
+                cfg.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["Deployment:Mode"] = _mode.ToString(),
+                });
+            });
+
             builder.ConfigureServices(services =>
             {
                 services.Configure<HostOptions>(o =>
                     o.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore);
+
+                // Strip the SQL-Server-only BoundaryMigrationService — its
+                // StartAsync hard-fails on SQLite which would tear down the
+                // test host before WebApplicationFactory can capture it.
+                for (var i = services.Count - 1; i >= 0; i--)
+                {
+                    var d = services[i];
+                    if (d.ServiceType == typeof(IHostedService) &&
+                        (d.ImplementationType == typeof(Ato.Copilot.Core.Services.BoundaryMigrationService) ||
+                         d.ImplementationInstance?.GetType() == typeof(Ato.Copilot.Core.Services.BoundaryMigrationService)))
+                    {
+                        services.RemoveAt(i);
+                    }
+                }
 
                 // Replace the scoped tenant context with the test-controlled one.
                 for (var i = services.Count - 1; i >= 0; i--)
@@ -149,7 +193,33 @@ public class CspOnboardingModeSwitchTests : IAsyncLifetime
                     }
                 }
                 services.AddScoped<Ato.Copilot.Core.Interfaces.Tenancy.ITenantContext>(_ => _activeContext);
+
+                // Issue the SQLite tenancy DDL so CspProfiles + Tenants tables
+                // exist on first boot, BUT do NOT auto-seed an Active
+                // CspProfile (the way the standard MultiTenantWebApplicationFactory
+                // does). The mode-switch test asserts that the second
+                // (MultiTenant) boot finds Pending/InWizard, so seeding here
+                // would invalidate the scenario.
+                services.AddHostedService<TenancyTablesOnlyHostedService>();
             });
         }
+    }
+
+    /// <summary>Creates the tenancy tables but does NOT seed any rows.</summary>
+    private sealed class TenancyTablesOnlyHostedService : IHostedService
+    {
+        private readonly IServiceProvider _services;
+        public TenancyTablesOnlyHostedService(IServiceProvider services) => _services = services;
+
+        public async Task StartAsync(CancellationToken cancellationToken)
+        {
+            await using var scope = _services.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetService<AtoCopilotContext>();
+            if (db is null) return;
+            await TenancySeedHostedService
+                .CreateTenancyTablesIfMissingPublicAsync(db, cancellationToken);
+        }
+
+        public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 }

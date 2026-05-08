@@ -62,6 +62,19 @@ public class CspProfile
     /// <summary>Set when <see cref="OnboardingState"/> transitions to <c>Active</c>.</summary>
     public DateTimeOffset? OnboardingCompletedAt { get; set; }
 
+    /// <summary>
+    /// Set when the actor first POSTs to <c>/api/csp/onboarding/identity</c>
+    /// with valid input. Drives the wizard's "currentStep" cursor (FR-090);
+    /// re-posting the same step does NOT reset this column.
+    /// </summary>
+    public DateTimeOffset? IdentityCompletedAt { get; set; }
+
+    /// <summary>Set when the actor first POSTs to <c>/api/csp/onboarding/support</c>.</summary>
+    public DateTimeOffset? SupportCompletedAt { get; set; }
+
+    /// <summary>Set when the actor first POSTs to <c>/api/csp/onboarding/classification</c>.</summary>
+    public DateTimeOffset? ClassificationCompletedAt { get; set; }
+
     /// <summary>Audit: when the row was first inserted.</summary>
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 

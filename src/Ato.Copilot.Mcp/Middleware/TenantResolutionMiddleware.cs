@@ -69,6 +69,22 @@ public sealed class TenantResolutionMiddleware
         "/api/tenants",
     };
 
+    /// <summary>
+    /// Path prefixes that remain reachable when the singleton hosting CSP has
+    /// not finished its first-use onboarding wizard (Feature 048 / FR-090 /
+    /// US7). The CSP-Admin must be able to drive the wizard, the auth
+    /// pipeline must keep working, and the health probe must stay reachable;
+    /// every other route is short-circuited with <c>503
+    /// CSP_ONBOARDING_INCOMPLETE</c>.
+    /// </summary>
+    private static readonly string[] CspOnboardingAllowedPrefixes =
+    {
+        "/api/csp/onboarding",
+        "/api/auth",
+        "/api/deployment",
+        "/health",
+    };
+
     private readonly RequestDelegate _next;
     private readonly ILogger<TenantResolutionMiddleware> _logger;
 
@@ -88,12 +104,38 @@ public sealed class TenantResolutionMiddleware
         IOptions<RoleClaimMappingsOptions> roleClaimMappings,
         IMemoryCache cache,
         AtoCopilotContext db,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        ICspProfileService cspProfileService)
     {
         if (ShouldBypass(context.Request.Path))
         {
             await _next(context);
             return;
+        }
+
+        // Stage A0 (FR-090 / US7): the CSP-onboarding gate. Runs BEFORE the
+        // test-bypass and BEFORE per-tenant resolution so:
+        //   * test fixtures that pre-populate ITenantContext can still
+        //     exercise the gate;
+        //   * non-CSP-Admin users can never reach a tenant-scoped endpoint
+        //     until the hosting CSP has finished its first-use wizard.
+        // SingleTenant deployments skip the gate entirely — the CSP wizard
+        // does not exist there (FR-093).
+        //
+        // Test fixtures that share `MultiTenantWebApplicationFactory` MUST
+        // either pre-seed an Active `CspProfile` (the default) or call
+        // `ResetCspProfileAsync()` to exercise the gate.
+        if (deploymentOptions.Value.Mode == DeploymentMode.MultiTenant
+            && !IsCspOnboardingAllowed(context.Request.Path))
+        {
+            var cspProfile = await cspProfileService.GetAsync(context.RequestAborted);
+            if (cspProfile?.OnboardingState != OnboardingState.Active)
+            {
+                await WriteErrorAsync(context, StatusCodes.Status503ServiceUnavailable,
+                    "CSP_ONBOARDING_INCOMPLETE",
+                    "The hosting Cloud Service Provider has not completed first-use onboarding. CSP-Admin: visit /onboarding/csp.");
+                return;
+            }
         }
 
         // Test-only bypass: when explicitly opted in via configuration, the
@@ -381,6 +423,17 @@ public sealed class TenantResolutionMiddleware
         if (!path.HasValue) return false;
         var s = path.Value!;
         foreach (var prefix in OnboardingAllowedPrefixes)
+        {
+            if (s.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
+
+    private static bool IsCspOnboardingAllowed(PathString path)
+    {
+        if (!path.HasValue) return false;
+        var s = path.Value!;
+        foreach (var prefix in CspOnboardingAllowedPrefixes)
         {
             if (s.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return true;
         }

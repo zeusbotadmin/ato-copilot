@@ -148,23 +148,57 @@ public class CspInheritedCapabilityReviewTests
             profileId = Guid.NewGuid();
         }
 
-        await db.Database.ExecuteSqlRawAsync(
-            $"""
-            INSERT OR IGNORE INTO "CspInheritedComponents"
-                ("Id","CspProfileId","Name","Description","ComponentType",
-                 "SourceFormat","Status","ImportedAt","ImportedBy")
-            VALUES
-                ('{_componentId}','{profileId}','Component-T192','desc',2,0,1,
-                 '{DateTime.UtcNow:O}','seed');
-            INSERT OR IGNORE INTO "CspInheritedCapabilities"
-                ("Id","CspInheritedComponentId","Name","Description",
-                 "MappedNistControlIds","MappingConfidence","Status","MappedBy",
-                 "CreatedAt","CreatedBy")
-            VALUES
-                ('{_needsReviewCapabilityId}','{_componentId}','Needs-Review-Cap','desc',
-                 '[]',0.42,1,0,'{DateTime.UtcNow:O}','seed'),
-                ('{_alreadyMappedCapabilityId}','{_componentId}','Already-Mapped-Cap','desc',
-                 '["AC-1"]',0.95,0,0,'{DateTime.UtcNow:O}','seed');
-            """);
+        // Use EF Add+SaveChanges so SQLite Guid-TEXT casing matches what
+        // the production code persists (raw-SQL interpolation lowercases
+        // Guid.ToString() and SQLite's case-sensitive TEXT comparison
+        // breaks JOIN-by-Guid). See Feature 048 T207 audit.
+        if (!await db.CspInheritedComponents.AnyAsync(c => c.Id == _componentId))
+        {
+            db.CspInheritedComponents.Add(new CspInheritedComponent
+            {
+                Id = _componentId,
+                CspProfileId = profileId,
+                Name = "Component-T192",
+                Description = "desc",
+                ComponentType = CspComponentType.Service,
+                SourceFormat = SourceFormat.Pdf,
+                Status = CspInheritedComponentStatus.Published,
+                ImportedAt = DateTimeOffset.UtcNow,
+                ImportedBy = "seed",
+            });
+        }
+        if (!await db.CspInheritedCapabilities.AnyAsync(c => c.Id == _needsReviewCapabilityId))
+        {
+            db.CspInheritedCapabilities.Add(new CspInheritedCapability
+            {
+                Id = _needsReviewCapabilityId,
+                CspInheritedComponentId = _componentId,
+                Name = "Needs-Review-Cap",
+                Description = "desc",
+                MappedNistControlIds = new List<string>(),
+                MappingConfidence = 0.42,
+                Status = CspInheritedCapabilityStatus.NeedsReview,
+                MappedBy = MappedBy.AI,
+                CreatedAt = DateTimeOffset.UtcNow,
+                CreatedBy = "seed",
+            });
+        }
+        if (!await db.CspInheritedCapabilities.AnyAsync(c => c.Id == _alreadyMappedCapabilityId))
+        {
+            db.CspInheritedCapabilities.Add(new CspInheritedCapability
+            {
+                Id = _alreadyMappedCapabilityId,
+                CspInheritedComponentId = _componentId,
+                Name = "Already-Mapped-Cap",
+                Description = "desc",
+                MappedNistControlIds = new List<string> { "AC-1" },
+                MappingConfidence = 0.95,
+                Status = CspInheritedCapabilityStatus.Mapped,
+                MappedBy = MappedBy.AI,
+                CreatedAt = DateTimeOffset.UtcNow,
+                CreatedBy = "seed",
+            });
+        }
+        await db.SaveChangesAsync();
     }
 }

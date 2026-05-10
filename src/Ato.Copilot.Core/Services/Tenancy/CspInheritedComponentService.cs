@@ -285,7 +285,9 @@ public sealed class CspInheritedComponentService : ICspInheritedComponentService
         capability.MappingFailureReason = null;
 
         // Audit row — T192 asserts presence of "CspInheritedCapability.Review"
-        // with the capability id in payload. The interceptor stamps TenantId.
+        // with the capability id in payload AND the reviewed control ids in
+        // AuditLogEntry.AffectedControls (FR-105). The interceptor stamps
+        // TenantId.
         db.AuditLogs.Add(new AuditLogEntry
         {
             Id = Guid.NewGuid().ToString(),
@@ -294,6 +296,7 @@ public sealed class CspInheritedComponentService : ICspInheritedComponentService
             Action = "CspInheritedCapability.Review",
             Outcome = AuditOutcome.Success,
             Timestamp = DateTime.UtcNow,
+            AffectedControls = capability.MappedNistControlIds.ToList(),
             Details = JsonSerializer.Serialize(new
             {
                 componentId,

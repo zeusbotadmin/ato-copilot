@@ -531,6 +531,9 @@ async Task RunHttpModeAsync(string[] args)
     app.MapTenantOnboardingEndpoints();
     // Feature 048 (T163 [US7]): CSP-Admin onboarding wizard.
     app.MapCspOnboardingEndpoints();
+    // Feature 048 (T208 [US9]): CSP-inherited components management surface
+    // — read-only across tenants, write-gated to CSP-Admin (FR-104..FR-106).
+    app.MapCspInheritedComponentEndpoints();
     // Feature 048 (T181 [US8]): CSP-Admin cross-tenant operational dashboard.
     app.MapCspDashboardEndpoints();
     // Feature 048 (T116 [US6]): CSP-Admin audit query surface.

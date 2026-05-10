@@ -147,14 +147,18 @@ public static class AtoCopilotMcpServiceExtensions
         // ingestion + capability mapping. Registered as Scoped so the parser
         // dispatcher and extraction service can share the same DbContext per
         // request. The wrapper (CspCapabilityMappingService) composes the
-        // FR-110-protected ICapabilityMappingService — that interface is
-        // intentionally LEFT UNREGISTERED here until the AI mapper from
-        // Features 045 / 008 is wired through (a separate slice). The
-        // CspInheritanceReuseAuditHealthCheck no-ops on unregistered
-        // interfaces so this is safe at startup; the runtime upload path is
-        // gated by T207 endpoints which have not yet landed.
+        // FR-110-protected ICapabilityMappingService — which is registered
+        // here exactly once as the NullCapabilityMappingService fallback
+        // (FR-102 path: AI mapper unavailable → empty candidate list →
+        // wrapper produces a single NeedsReview capability per component).
+        // The CspInheritanceReuseAuditHealthCheck (T218) verifies the
+        // single-registration invariant. When the AI-backed mapper from
+        // Features 045 / 008 is wired through in the T227 slice, swap the
+        // concrete in place — DO NOT add a second registration.
         services.Configure<Ato.Copilot.Core.Configuration.Tenancy.CspInheritedOptions>(
             configuration.GetSection(Ato.Copilot.Core.Configuration.Tenancy.CspInheritedOptions.SectionName));
+        services.AddScoped<Ato.Copilot.Core.Interfaces.Compliance.ICapabilityMappingService,
+            Ato.Copilot.Core.Services.Tenancy.NullCapabilityMappingService>();
         services.AddScoped<Ato.Copilot.Core.Interfaces.Tenancy.ICspAtoDocumentParser,
             Ato.Copilot.Core.Services.Tenancy.CspAtoDocumentParser>();
         services.AddScoped<Ato.Copilot.Core.Interfaces.Tenancy.ICspComponentExtractionService,

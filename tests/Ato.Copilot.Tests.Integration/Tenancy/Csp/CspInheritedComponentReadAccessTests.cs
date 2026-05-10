@@ -187,25 +187,71 @@ public class CspInheritedComponentReadAccessTests
             profileId = Guid.NewGuid();
         }
 
-        // Idempotently insert the three component statuses + a capability
-        // for the Published component. Use raw SQL so we can run BEFORE the
-        // entity model is finalised by T197 (the model IS in place after
-        // T197, but using SQL keeps this seed independent of EF caching).
-        await db.Database.ExecuteSqlRawAsync(
-            $"""
-            INSERT OR IGNORE INTO "CspInheritedComponents"
-                ("Id","CspProfileId","Name","Description","ComponentType",
-                 "SourceFormat","Status","ImportedAt","ImportedBy")
-            VALUES
-                ('{_publishedComponentId}','{profileId}','Published-Comp','desc',2,0,1,'{DateTime.UtcNow:O}','seed'),
-                ('{_draftComponentId}','{profileId}','Draft-Comp','desc',2,0,0,'{DateTime.UtcNow:O}','seed'),
-                ('{_archivedComponentId}','{profileId}','Archived-Comp','desc',2,0,2,'{DateTime.UtcNow:O}','seed');
-            INSERT OR IGNORE INTO "CspInheritedCapabilities"
-                ("Id","CspInheritedComponentId","Name","Description",
-                 "MappedNistControlIds","Status","MappedBy","CreatedAt","CreatedBy")
-            VALUES
-                ('{_publishedCapabilityId}','{_publishedComponentId}','Cap-1','desc',
-                 '["AC-2"]',0,0,'{DateTime.UtcNow:O}','seed');
-            """);
+        // Use EF Add+SaveChanges so the SQLite Guid TEXT-storage casing
+        // matches CspProfile rows persisted by the production code (the
+        // raw-SQL alternative interpolates Guid.ToString() in lowercase,
+        // which fails to JOIN against EF's uppercase-stored Guid TEXT in
+        // SQLite — see Feature 048 T207 audit).
+        if (!await db.CspInheritedComponents.AnyAsync(c => c.Id == _publishedComponentId))
+        {
+            db.CspInheritedComponents.Add(new CspInheritedComponent
+            {
+                Id = _publishedComponentId,
+                CspProfileId = profileId,
+                Name = "Published-Comp",
+                Description = "desc",
+                ComponentType = CspComponentType.Service,
+                SourceFormat = SourceFormat.Pdf,
+                Status = CspInheritedComponentStatus.Published,
+                ImportedAt = DateTimeOffset.UtcNow,
+                ImportedBy = "seed",
+            });
+        }
+        if (!await db.CspInheritedComponents.AnyAsync(c => c.Id == _draftComponentId))
+        {
+            db.CspInheritedComponents.Add(new CspInheritedComponent
+            {
+                Id = _draftComponentId,
+                CspProfileId = profileId,
+                Name = "Draft-Comp",
+                Description = "desc",
+                ComponentType = CspComponentType.Service,
+                SourceFormat = SourceFormat.Pdf,
+                Status = CspInheritedComponentStatus.Draft,
+                ImportedAt = DateTimeOffset.UtcNow,
+                ImportedBy = "seed",
+            });
+        }
+        if (!await db.CspInheritedComponents.AnyAsync(c => c.Id == _archivedComponentId))
+        {
+            db.CspInheritedComponents.Add(new CspInheritedComponent
+            {
+                Id = _archivedComponentId,
+                CspProfileId = profileId,
+                Name = "Archived-Comp",
+                Description = "desc",
+                ComponentType = CspComponentType.Service,
+                SourceFormat = SourceFormat.Pdf,
+                Status = CspInheritedComponentStatus.Archived,
+                ImportedAt = DateTimeOffset.UtcNow,
+                ImportedBy = "seed",
+            });
+        }
+        if (!await db.CspInheritedCapabilities.AnyAsync(c => c.Id == _publishedCapabilityId))
+        {
+            db.CspInheritedCapabilities.Add(new CspInheritedCapability
+            {
+                Id = _publishedCapabilityId,
+                CspInheritedComponentId = _publishedComponentId,
+                Name = "Cap-1",
+                Description = "desc",
+                MappedNistControlIds = new List<string> { "AC-2" },
+                Status = CspInheritedCapabilityStatus.Mapped,
+                MappedBy = MappedBy.AI,
+                CreatedAt = DateTimeOffset.UtcNow,
+                CreatedBy = "seed",
+            });
+        }
+        await db.SaveChangesAsync();
     }
 }

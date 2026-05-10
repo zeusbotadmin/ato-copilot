@@ -2,6 +2,7 @@ using Ato.Copilot.Core.Data.Context;
 using Ato.Copilot.Core.Interfaces.Tenancy;
 using Ato.Copilot.Core.Models.Compliance;
 using Ato.Copilot.Core.Models.Tenancy;
+using Ato.Copilot.Core.Services.Tenancy;
 using Ato.Copilot.Mcp;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
@@ -186,6 +187,15 @@ public class CspInheritedComponentFkRejectionTests
 
         await using var scope = _factory.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AtoCopilotContext>();
+
+        // Production wires the accessor's AsyncLocal in middleware; under
+        // the test fixture we push it manually so the interceptor's
+        // FR-021/FR-080 enforcement runs (otherwise it short-circuits when
+        // accessor.Current is null).
+        var accessor = scope.ServiceProvider.GetRequiredService<ITenantContextAccessor>();
+        using var _ = accessor.Push(new TenantContext(
+            MultiTenantWebApplicationFactory<McpProgram>.TenantAId,
+            isCspAdmin: false));
 
         var tampered = new OrgInheritanceDefault
         {

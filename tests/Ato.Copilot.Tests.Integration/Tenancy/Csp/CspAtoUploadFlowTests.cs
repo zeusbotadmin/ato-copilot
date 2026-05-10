@@ -52,6 +52,15 @@ public class CspAtoUploadFlowTests
         _factory = factory;
         _client = factory.CreateClient();
 
+        // The shared fixture pre-seeds an Active CspProfile so the gate
+        // (FR-090) lifts for unrelated tests. The wizard upload endpoint
+        // (FR-099) is the entrypoint to onboarding and therefore must be
+        // exercised against a Pending / InWizard profile — otherwise
+        // EnsureCreatedAsync correctly returns 409 because onboarding is
+        // already complete. Reset before each method so the wizard path
+        // is reachable.
+        factory.ResetCspProfileAsync().GetAwaiter().GetResult();
+
         // Default: an active CSP-Admin in Tenant A. Per-test methods may
         // override IsCspAdmin and/or the CspProfile.OnboardingState.
         var ctx = factory.GetActiveContext();

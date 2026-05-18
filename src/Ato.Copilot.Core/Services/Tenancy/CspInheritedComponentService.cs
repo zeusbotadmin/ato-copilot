@@ -94,6 +94,116 @@ public sealed class CspInheritedComponentService : ICspInheritedComponentService
     }
 
     /// <inheritdoc />
+    public async Task<CspInheritedComponent> CreateAsync(
+        Guid cspProfileId,
+        string name,
+        string description,
+        CspComponentType componentType,
+        string actor,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(actor);
+        if (cspProfileId == Guid.Empty)
+        {
+            throw new ArgumentException(
+                "cspProfileId must be a non-empty Guid.", nameof(cspProfileId));
+        }
+
+        var trimmedName = TruncateOrThrow(nameof(name), name, 256);
+        var trimmedDesc = TruncateOrThrow(nameof(description), description, 2000);
+
+        await using var db = await _contextFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var now = DateTimeOffset.UtcNow;
+        var component = new CspInheritedComponent
+        {
+            Id = Guid.NewGuid(),
+            CspProfileId = cspProfileId,
+            Name = trimmedName,
+            Description = trimmedDesc,
+            ComponentType = componentType,
+            // Manual-create rows have no source artifact; provenance is the
+            // CSP-Admin actor recorded on ImportedBy/UpdatedBy.
+            SourceFormat = SourceFormat.Manual,
+            SourceFileName = null,
+            SourceArtifactReference = null,
+            // Skip Draft — there is no extraction step to defer publishing
+            // for, and the CSP-Admin is explicitly publishing by clicking
+            // "Create component".
+            Status = CspInheritedComponentStatus.Published,
+            ImportedAt = now,
+            ImportedBy = actor,
+            UpdatedAt = now,
+            UpdatedBy = actor,
+        };
+        db.CspInheritedComponents.Add(component);
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+
+        _logger.LogInformation(
+            "Manually created CspInheritedComponent {ComponentId} ('{Name}') by {Actor}",
+            component.Id, component.Name, actor);
+
+        // PopulateCounts looks at component.Capabilities, which is empty
+        // here — keep parity with the rest of the service surface so
+        // callers can read the (zero) counts off the returned row.
+        PopulateCounts(component);
+        return component;
+    }
+
+    /// <inheritdoc />
+    public async Task<CspInheritedCapability> AddCapabilityAsync(
+        Guid componentId,
+        string name,
+        string description,
+        IReadOnlyList<string> mappedNistControlIds,
+        string actor,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(actor);
+        ArgumentNullException.ThrowIfNull(mappedNistControlIds);
+
+        var trimmedName = TruncateOrThrow(nameof(name), name, 256);
+        var trimmedDesc = TruncateOrThrow(nameof(description), description, 2000);
+
+        await using var db = await _contextFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var componentExists = await db.CspInheritedComponents
+            .AnyAsync(c => c.Id == componentId, ct)
+            .ConfigureAwait(false);
+        if (!componentExists)
+        {
+            throw new KeyNotFoundException(
+                $"CspInheritedComponent '{componentId}' not found.");
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var capability = new CspInheritedCapability
+        {
+            Id = Guid.NewGuid(),
+            CspInheritedComponentId = componentId,
+            Name = trimmedName,
+            Description = trimmedDesc,
+            MappedNistControlIds = mappedNistControlIds.ToList(),
+            // No AI involvement → no confidence score; mark the row as a
+            // human-authored mapping so a future remap preserves it.
+            MappingConfidence = null,
+            Status = CspInheritedCapabilityStatus.Mapped,
+            MappedBy = MappedBy.User,
+            MappingFailureReason = null,
+            CreatedAt = now,
+            CreatedBy = actor,
+            ReviewedAt = now,
+            ReviewedBy = actor,
+            ReviewerNote = null,
+        };
+        db.CspInheritedCapabilities.Add(capability);
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+
+        _logger.LogInformation(
+            "Manually added CspInheritedCapability {CapabilityId} ('{Name}') to component {ComponentId} by {Actor}",
+            capability.Id, capability.Name, componentId, actor);
+        return capability;
+    }
+
+    /// <inheritdoc />
     public async Task<CspInheritedComponent> UpdateAsync(
         Guid componentId,
         string name,

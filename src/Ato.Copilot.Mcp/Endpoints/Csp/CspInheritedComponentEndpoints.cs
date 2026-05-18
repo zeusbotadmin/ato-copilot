@@ -58,12 +58,15 @@ public static class CspInheritedComponentEndpoints
 
         group.MapGet("", ListAsync).WithName("ListCspInheritedComponents");
         group.MapGet("/{componentId:guid}", GetAsync).WithName("GetCspInheritedComponent");
+        group.MapPost("", CreateAsync).WithName("CreateCspInheritedComponent");
         group.MapPatch("/{componentId:guid}", PatchAsync).WithName("PatchCspInheritedComponent");
         group.MapDelete("/{componentId:guid}", DeleteAsync).WithName("DeleteCspInheritedComponent");
         group.MapPost("/{componentId:guid}/publish", PublishAsync).WithName("PublishCspInheritedComponent");
         group.MapPost("/{componentId:guid}/remap", RemapAsync).WithName("RemapCspInheritedComponent");
         group.MapGet("/{componentId:guid}/capabilities", GetCapabilitiesAsync)
             .WithName("GetCspInheritedComponentCapabilities");
+        group.MapPost("/{componentId:guid}/capabilities", AddCapabilityAsync)
+            .WithName("AddCspInheritedCapability");
         group.MapPatch("/{componentId:guid}/capabilities/{capabilityId:guid}/review", ReviewAsync)
             .WithName("ReviewCspInheritedCapability");
 
@@ -193,6 +196,62 @@ public static class CspInheritedComponentEndpoints
         }
 
         return Success(sw, BuildComponentDto(component));
+    }
+
+    // ─── POST / (CSP-Admin) — manual create ─────────────────────────────
+
+    private static async Task<IResult> CreateAsync(
+        [FromBody] CreateComponentRequest? body,
+        HttpContext http,
+        ITenantContext tenantCtx,
+        ICspProfileService profileService,
+        ICspInheritedComponentService service,
+        IOptions<DeploymentOptions> deployment,
+        CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        if (ShouldShortCircuitSingleTenant(deployment, out var singleTenantResult))
+            return singleTenantResult;
+        if (!tenantCtx.IsCspAdmin) return ForbiddenNotCspAdmin(sw);
+
+        if (body is null
+            || string.IsNullOrWhiteSpace(body.Name)
+            || string.IsNullOrWhiteSpace(body.Description))
+        {
+            return ValidationError(sw, "name and description are required.");
+        }
+        if (!Enum.TryParse<CspComponentType>(body.ComponentType, ignoreCase: true, out var componentType))
+        {
+            return ValidationError(sw,
+                $"componentType '{body.ComponentType}' is not a valid CspComponentType.");
+        }
+
+        // Onboarding gate (FR-104) mirrors the /import endpoint — manual
+        // create is conceptually the same write as import, just without a
+        // file payload, so the same gate applies.
+        var profile = await profileService.GetAsync(ct).ConfigureAwait(false);
+        if (profile is null || profile.OnboardingState != OnboardingState.Active)
+        {
+            return Error(StatusCodes.Status503ServiceUnavailable, "CSP_ONBOARDING_INCOMPLETE",
+                "CSP onboarding must be completed before creating CSP-inherited components.");
+        }
+
+        try
+        {
+            var actor = ResolveActor(http);
+            var created = await service.CreateAsync(
+                profile.Id,
+                body.Name,
+                body.Description,
+                componentType,
+                actor,
+                ct).ConfigureAwait(false);
+            return Success(sw, BuildComponentDto(created));
+        }
+        catch (ArgumentException ex)
+        {
+            return ValidationError(sw, ex.Message);
+        }
     }
 
     // ─── PATCH /{id} (CSP-Admin) ───────────────────────────────────────
@@ -366,6 +425,55 @@ public static class CspInheritedComponentEndpoints
             .Select(BuildCapabilityDto)
             .ToArray();
         return Success(sw, capabilities);
+    }
+
+    // ─── POST /{id}/capabilities (CSP-Admin) — manual create ─────────────
+
+    private static async Task<IResult> AddCapabilityAsync(
+        Guid componentId,
+        [FromBody] AddCapabilityRequest? body,
+        HttpContext http,
+        ITenantContext tenantCtx,
+        ICspInheritedComponentService service,
+        IOptions<DeploymentOptions> deployment,
+        CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        if (ShouldShortCircuitSingleTenant(deployment, out var singleTenantResult))
+            return singleTenantResult;
+        if (!tenantCtx.IsCspAdmin) return ForbiddenNotCspAdmin(sw);
+
+        if (body is null
+            || string.IsNullOrWhiteSpace(body.Name)
+            || string.IsNullOrWhiteSpace(body.Description))
+        {
+            return ValidationError(sw, "name and description are required.");
+        }
+        if (body.MappedNistControlIds is null || body.MappedNistControlIds.Length == 0)
+        {
+            return ValidationError(sw, "mappedNistControlIds must be a non-empty array.");
+        }
+
+        try
+        {
+            var actor = ResolveActor(http);
+            var capability = await service.AddCapabilityAsync(
+                componentId,
+                body.Name,
+                body.Description,
+                body.MappedNistControlIds,
+                actor,
+                ct).ConfigureAwait(false);
+            return Success(sw, BuildCapabilityDto(capability));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(sw);
+        }
+        catch (ArgumentException ex)
+        {
+            return ValidationError(sw, ex.Message);
+        }
     }
 
     // ─── PATCH /{id}/capabilities/{capId}/review (CSP-Admin) ────────────
@@ -712,6 +820,8 @@ public static class CspInheritedComponentEndpoints
 
     // ─── request DTOs ──────────────────────────────────────────────────
 
+    public sealed record CreateComponentRequest(string? Name, string? Description, string? ComponentType);
+    public sealed record AddCapabilityRequest(string? Name, string? Description, string[]? MappedNistControlIds);
     public sealed record PatchComponentRequest(string? Name, string? Description, string? ComponentType);
     public sealed record RemapRequest(bool ReplaceMapped);
     public sealed record ReviewCapabilityRequest(string[] MappedNistControlIds, string? ReviewerNote);

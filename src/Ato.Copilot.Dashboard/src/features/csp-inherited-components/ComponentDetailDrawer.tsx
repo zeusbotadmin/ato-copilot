@@ -1,5 +1,6 @@
-import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
+import { useEffect, useState, type FormEvent, type ReactElement, type ReactNode } from 'react';
 import {
+  addCspInheritedCapability,
   archiveCspInheritedComponent,
   getCspInheritedComponent,
   listCspInheritedCapabilities,
@@ -31,6 +32,37 @@ const COMPONENT_TYPES: CspComponentType[] = [
   'Compute',
 ];
 
+// NIST 800-53 Rev 5 family codes — kept in sync with
+// `src/components/forms/CapabilityForm.tsx` so the CSP-inherited capability
+// form has visual parity with the org-level form.
+const NIST_FAMILIES: Record<string, string> = {
+  AC: 'Access Control',
+  AT: 'Awareness and Training',
+  AU: 'Audit and Accountability',
+  CA: 'Assessment, Authorization, and Monitoring',
+  CM: 'Configuration Management',
+  CP: 'Contingency Planning',
+  IA: 'Identification and Authentication',
+  IR: 'Incident Response',
+  MA: 'Maintenance',
+  MP: 'Media Protection',
+  PE: 'Physical and Environmental Protection',
+  PL: 'Planning',
+  PM: 'Program Management',
+  PS: 'Personnel Security',
+  PT: 'PII Processing and Transparency',
+  RA: 'Risk Assessment',
+  SA: 'System and Services Acquisition',
+  SC: 'System and Communications Protection',
+  SI: 'System and Information Integrity',
+  SR: 'Supply Chain Risk Management',
+};
+
+// Visual parity with `CapabilityForm`'s Status dropdown. CSP-inherited
+// capabilities have a different lifecycle (`Mapped` / `NeedsReview` set by
+// the AI pipeline or the review flow), so this status is display-only.
+const CSP_CAP_STATUS_OPTIONS = ['Planned', 'InProgress', 'Implemented', 'Deprecated'] as const;
+
 /**
  * `ComponentDetailDrawer` — Feature 048 / US9 / T214 sub-component.
  *
@@ -55,6 +87,63 @@ export default function ComponentDetailDrawer({
   const [editName, setEditName] = useState('');
   const [editDescription, setEditDescription] = useState('');
   const [editType, setEditType] = useState<CspComponentType>('Service');
+
+  // Add-capability form state
+  const [addingCap, setAddingCap] = useState(false);
+  const [capName, setCapName] = useState('');
+  const [capDescription, setCapDescription] = useState('');
+  const [capControls, setCapControls] = useState('');
+  const [capError, setCapError] = useState<string | null>(null);
+  const [capSubmitting, setCapSubmitting] = useState(false);
+
+  const resetCapForm = () => {
+    setCapName('');
+    setCapDescription('');
+    setCapControls('');
+    setCapError(null);
+  };
+
+  const handleAddCapability = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setCapError(null);
+    const ids = capControls
+      .split(/[,\s]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    if (!capName.trim() || !capDescription.trim()) {
+      setCapError('Name and description are required.');
+      return;
+    }
+    if (ids.length === 0) {
+      setCapError('Provide at least one NIST control ID (e.g. AC-2, AC-2(1)).');
+      return;
+    }
+    setCapSubmitting(true);
+    try {
+      await addCspInheritedCapability(componentId, {
+        name: capName.trim(),
+        description: capDescription.trim(),
+        mappedNistControlIds: ids,
+      });
+      // Refresh both: counts on the parent component row and the
+      // capability list.
+      try {
+        const refreshed = await getCspInheritedComponent(componentId);
+        setComponent(refreshed);
+      } catch {
+        // best-effort — the parent reload below will pick it up.
+      }
+      await refreshCapabilities();
+      resetCapForm();
+      setAddingCap(false);
+      onMutated();
+    } catch (err) {
+      const ex = err as { errorCode?: string; message?: string };
+      setCapError(ex?.message ?? 'Failed to add capability.');
+    } finally {
+      setCapSubmitting(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -340,7 +429,184 @@ export default function ComponentDetailDrawer({
                 >
                   Remap capabilities
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    resetCapForm();
+                    setAddingCap((prev) => !prev);
+                  }}
+                  disabled={busy}
+                  className="rounded-md border border-emerald-300 bg-white px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+                  data-testid="csp-add-capability-toggle"
+                >
+                  {addingCap ? 'Cancel add capability' : '+ Add capability'}
+                </button>
               </div>
+            )}
+
+            {/* Add-capability form (CSP-Admin only) — visually mirrors the
+                org-level `CapabilityForm` (Name, Provider, Category,
+                Description, Status, Owner) with one CSP-specific override:
+                a Mapped-NIST-Control-IDs text input. The CSP entity only
+                persists `Name`, `Description`, and `MappedNistControlIds`;
+                Provider / Owner / Status / Category are present for layout
+                parity and disabled with a "Not stored at CSP scope" helper
+                line so a future schema extension can light them up without
+                UI churn. */}
+            {canManage && addingCap && (
+              <form
+                onSubmit={handleAddCapability}
+                className="space-y-3 rounded-md border border-emerald-200 bg-emerald-50 p-3"
+                data-testid="csp-add-capability-form"
+              >
+                <h3 className="text-sm font-semibold text-gray-900">Add capability</h3>
+                {capError && (
+                  <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">
+                    {capError}
+                  </div>
+                )}
+
+                {/* Name (active) */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Name *</label>
+                  <input
+                    type="text"
+                    value={capName}
+                    onChange={(e) => setCapName(e.target.value)}
+                    maxLength={256}
+                    required
+                    placeholder="e.g., Multi-Factor Authentication"
+                    className="block w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    data-testid="csp-add-capability-name"
+                  />
+                </div>
+
+                {/* Provider (visual parity, disabled) */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-400 mb-1">Provider</label>
+                  <input
+                    type="text"
+                    value=""
+                    disabled
+                    aria-disabled
+                    placeholder="—"
+                    className="block w-full rounded-md border border-gray-200 bg-gray-100 px-2 py-1.5 text-sm text-gray-500 cursor-not-allowed"
+                  />
+                  <p className="mt-0.5 text-[11px] text-gray-400">
+                    Not stored at CSP scope — display-only for layout parity.
+                  </p>
+                </div>
+
+                {/* Category (visual parity, disabled) */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-400 mb-1">Category</label>
+                  <select
+                    value=""
+                    disabled
+                    aria-disabled
+                    className="block w-full rounded-md border border-gray-200 bg-gray-100 px-2 py-1.5 text-sm text-gray-500 cursor-not-allowed"
+                  >
+                    <option value="">Select a NIST family…</option>
+                    {Object.entries(NIST_FAMILIES).map(([code, label]) => (
+                      <option key={code} value={code}>{code} — {label}</option>
+                    ))}
+                  </select>
+                  <p className="mt-0.5 text-[11px] text-gray-400">
+                    Use the Mapped NIST control IDs field below instead — that
+                    is the field actually persisted on a CSP capability.
+                  </p>
+                </div>
+
+                {/* Description (active) */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Description *</label>
+                  <textarea
+                    value={capDescription}
+                    onChange={(e) => setCapDescription(e.target.value)}
+                    rows={3}
+                    maxLength={2000}
+                    required
+                    placeholder="Describe how this capability works…"
+                    className="block w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    data-testid="csp-add-capability-description"
+                  />
+                </div>
+
+                {/* Mapped NIST control IDs (active, CSP-specific) */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Mapped NIST control IDs *</label>
+                  <input
+                    type="text"
+                    value={capControls}
+                    onChange={(e) => setCapControls(e.target.value)}
+                    placeholder="AC-2, AC-2(1), SC-7"
+                    required
+                    className="block w-full rounded-md border border-gray-300 px-2 py-1.5 font-mono text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    data-testid="csp-add-capability-controls"
+                  />
+                  <span className="mt-0.5 block text-[11px] text-gray-500">
+                    Comma- or space-separated. The capability is recorded as
+                    a human mapping (mappedBy=User) and will survive a future
+                    AI remap.
+                  </span>
+                </div>
+
+                {/* Status / Owner (visual parity, disabled) */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-400 mb-1">Status</label>
+                    <select
+                      value="Implemented"
+                      disabled
+                      aria-disabled
+                      className="block w-full rounded-md border border-gray-200 bg-gray-100 px-2 py-1.5 text-sm text-gray-500 cursor-not-allowed"
+                    >
+                      {CSP_CAP_STATUS_OPTIONS.map((s) => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                    <p className="mt-0.5 text-[11px] text-gray-400">
+                      CSP capabilities use Mapped/NeedsReview.
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-400 mb-1">Owner</label>
+                    <input
+                      type="text"
+                      value=""
+                      disabled
+                      aria-disabled
+                      placeholder="—"
+                      className="block w-full rounded-md border border-gray-200 bg-gray-100 px-2 py-1.5 text-sm text-gray-500 cursor-not-allowed"
+                    />
+                    <p className="mt-0.5 text-[11px] text-gray-400">
+                      Not stored at CSP scope.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      resetCapForm();
+                      setAddingCap(false);
+                    }}
+                    disabled={capSubmitting}
+                    className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={capSubmitting}
+                    className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
+                    data-testid="csp-add-capability-submit"
+                  >
+                    {capSubmitting ? 'Adding…' : 'Add capability'}
+                  </button>
+                </div>
+              </form>
             )}
 
             {/* Capability list */}

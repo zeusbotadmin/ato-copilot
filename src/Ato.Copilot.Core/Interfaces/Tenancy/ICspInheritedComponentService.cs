@@ -22,6 +22,39 @@ public interface ICspInheritedComponentService
         CancellationToken ct = default);
 
     /// <summary>
+    /// Manually create a CSP-inherited component without going through the
+    /// ATO-document import pipeline. Used by the CSP-Admin
+    /// "Create component" surface. The new row is stamped with
+    /// <see cref="SourceFormat.Manual"/> and persisted as
+    /// <see cref="CspInheritedComponentStatus.Published"/> so it is
+    /// immediately visible to every hosted tenant — there is no extraction
+    /// step to defer publishing for.
+    /// </summary>
+    Task<CspInheritedComponent> CreateAsync(
+        Guid cspProfileId,
+        string name,
+        string description,
+        CspComponentType componentType,
+        string actor,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Manually add a capability to an existing
+    /// <see cref="CspInheritedComponent"/>. The new row is stamped with
+    /// <see cref="MappedBy.User"/> and
+    /// <see cref="CspInheritedCapabilityStatus.Mapped"/> — no AI confidence
+    /// score is recorded. Throws <see cref="KeyNotFoundException"/> if
+    /// <paramref name="componentId"/> does not exist.
+    /// </summary>
+    Task<CspInheritedCapability> AddCapabilityAsync(
+        Guid componentId,
+        string name,
+        string description,
+        IReadOnlyList<string> mappedNistControlIds,
+        string actor,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Update mutable metadata fields (<c>Name</c>, <c>Description</c>,
     /// <c>ComponentType</c>). Concurrency guarded by <c>RowVersion</c>.
     /// </summary>

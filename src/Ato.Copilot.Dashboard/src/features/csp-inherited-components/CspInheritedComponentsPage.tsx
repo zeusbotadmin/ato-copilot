@@ -5,15 +5,20 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type FormEvent,
   type ReactElement,
 } from 'react';
 import { useNavigate } from 'react-router-dom';
 import PageLayout from '../../components/layout/PageLayout';
+import PageHero from '../../components/layout/PageHero';
+import MetricCard from '../../components/cards/MetricCard';
 import { useCspDashboardAvailable } from '../../components/layout/useCspDashboardAvailable';
 import {
+  createCspInheritedComponent,
   importCspInheritedComponents,
   isUnavailable,
   listCspInheritedComponents,
+  type CspComponentType,
   type CspInheritedComponent,
   type CspInheritedComponentStatus,
   type CspInheritedComponentsPage,
@@ -22,6 +27,16 @@ import {
 import ComponentDetailDrawer from './ComponentDetailDrawer';
 import ComponentExtractionPreview from '../csp-onboarding/steps/ComponentExtractionPreview';
 import type { AtoUploadResponse } from '../csp-onboarding/api';
+
+const COMPONENT_TYPE_OPTIONS: CspComponentType[] = [
+  'Infrastructure',
+  'Platform',
+  'Service',
+  'Identity',
+  'Network',
+  'Storage',
+  'Compute',
+];
 
 const STATUS_OPTIONS: { value: CspInheritedComponentStatus | ''; label: string }[] = [
   { value: '', label: 'All statuses' },
@@ -69,6 +84,7 @@ export default function CspInheritedComponentsPage(): ReactElement {
   const [importError, setImportError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
+  const [createOpen, setCreateOpen] = useState(false);
 
   // Debounce the search box so we don't hammer the API on every keystroke.
   useEffect(() => {
@@ -141,7 +157,7 @@ export default function CspInheritedComponentsPage(): ReactElement {
 
   if (state.kind === 'unavailable') {
     return (
-      <PageLayout title="Inherited components">
+      <PageLayout title="CSP Inherited">
         <div className="rounded-md border border-gray-200 bg-white p-6 text-sm text-gray-600">
           <p>
             CSP-inherited components are not available in this deployment
@@ -160,40 +176,66 @@ export default function CspInheritedComponentsPage(): ReactElement {
   }
 
   return (
-    <PageLayout title="Inherited components">
+    <PageLayout title="CSP Inherited">
       <div data-testid="csp-inherited-components-page">
-        <header className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold text-gray-900">CSP-inherited components</h1>
-            <p className="text-sm text-gray-500">
-              Components and capabilities derived from the hosting CSP&rsquo;s
-              ATO artifacts. Read-only across every tenant; CSP administrators
-              can edit, publish, archive, and resolve needs-review items.
-            </p>
+        <PageHero
+          eyebrow="CSP Catalog"
+          title="CSP Components"
+          description="The hosting CSP's catalog of building blocks (Infrastructure, Platform, Service, Identity, Network, Storage, Compute). Every tenant inherits this read-only catalog and can map their systems against it; only CSP administrators can edit, publish, archive, or resolve needs-review items."
+          actions={
+            canManage ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setCreateOpen(true)}
+                  className="inline-flex items-center rounded-md border border-white bg-white px-4 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-50"
+                  data-testid="csp-inherited-components-create-button"
+                >
+                  + Create component
+                </button>
+                <button
+                  type="button"
+                  onClick={() => importInputRef.current?.click()}
+                  disabled={importing}
+                  className="inline-flex items-center rounded-md bg-indigo-900/40 px-4 py-1.5 text-sm font-medium text-white ring-1 ring-inset ring-white/40 hover:bg-indigo-900/60 disabled:cursor-not-allowed disabled:opacity-60"
+                  data-testid="csp-inherited-components-import-button"
+                >
+                  {importing ? 'Importing…' : 'Import ATO documents'}
+                </button>
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  multiple
+                  accept={ACCEPT}
+                  className="hidden"
+                  onChange={handleImport}
+                  aria-label="Import ATO documents"
+                />
+              </>
+            ) : undefined
+          }
+        />
+
+        {/* Summary metrics — mirrors org `ComponentInventory`'s MetricCard
+            strip so the CSP catalog page reads at-a-glance the same way as
+            the org system-components page. */}
+        {state.kind === 'ready' && (
+          <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
+            <MetricCard title="Total" value={state.page.totalItems} />
+            <MetricCard
+              title="Published"
+              value={state.page.items.filter((c) => c.status === 'Published').length}
+            />
+            <MetricCard
+              title="Draft"
+              value={state.page.items.filter((c) => c.status === 'Draft').length}
+            />
+            <MetricCard
+              title="Archived"
+              value={state.page.items.filter((c) => c.status === 'Archived').length}
+            />
           </div>
-          {canManage && (
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => importInputRef.current?.click()}
-                disabled={importing}
-                className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-300"
-                data-testid="csp-inherited-components-import-button"
-              >
-                {importing ? 'Importing…' : 'Import ATO documents'}
-              </button>
-              <input
-                ref={importInputRef}
-                type="file"
-                multiple
-                accept={ACCEPT}
-                className="hidden"
-                onChange={handleImport}
-                aria-label="Import ATO documents"
-              />
-            </div>
-          )}
-        </header>
+        )}
 
         {/* Import error banner */}
         {importError && (
@@ -219,42 +261,38 @@ export default function CspInheritedComponentsPage(): ReactElement {
           </div>
         )}
 
-        {/* Filters */}
-        <div className="mb-3 flex flex-wrap items-center gap-3">
-          <label className="text-sm text-gray-700">
-            Status
-            <select
-              value={statusFilter}
-              onChange={(e) => {
-                setStatusFilter(e.target.value as CspInheritedComponentStatus | '');
-                setPage(1);
-              }}
-              className="ml-2 rounded-md border border-gray-300 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-            >
-              {STATUS_OPTIONS
-                // Non-CSP-Admins only ever see Published rows; hide irrelevant filters.
-                .filter((o) => canManage || o.value === '' || o.value === 'Published')
-                .map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-            </select>
-          </label>
-          <label className="text-sm text-gray-700">
-            Search
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
-                setPage(1);
-              }}
-              placeholder="name or description"
-              maxLength={200}
-              className="ml-2 rounded-md border border-gray-300 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-            />
-          </label>
+        {/* Toolbar — search + status filter, matches org `CapabilityLibrary`
+            and `ComponentInventory` toolbar pattern (flex-wrap row above the
+            content card, plain bordered inputs, no per-input label chrome). */}
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
+            placeholder="Search components..."
+            maxLength={200}
+            className="min-w-[200px] flex-1 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          />
+          <select
+            value={statusFilter}
+            onChange={(e) => {
+              setStatusFilter(e.target.value as CspInheritedComponentStatus | '');
+              setPage(1);
+            }}
+            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          >
+            {STATUS_OPTIONS
+              // Non-CSP-Admins only ever see Published rows; hide irrelevant filters.
+              .filter((o) => canManage || o.value === '' || o.value === 'Published')
+              .map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+          </select>
         </div>
 
         {/* Table */}
@@ -284,7 +322,240 @@ export default function CspInheritedComponentsPage(): ReactElement {
           onMutated={reload}
         />
       )}
+
+      {/* Create-component modal */}
+      {createOpen && (
+        <CreateComponentModal
+          onClose={() => setCreateOpen(false)}
+          onCreated={() => {
+            setCreateOpen(false);
+            reload();
+          }}
+        />
+      )}
     </PageLayout>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CreateComponentModal — manual-create surface used by CSP-Admins to author a
+// CSP-inherited component without uploading an ATO document.
+//
+// Visually mirrors the org-level `ComponentFormInline` (Name, Type, Status,
+// Sub-Type, Description, Owner, Linked Capabilities). The CSP-inherited
+// entity schema today only persists `Name`, `Description`, and
+// `ComponentType` (cloud taxonomy: Infrastructure | Platform | Service |
+// Identity | Network | Storage | Compute — distinct from the org
+// Person/Place/Thing/Policy axis). Status is auto-stamped `Published` by
+// the service. Sub-Type, Owner, and Linked Capabilities are shown for
+// layout parity but disabled with explicit "Not stored at CSP scope"
+// helper copy so a future schema extension (FR-008 follow-on) can land
+// without UI churn.
+// ---------------------------------------------------------------------------
+
+function CreateComponentModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: () => void;
+}): ReactElement {
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [componentType, setComponentType] = useState<CspComponentType>('Service');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setError(null);
+    if (!name.trim() || !description.trim()) {
+      setError('Name and description are required.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await createCspInheritedComponent({
+        name: name.trim(),
+        description: description.trim(),
+        componentType,
+      });
+      onCreated();
+    } catch (err) {
+      const ex = err as { errorCode?: string; message?: string };
+      setError(
+        ex?.errorCode === 'CSP_ONBOARDING_INCOMPLETE'
+          ? 'Complete CSP onboarding before creating CSP-inherited components.'
+          : (ex?.message ?? 'Create failed.'),
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Visual-parity helper — see comment above the function. We render the
+  // org-form's Sub-Type / Owner / Linked-Capabilities widgets in a
+  // visually disabled state so CSP-Admins immediately see the surface
+  // area without being misled into entering data the schema would drop.
+  const PARITY_HELP = 'Not stored at CSP scope — display-only for layout parity with org-level components.';
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="csp-create-component-title"
+      onClick={onClose}
+      data-testid="csp-create-component-modal"
+    >
+      <form
+        onSubmit={handleSubmit}
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-lg rounded-lg bg-white p-5 shadow-xl max-h-[90vh] overflow-y-auto"
+      >
+        <h2 id="csp-create-component-title" className="text-lg font-semibold text-gray-900">
+          Create CSP-inherited component
+        </h2>
+        <p className="mt-1 text-xs text-gray-500">
+          Manually-authored components publish immediately and become visible
+          to every hosted organization with a violet “CSP” badge.
+        </p>
+
+        {error && (
+          <div role="alert" className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+
+        <div className="mt-4 space-y-3">
+          {/* Name (active) */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Name *</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              maxLength={256}
+              required
+              autoFocus
+              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              data-testid="csp-create-component-name"
+            />
+          </div>
+
+          {/* Type / Status row */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Type *</label>
+              <select
+                value={componentType}
+                onChange={(e) => setComponentType(e.target.value as CspComponentType)}
+                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                data-testid="csp-create-component-type"
+              >
+                {COMPONENT_TYPE_OPTIONS.map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-400">Status</label>
+              <select
+                value="Published"
+                disabled
+                aria-disabled
+                title="CSP-inherited components publish immediately on create."
+                className="mt-1 block w-full rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500 cursor-not-allowed"
+              >
+                <option value="Published">Published</option>
+              </select>
+              <p className="mt-0.5 text-[11px] text-gray-400">Auto-stamped at create.</p>
+            </div>
+          </div>
+
+          {/* Sub-Type (visual parity, disabled) */}
+          <div>
+            <label className="block text-sm font-medium text-gray-400">Sub-Type</label>
+            <input
+              type="text"
+              value=""
+              disabled
+              aria-disabled
+              placeholder="—"
+              className="mt-1 block w-full rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500 cursor-not-allowed"
+            />
+            <p className="mt-0.5 text-[11px] text-gray-400">{PARITY_HELP}</p>
+          </div>
+
+          {/* Description (active) */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Description *</label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              maxLength={2000}
+              required
+              rows={3}
+              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              data-testid="csp-create-component-description"
+            />
+          </div>
+
+          {/* Owner (visual parity, disabled) */}
+          <div>
+            <label className="block text-sm font-medium text-gray-400">Owner</label>
+            <input
+              type="text"
+              value=""
+              disabled
+              aria-disabled
+              placeholder="—"
+              className="mt-1 block w-full rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500 cursor-not-allowed"
+            />
+            <p className="mt-0.5 text-[11px] text-gray-400">{PARITY_HELP}</p>
+          </div>
+
+          {/* Linked Capabilities (visual parity, disabled) */}
+          <div>
+            <label className="block text-sm font-medium text-gray-400">Linked Capabilities</label>
+            <input
+              type="text"
+              value=""
+              disabled
+              aria-disabled
+              placeholder="Search capabilities…"
+              className="block w-full rounded-md border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm text-gray-500 cursor-not-allowed"
+            />
+            <div className="mt-1 max-h-20 overflow-y-auto rounded-md border border-gray-200 bg-gray-50 p-2">
+              <p className="text-xs italic text-gray-400">
+                Capabilities are added per-component from the detail drawer
+                after create. CSP capabilities are owned 1:N by their parent
+                component — they are not linked many-to-many.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={submitting || !name.trim()}
+            className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-300"
+            data-testid="csp-create-component-submit"
+          >
+            {submitting ? 'Creating…' : 'Create'}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 

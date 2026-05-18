@@ -289,3 +289,51 @@ export async function importCspInheritedComponents(
   );
   return unwrap(data);
 }
+
+// ---------------------------------------------------------------------------
+// Manual create surface (no file upload — CSP-Admin authors a row directly)
+// ---------------------------------------------------------------------------
+
+export interface CreateCspInheritedComponentRequest {
+  name: string;
+  description: string;
+  componentType: CspComponentType;
+}
+
+export interface AddCspInheritedCapabilityRequest {
+  name: string;
+  description: string;
+  mappedNistControlIds: string[];
+}
+
+/**
+ * `POST /csp/inherited-components` — CSP-Admin only. Authors a CSP-inherited
+ * component row WITHOUT going through the multipart import pipeline. The
+ * server stamps `sourceFormat = 'Manual'` and `status = 'Published'` so the
+ * row is immediately visible to every hosted tenant.
+ */
+export async function createCspInheritedComponent(
+  payload: CreateCspInheritedComponentRequest,
+): Promise<CspInheritedComponent> {
+  const { data } = await cspClient.post<Envelope<CspInheritedComponent>>(
+    '/csp/inherited-components',
+    payload,
+  );
+  return unwrap(data);
+}
+
+/**
+ * `POST /csp/inherited-components/{componentId}/capabilities` — CSP-Admin
+ * only. Adds a capability to an existing component. The server stamps
+ * `mappedBy = 'User'` and `status = 'Mapped'` so a future remap respects it.
+ */
+export async function addCspInheritedCapability(
+  componentId: string,
+  payload: AddCspInheritedCapabilityRequest,
+): Promise<CspInheritedCapability> {
+  const { data } = await cspClient.post<Envelope<CspInheritedCapability>>(
+    `/csp/inherited-components/${encodeURIComponent(componentId)}/capabilities`,
+    payload,
+  );
+  return unwrap(data);
+}

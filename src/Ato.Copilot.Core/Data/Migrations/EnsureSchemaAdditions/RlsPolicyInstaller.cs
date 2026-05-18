@@ -115,9 +115,25 @@ public static class RlsPolicyInstaller
     /// statement. Schema-bound + inline TVF so it is eligible for use in a
     /// SECURITY POLICY.
     /// </summary>
+    /// <remarks>
+    /// The function is schema-bound, so SQL Server will refuse to drop it
+    /// while <c>TenantSecurityPolicy</c> references it. Idempotent re-runs
+    /// (every redeploy) therefore have to drop the dependent policy FIRST,
+    /// then the function. Without that ordering, the second startup fails
+    /// with:
+    /// <code>
+    /// Cannot DROP FUNCTION 'dbo.fn_TenantPredicate' because it is being
+    /// referenced by object 'TenantSecurityPolicy'.
+    /// </code>
+    /// and the catch block in <see cref="ApplyAsync"/> downgrades that to
+    /// a warning, silently disabling defense-in-depth.
+    /// </remarks>
     private static string BuildPredicateFunctionSql()
     {
         return """
+            -- Drop dependent policy first so the schema-bound function can be replaced.
+            IF EXISTS (SELECT 1 FROM sys.security_policies WHERE name = 'TenantSecurityPolicy')
+                DROP SECURITY POLICY dbo.TenantSecurityPolicy;
             IF OBJECT_ID('dbo.fn_TenantPredicate', 'IF') IS NOT NULL
                 DROP FUNCTION dbo.fn_TenantPredicate;
             EXEC('

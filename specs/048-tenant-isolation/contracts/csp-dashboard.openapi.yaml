@@ -137,7 +137,7 @@ components:
       required:
         - decisionId
         - tenantId
-        - tenantDisplayName
+        - orgDisplayName
         - systemId
         - systemName
         - decisionStatus
@@ -146,7 +146,7 @@ components:
       properties:
         decisionId: { type: string, format: uuid }
         tenantId: { type: string, format: uuid }
-        tenantDisplayName: { type: string }
+        orgDisplayName: { type: string }
         systemId: { type: string, format: uuid }
         systemName: { type: string }
         decisionStatus: { $ref: "#/components/schemas/AtoStatus" }
@@ -162,6 +162,57 @@ components:
         items:
           type: array
           items: { $ref: "#/components/schemas/AtoRow" }
+        page: { type: integer, minimum: 1 }
+        pageSize: { type: integer, minimum: 1, maximum: 200 }
+        totalCount: { type: integer, minimum: 0 }
+    SystemRow:
+      type: object
+      required:
+        - systemId
+        - name
+        - tenantId
+        - orgDisplayName
+        - impactLevel
+        - currentRmfPhase
+        - complianceScore
+        - atoStatus
+        - atoSeverity
+        - openPoamCount
+        - overduePoamCount
+      properties:
+        systemId: { type: string }
+        name: { type: string }
+        acronym: { type: string, nullable: true }
+        tenantId: { type: string, format: uuid }
+        orgDisplayName: { type: string }
+        impactLevel:
+          type: string
+          description: FIPS 199 baseline level (Low/Moderate/High/Unknown).
+        currentRmfPhase:
+          type: string
+          description: RmfPhase enum (Categorize/Select/Implement/Assess/Authorize/Monitor/Prepare).
+        complianceScore:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+        atoExpirationDate: { type: string, format: date-time, nullable: true }
+        atoStatus:
+          type: string
+          enum: [None, Active, Expired]
+        atoDaysRemaining: { type: integer, nullable: true }
+        atoSeverity:
+          type: string
+          enum: [none, green, yellow, red, expired]
+        openPoamCount: { type: integer, minimum: 0 }
+        overduePoamCount: { type: integer, minimum: 0 }
+    SystemsPage:
+      type: object
+      required: [items, page, pageSize, totalCount]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/SystemRow" }
         page: { type: integer, minimum: 1 }
         pageSize: { type: integer, minimum: 1, maximum: 200 }
         totalCount: { type: integer, minimum: 0 }
@@ -291,6 +342,64 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AtosPage" }
+        "403": { description: Not CSP.Admin., content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } } }
+        "404": { description: Single-tenant deployment., content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } } }
+        "503": { description: CSP onboarding not complete., content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } } }
+
+  /csp/dashboard/systems:
+    get:
+      summary: Paginated cross-tenant list of registered systems
+      description: |
+        Powers the CSP-level `/systems` page. Excludes the FR-070 system tenant
+        and (per FR-098) systems whose tenant is `Status = Disabled`. Each row
+        carries `tenantId` + `orgDisplayName` so the dashboard can drill
+        through via impersonation. Soft-deleted systems (`IsActive = false`)
+        are excluded.
+      operationId: getCspDashboardSystems
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: pageSize
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - in: query
+          name: impactLevel
+          description: Filter by FIPS 199 baseline level (case-insensitive; accepts L/M/H aliases).
+          schema:
+            type: string
+            enum: [Low, Moderate, High]
+        - in: query
+          name: rmfPhase
+          description: Filter by `RmfPhase` enum value (case-insensitive).
+          schema:
+            type: string
+            enum: [Prepare, Categorize, Select, Implement, Assess, Authorize, Monitor]
+        - in: query
+          name: sort
+          schema:
+            type: string
+            enum:
+              - name
+              - orgDisplayName
+              - impactLevel
+              - rmfPhase
+              - complianceScore
+              - atoExpiration
+              - openPoamCount
+            default: name
+        - in: query
+          name: order
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+      responses:
+        "200":
+          description: Systems page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemsPage" }
         "403": { description: Not CSP.Admin., content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } } }
         "404": { description: Single-tenant deployment., content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } } }
         "503": { description: CSP onboarding not complete., content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } } }

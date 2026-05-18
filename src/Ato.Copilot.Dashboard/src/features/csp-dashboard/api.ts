@@ -82,7 +82,7 @@ export interface TenantsPage {
 export interface AtoRow {
   decisionId: string;
   tenantId: string;
-  tenantDisplayName: string;
+  orgDisplayName: string;
   systemId: string;
   systemName: string;
   decisionStatus: AtoDecisionStatus;
@@ -97,6 +97,63 @@ export interface AtosPage {
   page: number;
   pageSize: number;
   totalCount: number;
+}
+
+// ─── Systems (cross-tenant per-system list) ───────────────────────────────
+// Mirrors specs/048-tenant-isolation/contracts/csp-dashboard.openapi.yaml
+// SystemRow / SystemsPage. atoSeverity is the same dashboard token used by
+// PortfolioSystemSummary so the same badge component renders both surfaces.
+
+export type CspSystemAtoStatus = 'None' | 'Active' | 'Expired';
+export type CspSystemAtoSeverity = 'none' | 'green' | 'yellow' | 'red' | 'expired';
+
+export interface SystemRow {
+  systemId: string;
+  name: string;
+  acronym: string | null;
+  tenantId: string;
+  orgDisplayName: string;
+  impactLevel: string;
+  currentRmfPhase: string;
+  complianceScore: number;
+  atoExpirationDate: string | null;
+  atoStatus: CspSystemAtoStatus;
+  atoDaysRemaining: number | null;
+  atoSeverity: CspSystemAtoSeverity;
+  openPoamCount: number;
+  overduePoamCount: number;
+}
+
+export interface SystemsPage {
+  items: SystemRow[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+}
+
+export type SystemsSortField =
+  | 'name'
+  | 'orgDisplayName'
+  | 'impactLevel'
+  | 'rmfPhase'
+  | 'complianceScore'
+  | 'atoExpiration'
+  | 'openPoamCount';
+
+export interface ListSystemsParams {
+  page?: number;
+  pageSize?: number;
+  impactLevel?: 'Low' | 'Moderate' | 'High';
+  rmfPhase?:
+    | 'Prepare'
+    | 'Categorize'
+    | 'Select'
+    | 'Implement'
+    | 'Assess'
+    | 'Authorize'
+    | 'Monitor';
+  sort?: SystemsSortField;
+  order?: 'asc' | 'desc';
 }
 
 export type TenantsSortField =
@@ -143,6 +200,7 @@ export interface UnavailableState {
 export type SummaryResult = SummaryResponse | UnavailableState;
 export type TenantsResult = TenantsPage | UnavailableState;
 export type AtosResult = AtosPage | UnavailableState;
+export type SystemsResult = SystemsPage | UnavailableState;
 
 export function isUnavailable<T>(r: T | UnavailableState): r is UnavailableState {
   return (r as UnavailableState).unavailable === true;
@@ -254,4 +312,61 @@ export async function getCspDashboardAtos(
     if (sentinel) return sentinel;
     throw err;
   }
+}
+
+/** GET /api/csp/dashboard/systems. Same unavailable semantics as summary. */
+export async function getCspDashboardSystems(
+  params?: ListSystemsParams,
+): Promise<SystemsResult> {
+  try {
+    const { data } = await cspDashboardClient.get<Envelope<SystemsPage>>(
+      '/csp/dashboard/systems',
+      { params },
+    );
+    return unwrap(data);
+  } catch (err) {
+    const sentinel = toUnavailable(err);
+    if (sentinel) return sentinel;
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Provision a new mission-owner organization (tenant). Used by the
+// `+ Create org` action on the CSP Portfolio page.
+// ---------------------------------------------------------------------------
+
+export interface CreateCspTenantRequest {
+  displayName: string;
+  legalEntityName?: string;
+  primaryPocName?: string;
+  primaryPocEmail?: string;
+}
+
+export interface CreateCspTenantResponse {
+  tenantId: string;
+  displayName: string;
+  status: TenantStatus;
+  onboardingState: string;
+  createdAt: string;
+  createdBy: string;
+}
+
+/**
+ * POST /api/csp/dashboard/tenants — provision a new organization.
+ *
+ * Errors are surfaced as Error objects with `errorCode`/`message` so the
+ * caller can present them inline (e.g. duplicate name → `VALIDATION_FAILED`).
+ * Unavailable states (single-tenant / not CSP-Admin) are NOT folded into
+ * a sentinel here — the button that calls this is only rendered when the
+ * sibling GET surfaces work, so an unavailable response is a real bug.
+ */
+export async function createCspDashboardTenant(
+  body: CreateCspTenantRequest,
+): Promise<CreateCspTenantResponse> {
+  const { data } = await cspDashboardClient.post<Envelope<CreateCspTenantResponse>>(
+    '/csp/dashboard/tenants',
+    body,
+  );
+  return unwrap(data);
 }

@@ -6960,7 +6960,7 @@ static RmfRole? ResolveSimulatedRmfRole(HttpContext httpContext)
             // baselines. Drives the per-row `Source: Global Baseline` vs
             // `Source: <Tenant.DisplayName>` label in the inheritance UI.
             var effectiveTenantId = tenantContext.EffectiveTenantId;
-            var tenantDisplayName = effectiveTenantId == Guid.Empty
+            var orgDisplayName = effectiveTenantId == Guid.Empty
                 ? null
                 : await context.Tenants
                     .AsNoTracking()
@@ -7010,7 +7010,7 @@ static RmfRole? ResolveSimulatedRmfRole(HttpContext httpContext)
                     // Feature 048 (T137, FR-083): provenance fields driving the
                     // `Source: <Tenant or Global Baseline>` label in the UI.
                     isGlobalBaseline,
-                    tenantDisplayName
+                    orgDisplayName
                 };
             }).ToList();
 

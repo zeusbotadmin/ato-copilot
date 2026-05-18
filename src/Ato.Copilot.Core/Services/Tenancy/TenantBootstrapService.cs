@@ -25,7 +25,7 @@ public static class TenantBootstrapService
     /// <summary>
     /// Display name of the system tenant.
     /// </summary>
-    public const string SystemTenantDisplayName = "Ato.Copilot.System";
+    public const string SystemOrgDisplayName = "Ato.Copilot.System";
 
     /// <summary>
     /// Conventional default tenant id for SingleTenant deployments.
@@ -37,9 +37,13 @@ public static class TenantBootstrapService
     public static readonly Guid DefaultTenantId = Guid.Parse("00000000-0000-0000-0000-000000000001");
 
     /// <summary>
-    /// Display name of the conventional default tenant.
+    /// Display name of the conventional default tenant. Human-readable —
+    /// this is what CSP-Admins see in the organization picker. The system
+    /// tenant (<see cref="SystemTenantId"/>) keeps its spec-pinned literal
+    /// name (<see cref="SystemOrgDisplayName"/>) because it is filtered out
+    /// of the picker entirely.
     /// </summary>
-    public const string DefaultTenantDisplayName = "Ato.Copilot.Default";
+    public const string DefaultOrgDisplayName = "Ato.Copilot.Default";
 
     /// <summary>
     /// Creates the system tenant row if it does not yet exist. Safe to call
@@ -67,7 +71,7 @@ public static class TenantBootstrapService
             db.Tenants.Add(new Tenant
             {
                 Id = SystemTenantId,
-                DisplayName = SystemTenantDisplayName,
+                DisplayName = SystemOrgDisplayName,
                 Status = TenantStatus.Active,
                 OnboardingState = OnboardingState.Active,
                 CreatedAt = DateTimeOffset.UtcNow,
@@ -79,7 +83,7 @@ public static class TenantBootstrapService
             await db.SaveChangesAsync(cancellationToken);
             logger.LogInformation(
                 "Bootstrapped system tenant {SystemTenantId} ({DisplayName})",
-                SystemTenantId, SystemTenantDisplayName);
+                SystemTenantId, SystemOrgDisplayName);
             return true;
         }
         catch (Exception ex)
@@ -281,19 +285,49 @@ public static class TenantBootstrapService
             NullTenantIdRowsFound: 0);
     }
 
+    /// <summary>
+    /// Legacy display names previously used for the default tenant row.
+    /// When the row exists but still carries one of these literals, the
+    /// bootstrap will rename it in place to <see cref="DefaultOrgDisplayName"/>
+    /// so existing deployments pick up the rebrand without manual SQL. A row
+    /// that has been customized (any other name) is left untouched.
+    /// </summary>
+    private static readonly HashSet<string> LegacyDefaultDisplayNames = new(StringComparer.Ordinal)
+    {
+        "Default Tenant",
+    };
+
     private static async Task<bool> EnsureDefaultTenantRowAsync(
         AtoCopilotContext db,
         Guid defaultId,
         ILogger logger,
         CancellationToken ct)
     {
-        var exists = await db.Tenants.AsNoTracking().AnyAsync(t => t.Id == defaultId, ct);
-        if (exists) return false;
+        var existing = await db.Tenants
+            .FirstOrDefaultAsync(t => t.Id == defaultId, ct);
+        if (existing is not null)
+        {
+            // Idempotent rename of legacy seed rows so existing deployments
+            // pick up the rebrand without manual SQL or a forced reseed.
+            if (LegacyDefaultDisplayNames.Contains(existing.DisplayName)
+                && existing.DisplayName != DefaultOrgDisplayName)
+            {
+                var previous = existing.DisplayName;
+                existing.DisplayName = DefaultOrgDisplayName;
+                existing.UpdatedAt = DateTimeOffset.UtcNow;
+                existing.UpdatedBy = "system";
+                await db.SaveChangesAsync(ct);
+                logger.LogInformation(
+                    "Renamed default tenant {DefaultTenantId} display name '{Previous}' -> '{Current}'",
+                    defaultId, previous, DefaultOrgDisplayName);
+            }
+            return false;
+        }
 
         db.Tenants.Add(new Tenant
         {
             Id = defaultId,
-            DisplayName = DefaultTenantDisplayName,
+            DisplayName = DefaultOrgDisplayName,
             Status = TenantStatus.Active,
             OnboardingState = OnboardingState.Active,
             CreatedAt = DateTimeOffset.UtcNow,
@@ -304,7 +338,7 @@ public static class TenantBootstrapService
         await db.SaveChangesAsync(ct);
         logger.LogInformation(
             "Bootstrapped default tenant {DefaultTenantId} ({DisplayName}) for SingleTenant deployment",
-            defaultId, DefaultTenantDisplayName);
+            defaultId, DefaultOrgDisplayName);
         return true;
     }
 

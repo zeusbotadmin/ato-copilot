@@ -57,13 +57,13 @@ function SourceLocationLabel({ item }: { item: InheritanceDesignation }) {
       </span>
     );
   }
-  if (item.tenantDisplayName) {
+  if (item.orgDisplayName) {
     return (
       <span
         className="ml-1 inline-flex rounded-full bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-600 ring-1 ring-inset ring-slate-200"
         title="This control's inheritance is owned by your tenant."
       >
-        Source: {item.tenantDisplayName}
+        Source: {item.orgDisplayName}
       </span>
     );
   }

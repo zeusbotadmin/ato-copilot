@@ -46,7 +46,7 @@ public interface ICspDashboardService
 
     /// <summary>
     /// Returns a paginated list of authorization decisions across every
-    /// tenant, joined with <see cref="Tenant"/> for the <c>tenantDisplayName</c>
+    /// tenant, joined with <see cref="Tenant"/> for the <c>orgDisplayName</c>
     /// projection.
     /// </summary>
     /// <param name="decisionStatus">Roll-up filter — <c>Authorized|InProcess|Denied</c>.</param>
@@ -58,6 +58,52 @@ public interface ICspDashboardService
         string? decisionType,
         DateTimeOffset? since,
         DateTimeOffset? until,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns a paginated list of registered systems across every active
+    /// tenant, joined with <see cref="Tenant"/> for the
+    /// <c>orgDisplayName</c> projection. Powers the CSP-level
+    /// <c>/systems</c> page in the dashboard. Excludes the FR-070 system
+    /// tenant and (per FR-098) <see cref="TenantStatus.Disabled"/> tenants.
+    /// </summary>
+    /// <param name="page">1-based page index. Negative or zero is rejected by the caller.</param>
+    /// <param name="pageSize">Page size; capped at 200 by the caller.</param>
+    /// <param name="impactLevel">Optional baseline-level filter (Low/Moderate/High).</param>
+    /// <param name="rmfPhase">Optional <c>RmfPhase</c> filter.</param>
+    /// <param name="sort">Sort field — <c>name|orgDisplayName|impactLevel|rmfPhase|complianceScore|atoExpiration|openPoamCount</c>.</param>
+    /// <param name="order">Sort direction — <c>asc</c> or <c>desc</c>.</param>
+    Task<CspDashboardSystemsPage> GetSystemsAsync(
+        int page,
+        int pageSize,
+        string? impactLevel,
+        string? rmfPhase,
+        string sort,
+        string order,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Provisions a brand-new mission-owner organization (== <see cref="Tenant"/>
+    /// row) under the CSP. Created in <see cref="TenantStatus.Active"/> with
+    /// <see cref="OnboardingState.Pending"/> so the CSP-Admin can immediately
+    /// impersonate it to walk the per-tenant onboarding wizard. Audit fields
+    /// (<c>CreatedBy</c>, <c>UpdatedBy</c>) are stamped with <paramref name="actor"/>.
+    /// </summary>
+    /// <param name="displayName">
+    /// User-supplied org display name. Required, 1–256 chars. Must be unique
+    /// (case-insensitive) — duplicates throw <see cref="InvalidOperationException"/>
+    /// which the endpoint maps to a 422.
+    /// </param>
+    /// <param name="legalEntityName">Optional legal entity name.</param>
+    /// <param name="primaryPocName">Optional primary POC display name.</param>
+    /// <param name="primaryPocEmail">Optional primary POC email.</param>
+    /// <param name="actor">Auditable actor (oid / sub from the bearer token).</param>
+    Task<Tenant> CreateTenantAsync(
+        string displayName,
+        string? legalEntityName,
+        string? primaryPocName,
+        string? primaryPocEmail,
+        string actor,
         CancellationToken ct = default);
 }
 
@@ -118,7 +164,7 @@ public sealed record CspDashboardTenantsPage(
 public sealed record CspDashboardAtoRow(
     string DecisionId,
     Guid TenantId,
-    string TenantDisplayName,
+    string orgDisplayName,
     string SystemId,
     string SystemName,
     string DecisionType,
@@ -130,6 +176,35 @@ public sealed record CspDashboardAtoRow(
 /// <summary>Pagination envelope for ATOs.</summary>
 public sealed record CspDashboardAtosPage(
     IReadOnlyList<CspDashboardAtoRow> Items,
+    int Page,
+    int PageSize,
+    int TotalCount);
+
+/// <summary>
+/// Per-system row in <c>GET /api/csp/dashboard/systems</c>. Carries the
+/// minimum compliance KPIs needed for the cross-tenant overview table —
+/// the per-tenant deep-detail breakdowns (CatI/II/III, HasBoundary, etc.)
+/// remain on the tenant-scoped <c>/api/dashboard/portfolio</c> contract.
+/// </summary>
+public sealed record CspDashboardSystemRow(
+    string SystemId,
+    string Name,
+    string? Acronym,
+    Guid TenantId,
+    string orgDisplayName,
+    string ImpactLevel,
+    string CurrentRmfPhase,
+    double ComplianceScore,
+    DateTime? AtoExpirationDate,
+    string AtoStatus,
+    int? AtoDaysRemaining,
+    string AtoSeverity,
+    int OpenPoamCount,
+    int OverduePoamCount);
+
+/// <summary>Pagination envelope for systems.</summary>
+public sealed record CspDashboardSystemsPage(
+    IReadOnlyList<CspDashboardSystemRow> Items,
     int Page,
     int PageSize,
     int TotalCount);

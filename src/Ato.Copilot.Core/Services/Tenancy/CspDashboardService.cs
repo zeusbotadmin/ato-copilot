@@ -43,13 +43,32 @@ public sealed class CspDashboardService : ICspDashboardService
     private readonly ILogger<CspDashboardService> _logger;
 
     /// <summary>
-    /// FR-070 system tenant id (<c>00000000-0000-0000-0000-000000000000</c>) —
-    /// holds <c>[GlobalReference]</c> rows (NIST catalog, OSCAL metadata,
-    /// CSP-published baselines). It is NOT a hosted tenant and MUST be
-    /// excluded from every CSP-dashboard surface. See
-    /// <see cref="TenantBootstrapService.SystemTenantId"/>.
+    /// System + default tenants — the union of rows that must be hidden
+    /// from every CSP-Admin portfolio surface (rollups, tenants list,
+    /// ATO list, systems list). Mirrors the frontend's
+    /// <c>VESTIGE_TENANT_IDS</c> set in
+    /// <c>src/Ato.Copilot.Dashboard/src/features/tenancy/vestigeTenants.ts</c>
+    /// so the KPI summary, the tenants list, and the client-side org
+    /// picker all agree on which rows count as "orgs".
+    /// <list type="bullet">
+    ///   <item><b>System tenant</b> (<see cref="TenantBootstrapService.SystemTenantId"/>,
+    ///         <c>...000</c>) — FR-070, holds <c>[GlobalReference]</c> rows
+    ///         (NIST catalog, OSCAL metadata, CSP-published baselines).</item>
+    ///   <item><b>Default tenant</b> (<see cref="TenantBootstrapService.DefaultTenantId"/>,
+    ///         <c>...001</c>) — FR-072, the <c>SingleTenant</c> fallback and
+    ///         the resolution target for the dev-mode simulated CAC
+    ///         identity. A vestige row in <c>MultiTenant</c> CSP
+    ///         deployments — real orgs come from the onboarding wizard.</item>
+    /// </list>
+    /// The endpoint surface already short-circuits in <c>SingleTenant</c>
+    /// deployments, so this filter only ever runs in <c>MultiTenant</c>
+    /// mode where excluding the default tenant is the correct behavior.
     /// </summary>
-    private static readonly Guid SystemTenantId = Guid.Empty;
+    private static readonly Guid[] VestigeTenantIds = new[]
+    {
+        TenantBootstrapService.SystemTenantId,
+        TenantBootstrapService.DefaultTenantId,
+    };
 
     public CspDashboardService(
         IDbContextFactory<AtoCopilotContext> contextFactory,
@@ -64,10 +83,12 @@ public sealed class CspDashboardService : ICspDashboardService
         await using var db = await _contextFactory.CreateDbContextAsync(ct);
 
         // Tenant counts (every tenant — including Disabled — counts here),
-        // EXCEPT the system tenant (FR-070) which holds [GlobalReference]
-        // rows and is not a hosted tenant.
+        // EXCEPT vestige rows (FR-070 system tenant + FR-072 default/bootstrap
+        // tenant) which are not hosted orgs. Mirrors the frontend
+        // `VESTIGE_TENANT_IDS` filter so KPI counts and the tenants list
+        // agree on which rows count as "orgs".
         var tenantStatusBuckets = await db.Tenants
-            .Where(t => t.Id != SystemTenantId)
+            .Where(t => !VestigeTenantIds.Contains(t.Id))
             .GroupBy(t => t.Status)
             .Select(g => new { Status = g.Key, Count = g.Count() })
             .ToListAsync(ct);
@@ -78,11 +99,12 @@ public sealed class CspDashboardService : ICspDashboardService
         var total = active + suspended + disabled;
 
         // Build the set of "active-for-rollups" tenant ids (everything
-        // except Disabled and the system tenant). The remaining queries
-        // scope through this set so FR-098 holds without sprinkling
-        // Disabled checks across each join.
+        // except Disabled and vestige rows). The remaining queries scope
+        // through this set so FR-098 holds without sprinkling Disabled
+        // checks across each join.
         var includedTenantIds = await db.Tenants
-            .Where(t => t.Status != TenantStatus.Disabled && t.Id != SystemTenantId)
+            .Where(t => t.Status != TenantStatus.Disabled
+                && !VestigeTenantIds.Contains(t.Id))
             .Select(t => t.Id)
             .ToListAsync(ct);
 
@@ -165,7 +187,7 @@ public sealed class CspDashboardService : ICspDashboardService
         await using var db = await _contextFactory.CreateDbContextAsync(ct);
 
         var query = db.Tenants
-            .Where(t => t.Id != SystemTenantId)
+            .Where(t => !VestigeTenantIds.Contains(t.Id))
             .AsQueryable();
         if (status is not null)
             query = query.Where(t => t.Status == status.Value);
@@ -278,7 +300,7 @@ public sealed class CspDashboardService : ICspDashboardService
         await using var db = await _contextFactory.CreateDbContextAsync(ct);
 
         var query = db.AuthorizationDecisions
-            .Where(a => a.TenantId != SystemTenantId)
+            .Where(a => !VestigeTenantIds.Contains(a.TenantId))
             .AsQueryable();
 
         if (!string.IsNullOrWhiteSpace(decisionType))
@@ -357,7 +379,7 @@ public sealed class CspDashboardService : ICspDashboardService
         var items = pageRows.Select(r => new CspDashboardAtoRow(
             DecisionId: r.Id,
             TenantId: r.TenantId,
-            TenantDisplayName: tenantNames.GetValueOrDefault(r.TenantId, string.Empty),
+            orgDisplayName: tenantNames.GetValueOrDefault(r.TenantId, string.Empty),
             SystemId: r.RegisteredSystemId,
             SystemName: systemNames.GetValueOrDefault(r.RegisteredSystemId, string.Empty),
             DecisionType: MapRawDecisionTypeToContract(r.DecisionType),
@@ -369,6 +391,161 @@ public sealed class CspDashboardService : ICspDashboardService
             IsActive: r.IsActive)).ToList();
 
         return new CspDashboardAtosPage(items, page, pageSize, totalCount);
+    }
+
+    public async Task<CspDashboardSystemsPage> GetSystemsAsync(
+        int page,
+        int pageSize,
+        string? impactLevel,
+        string? rmfPhase,
+        string sort,
+        string order,
+        CancellationToken ct = default)
+    {
+        await using var db = await _contextFactory.CreateDbContextAsync(ct);
+
+        // ─── 1. Build the eligible-systems query ──────────────────────────
+        // FR-070/FR-072: exclude vestige tenants (system + default).
+        // FR-098: exclude systems whose tenant is Disabled.
+        // RegisteredSystem.IsActive == false ⇒ soft-deleted; mirror the
+        // tenant-scoped portfolio query (DashboardService.GetPortfolioAsync).
+        var includedTenantIds = await db.Tenants
+            .Where(t => t.Status != TenantStatus.Disabled
+                && !VestigeTenantIds.Contains(t.Id))
+            .Select(t => t.Id)
+            .ToListAsync(ct);
+
+        var includedSet = includedTenantIds.ToHashSet();
+
+        var systemsQuery = db.RegisteredSystems
+            .Where(s => s.IsActive && includedSet.Contains(s.TenantId));
+
+        if (!string.IsNullOrWhiteSpace(rmfPhase)
+            && Enum.TryParse<RmfPhase>(rmfPhase, ignoreCase: true, out var rmfPhaseFilter))
+        {
+            systemsQuery = systemsQuery.Where(s => s.CurrentRmfStep == rmfPhaseFilter);
+        }
+
+        // impactLevel filter is applied AFTER materialization — same pattern
+        // as DashboardService — because it lives on the optional
+        // ControlBaseline navigation that may not be present for every system.
+
+        var totalCountBeforeImpactFilter = await systemsQuery.CountAsync(ct);
+
+        // ─── 2. Load the page (joined to tenant + baseline) ───────────────
+        var orderedQuery = ApplySystemsSort(systemsQuery, sort, order);
+        var pageRows = await orderedQuery
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(s => new
+            {
+                s.Id,
+                s.Name,
+                s.Acronym,
+                s.TenantId,
+                s.CurrentRmfStep,
+                BaselineLevel = s.ControlBaseline != null ? s.ControlBaseline.BaselineLevel : null,
+            })
+            .ToListAsync(ct);
+
+        var tenantIds = pageRows.Select(r => r.TenantId).Distinct().ToList();
+        var systemIds = pageRows.Select(r => r.Id).ToList();
+
+        var tenantNames = await db.Tenants
+            .Where(t => tenantIds.Contains(t.Id))
+            .Select(t => new { t.Id, t.DisplayName })
+            .ToDictionaryAsync(x => x.Id, x => x.DisplayName, ct);
+
+        // ─── 3. Per-page rollups ──────────────────────────────────────────
+        var nowUtc = DateTime.UtcNow;
+
+        var activeDecisions = await db.AuthorizationDecisions
+            .Where(d => systemIds.Contains(d.RegisteredSystemId) && d.IsActive)
+            .Select(d => new { d.RegisteredSystemId, d.ExpirationDate })
+            .ToListAsync(ct);
+
+        var poamCounts = await db.PoamItems
+            .Where(p => systemIds.Contains(p.RegisteredSystemId) && p.Status == PoamStatus.Ongoing)
+            .GroupBy(p => p.RegisteredSystemId)
+            .Select(g => new
+            {
+                SystemId = g.Key,
+                OpenCount = g.Count(),
+                OverdueCount = g.Count(p => p.ScheduledCompletionDate < nowUtc),
+            })
+            .ToListAsync(ct);
+
+        var latestScoresRaw = await db.Assessments
+            .Where(a => a.RegisteredSystemId != null
+                && systemIds.Contains(a.RegisteredSystemId!)
+                && a.Status == AssessmentStatus.Completed)
+            .GroupBy(a => a.RegisteredSystemId!)
+            .Select(g => new
+            {
+                SystemId = g.Key,
+                Latest = g.OrderByDescending(a => a.AssessedAt).First(),
+            })
+            .ToListAsync(ct);
+
+        var latestScoreBySystem = latestScoresRaw.ToDictionary(
+            x => x.SystemId,
+            x => x.Latest.ComplianceScore); // double per Assessment.ComplianceScore
+
+        // ─── 4. Project ───────────────────────────────────────────────────
+        var items = pageRows
+            .Select(r =>
+            {
+                var decision = activeDecisions.FirstOrDefault(d => d.RegisteredSystemId == r.Id);
+                var poam = poamCounts.FirstOrDefault(p => p.SystemId == r.Id);
+                var (atoStatus, atoDaysRemaining, atoSeverity) = ComputeSystemAtoFields(decision?.ExpirationDate);
+                var baseline = r.BaselineLevel ?? "Unknown";
+
+                return new CspDashboardSystemRow(
+                    SystemId: r.Id,
+                    Name: r.Name,
+                    Acronym: r.Acronym,
+                    TenantId: r.TenantId,
+                    orgDisplayName: tenantNames.GetValueOrDefault(r.TenantId, string.Empty),
+                    ImpactLevel: baseline,
+                    CurrentRmfPhase: r.CurrentRmfStep.ToString(),
+                    ComplianceScore: Math.Round(latestScoreBySystem.GetValueOrDefault(r.Id, 0d), 1),
+                    AtoExpirationDate: decision?.ExpirationDate,
+                    AtoStatus: atoStatus,
+                    AtoDaysRemaining: atoDaysRemaining,
+                    AtoSeverity: atoSeverity,
+                    OpenPoamCount: poam?.OpenCount ?? 0,
+                    OverduePoamCount: poam?.OverdueCount ?? 0);
+            })
+            .ToList();
+
+        // Apply impactLevel filter post-materialization (matches DashboardService).
+        var normalizedImpact = NormalizeImpactLevelString(impactLevel);
+        if (!string.IsNullOrEmpty(normalizedImpact))
+        {
+            items = items
+                .Where(i => string.Equals(i.ImpactLevel, normalizedImpact, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+
+        // When the impactLevel filter narrows the page, totalCount must
+        // reflect the filtered universe — not the pre-filter total. We can't
+        // easily recompute this without a full materialization, so when the
+        // filter is active we re-run the count over the filtered set across
+        // ALL systems (still scoped to includedSet) for an honest totalCount.
+        var totalCount = totalCountBeforeImpactFilter;
+        if (!string.IsNullOrEmpty(normalizedImpact))
+        {
+            totalCount = await systemsQuery
+                .CountAsync(s => s.ControlBaseline != null
+                    && s.ControlBaseline.BaselineLevel != null
+                    && s.ControlBaseline.BaselineLevel.ToLower() == normalizedImpact.ToLower(), ct);
+        }
+
+        _logger.LogInformation(
+            "CspDashboardService.GetSystemsAsync — page={Page}/{TotalPages}, items={ItemCount}, totalCount={TotalCount}, sort={Sort}/{Order}",
+            page, (totalCount + pageSize - 1) / Math.Max(pageSize, 1), items.Count, totalCount, sort, order);
+
+        return new CspDashboardSystemsPage(items, page, pageSize, totalCount);
     }
 
     // ─── helpers ────────────────────────────────────────────────────────────
@@ -429,4 +606,122 @@ public sealed class CspDashboardService : ICspDashboardService
             AuthorizationDecisionType.Dato => "Denied",
             _ => "InProcess",
         };
+
+    private static IQueryable<RegisteredSystem> ApplySystemsSort(
+        IQueryable<RegisteredSystem> query, string sort, string order)
+    {
+        var asc = !string.Equals(order, "desc", StringComparison.OrdinalIgnoreCase);
+        return sort switch
+        {
+            "name" => asc
+                ? query.OrderBy(s => s.Name).ThenBy(s => s.Id)
+                : query.OrderByDescending(s => s.Name).ThenBy(s => s.Id),
+            "orgDisplayName" => asc
+                // Order by TenantId then Name so the resulting page groups
+                // systems by tenant; we resolve the actual tenant name in
+                // memory after the page is loaded.
+                ? query.OrderBy(s => s.TenantId).ThenBy(s => s.Name)
+                : query.OrderByDescending(s => s.TenantId).ThenBy(s => s.Name),
+            "rmfPhase" => asc
+                ? query.OrderBy(s => s.CurrentRmfStep).ThenBy(s => s.Name)
+                : query.OrderByDescending(s => s.CurrentRmfStep).ThenBy(s => s.Name),
+            // impactLevel / complianceScore / atoExpiration / openPoamCount
+            // are derived columns. They cannot be sorted in EF without a
+            // join + group, which would break SQLite portability and balloon
+            // the query plan. Fall back to Name as a stable, deterministic
+            // tie-breaker — the dashboard re-sorts the page in memory when
+            // those columns are clicked.
+            _ => asc
+                ? query.OrderBy(s => s.Name).ThenBy(s => s.Id)
+                : query.OrderByDescending(s => s.Name).ThenBy(s => s.Id),
+        };
+    }
+
+    private static (string atoStatus, int? atoDaysRemaining, string atoSeverity) ComputeSystemAtoFields(
+        DateTime? expirationDate)
+    {
+        if (expirationDate is null) return ("None", null, "none");
+
+        var daysRemaining = (int)(expirationDate.Value - DateTime.UtcNow).TotalDays;
+        if (daysRemaining < 0) return ("Expired", daysRemaining, "expired");
+
+        var severity = daysRemaining switch
+        {
+            > 90 => "green",
+            >= 30 => "yellow",
+            _ => "red",
+        };
+        return ("Active", daysRemaining, severity);
+    }
+
+    private static string? NormalizeImpactLevelString(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var trimmed = raw.Trim();
+        // Accept both display names and FIPS-style codes.
+        return trimmed switch
+        {
+            "low" or "Low" or "LOW" or "L" => "Low",
+            "moderate" or "Moderate" or "MODERATE" or "M" or "Medium" or "medium" => "Moderate",
+            "high" or "High" or "HIGH" or "H" => "High",
+            _ => trimmed,
+        };
+    }
+
+    /// <inheritdoc />
+    public async Task<Tenant> CreateTenantAsync(
+        string displayName,
+        string? legalEntityName,
+        string? primaryPocName,
+        string? primaryPocEmail,
+        string actor,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(displayName))
+            throw new ArgumentException("displayName is required.", nameof(displayName));
+        var trimmed = displayName.Trim();
+        if (trimmed.Length > 256)
+            throw new ArgumentException("displayName must be 256 characters or fewer.", nameof(displayName));
+        if (string.IsNullOrWhiteSpace(actor))
+            throw new ArgumentException("actor is required.", nameof(actor));
+
+        await using var db = await _contextFactory.CreateDbContextAsync(ct);
+
+        // Case-insensitive duplicate guard. The default tenant row
+        // (Ato.Copilot.Default) and the system tenant row are both real
+        // rows in this table; we treat their names as reserved.
+        var lowered = trimmed.ToLowerInvariant();
+        var duplicate = await db.Tenants
+            .AsNoTracking()
+            .AnyAsync(t => t.DisplayName.ToLower() == lowered, ct);
+        if (duplicate)
+        {
+            throw new InvalidOperationException(
+                $"An organization named '{trimmed}' already exists.");
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var tenant = new Tenant
+        {
+            Id = Guid.NewGuid(),
+            DisplayName = trimmed,
+            LegalEntityName = string.IsNullOrWhiteSpace(legalEntityName) ? null : legalEntityName.Trim(),
+            PrimaryPocName = string.IsNullOrWhiteSpace(primaryPocName) ? null : primaryPocName.Trim(),
+            PrimaryPocEmail = string.IsNullOrWhiteSpace(primaryPocEmail) ? null : primaryPocEmail.Trim(),
+            Status = TenantStatus.Active,
+            OnboardingState = OnboardingState.Pending,
+            CreatedAt = now,
+            CreatedBy = actor,
+            UpdatedAt = now,
+            UpdatedBy = actor,
+        };
+        db.Tenants.Add(tenant);
+        await db.SaveChangesAsync(ct);
+
+        _logger.LogInformation(
+            "CSP-Admin {Actor} created new organization tenant {TenantId} '{DisplayName}'.",
+            actor, tenant.Id, tenant.DisplayName);
+
+        return tenant;
+    }
 }

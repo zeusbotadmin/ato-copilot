@@ -23,6 +23,7 @@ import {
   readImpersonation,
   startImpersonation,
 } from './api';
+import { isVestigeTenant } from './vestigeTenants';
 
 type LoadState = 'loading' | 'visible' | 'hidden';
 
@@ -60,7 +61,10 @@ export default function TenantPicker() {
         try {
           const result = await listTenants({ pageSize: 200 });
           if (cancelled) return;
-          setTenants(result.items);
+          // Filter out the system tenant AND the FR-070 default tenant
+          // — both are bootstrap rows, not real impersonation targets.
+          // See `vestigeTenants.ts` for the rationale.
+          setTenants(result.items.filter((t) => !isVestigeTenant(t.id)));
           setLoadState('visible');
         } catch {
           // 401/403 → not CSP-Admin → hide silently.
@@ -131,8 +135,8 @@ export default function TenantPicker() {
   const label = activeTenant
     ? activeTenant.displayName
     : tenants.length === 0
-      ? 'No tenants'
-      : 'All tenants';
+      ? 'No organizations'
+      : 'All organizations';
 
   return (
     <div ref={ref} className="relative">
@@ -144,7 +148,7 @@ export default function TenantPicker() {
             ? 'border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100'
             : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
         }`}
-        title={activeTenant ? `Impersonating ${activeTenant.displayName}` : 'Switch tenant scope'}
+        title={activeTenant ? `Impersonating ${activeTenant.displayName}` : 'Switch organization scope'}
         aria-expanded={open}
         aria-haspopup="listbox"
         data-testid="tenant-picker"
@@ -175,15 +179,15 @@ export default function TenantPicker() {
         >
           <div className="border-b border-gray-100 px-3 py-2">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-purple-600">
-              CSP.Admin · Tenant Scope
+              CSP.Admin · Organization Scope
             </p>
             <p className="mt-0.5 text-xs text-gray-500">
-              Impersonation is audit-logged with both your identity and the target tenant.
+              Impersonation is audit-logged with both your identity and the target organization.
             </p>
           </div>
 
           {tenants.length === 0 ? (
-            <p className="px-3 py-3 text-xs text-gray-500">No tenants registered.</p>
+            <p className="px-3 py-3 text-xs text-gray-500">No organizations registered.</p>
           ) : (
             tenants.map((tenant) => (
               <button

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Claims;
 using Ato.Copilot.Core.Interfaces.Tenancy;
 using Ato.Copilot.Core.Models.Tenancy;
 using Ato.Copilot.Mcp.Configuration;
@@ -38,6 +39,17 @@ public static class CspDashboardEndpoints
 
     private static readonly string[] AllowedSortOrders = { "asc", "desc" };
 
+    private static readonly string[] AllowedSystemSortFields =
+    {
+        "name",
+        "orgDisplayName",
+        "impactLevel",
+        "rmfPhase",
+        "complianceScore",
+        "atoExpiration",
+        "openPoamCount",
+    };
+
     private static readonly string[] AllowedDecisionStatuses =
     {
         "Authorized",
@@ -61,7 +73,9 @@ public static class CspDashboardEndpoints
 
         group.MapGet("/summary", GetSummaryAsync).WithName("GetCspDashboardSummary");
         group.MapGet("/tenants", GetTenantsAsync).WithName("GetCspDashboardTenants");
+        group.MapPost("/tenants", CreateTenantAsync).WithName("CreateCspDashboardTenant");
         group.MapGet("/atos", GetAtosAsync).WithName("GetCspDashboardAtos");
+        group.MapGet("/systems", GetSystemsAsync).WithName("GetCspDashboardSystems");
 
         return app;
     }
@@ -218,6 +232,143 @@ public static class CspDashboardEndpoints
         return Success(sw, BuildAtosPageDto(result));
     }
 
+    private static async Task<IResult> GetSystemsAsync(
+        HttpContext http,
+        ITenantContext tenantCtx,
+        ICspDashboardService service,
+        IOptions<DeploymentOptions> deployment,
+        CancellationToken ct,
+        int? page = null,
+        int? pageSize = null,
+        string? impactLevel = null,
+        string? rmfPhase = null,
+        string? sort = null,
+        string? order = null)
+    {
+        var sw = Stopwatch.StartNew();
+        if (ShouldShortCircuitSingleTenant(deployment, out var shortCircuit))
+            return shortCircuit;
+        if (!tenantCtx.IsCspAdmin) return ForbiddenNotCspAdmin(sw);
+
+        // ─── validation ────────────────────────────────────────────────────
+        var (resolvedPage, pageError) = ResolvePage(page);
+        if (pageError is not null) return ValidationError(sw, pageError);
+
+        var (resolvedPageSize, pageSizeError) = ResolvePageSize(pageSize);
+        if (pageSizeError is not null) return ValidationError(sw, pageSizeError);
+
+        var resolvedSort = string.IsNullOrWhiteSpace(sort) ? "name" : sort;
+        if (!AllowedSystemSortFields.Contains(resolvedSort, StringComparer.OrdinalIgnoreCase))
+        {
+            return ValidationError(sw,
+                $"sort '{sort}' is not a valid sort field (name|orgDisplayName|impactLevel|rmfPhase|complianceScore|atoExpiration|openPoamCount).");
+        }
+
+        var resolvedOrder = string.IsNullOrWhiteSpace(order) ? "asc" : order;
+        if (!AllowedSortOrders.Contains(resolvedOrder, StringComparer.OrdinalIgnoreCase))
+        {
+            return ValidationError(sw, $"order '{order}' must be 'asc' or 'desc'.");
+        }
+
+        var result = await service.GetSystemsAsync(
+            resolvedPage,
+            resolvedPageSize,
+            impactLevel,
+            rmfPhase,
+            resolvedSort,
+            resolvedOrder,
+            ct);
+
+        return Success(sw, BuildSystemsPageDto(result));
+    }
+
+    /// <summary>
+    /// <c>POST /api/csp/dashboard/tenants</c> — provision a brand-new
+    /// mission-owner organization (== <see cref="Tenant"/> row). Created in
+    /// <see cref="TenantStatus.Active"/> with
+    /// <see cref="OnboardingState.Pending"/> so the CSP-Admin can immediately
+    /// impersonate it and walk the per-tenant onboarding wizard. Gated on
+    /// <see cref="ITenantContext.IsCspAdmin"/>; rejects duplicate display
+    /// names with <c>422 VALIDATION_FAILED</c>.
+    /// </summary>
+    private static async Task<IResult> CreateTenantAsync(
+        HttpContext http,
+        ITenantContext tenantCtx,
+        ICspDashboardService service,
+        IOptions<DeploymentOptions> deployment,
+        CreateCspTenantRequest? body,
+        CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        if (ShouldShortCircuitSingleTenant(deployment, out var shortCircuit))
+            return shortCircuit;
+        if (!tenantCtx.IsCspAdmin) return ForbiddenNotCspAdmin(sw);
+
+        if (body is null)
+            return ValidationError(sw, "Request body is required.");
+        if (string.IsNullOrWhiteSpace(body.DisplayName))
+            return ValidationError(sw, "displayName is required.");
+        if (body.DisplayName.Trim().Length > 256)
+            return ValidationError(sw, "displayName must be 256 characters or fewer.");
+        if (!string.IsNullOrWhiteSpace(body.PrimaryPocEmail) && !body.PrimaryPocEmail.Contains('@'))
+            return ValidationError(sw, "primaryPocEmail must be a valid email address.");
+
+        var actor = ResolveActor(http);
+        try
+        {
+            var tenant = await service.CreateTenantAsync(
+                body.DisplayName,
+                body.LegalEntityName,
+                body.PrimaryPocName,
+                body.PrimaryPocEmail,
+                actor,
+                ct);
+            return Results.Json(new
+            {
+                status = "success",
+                data = new
+                {
+                    tenantId = tenant.Id,
+                    displayName = tenant.DisplayName,
+                    status = tenant.Status.ToString(),
+                    onboardingState = tenant.OnboardingState.ToString(),
+                    createdAt = tenant.CreatedAt,
+                    createdBy = tenant.CreatedBy,
+                },
+                metadata = new
+                {
+                    executionTimeMs = sw.ElapsedMilliseconds,
+                    timestamp = DateTimeOffset.UtcNow,
+                },
+            }, statusCode: StatusCodes.Status201Created);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return ValidationError(sw, ex.Message);
+        }
+        catch (ArgumentException ex)
+        {
+            return ValidationError(sw, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Request body for <c>POST /api/csp/dashboard/tenants</c>.
+    /// </summary>
+    public sealed record CreateCspTenantRequest(
+        string DisplayName,
+        string? LegalEntityName,
+        string? PrimaryPocName,
+        string? PrimaryPocEmail);
+
+    private static string ResolveActor(HttpContext http)
+    {
+        var raw = http.User.FindFirstValue("oid")
+            ?? http.User.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? http.User.Identity?.Name;
+        return string.IsNullOrWhiteSpace(raw) ? "system" : raw;
+    }
+
     // ─── DTO projections (camelCase contract envelope) ─────────────────────
 
     private static object BuildSummaryDto(CspDashboardSummary s) => new
@@ -282,7 +433,7 @@ public static class CspDashboardEndpoints
         {
             decisionId = a.DecisionId,
             tenantId = a.TenantId,
-            tenantDisplayName = a.TenantDisplayName,
+            orgDisplayName = a.orgDisplayName,
             systemId = a.SystemId,
             systemName = a.SystemName,
             decisionStatus = a.DecisionStatus,
@@ -290,6 +441,30 @@ public static class CspDashboardEndpoints
             decisionDate = a.DecisionDate,
             expirationDate = a.ExpirationDate,
             isActive = a.IsActive,
+        }).ToArray(),
+        page = page.Page,
+        pageSize = page.PageSize,
+        totalCount = page.TotalCount,
+    };
+
+    private static object BuildSystemsPageDto(CspDashboardSystemsPage page) => new
+    {
+        items = page.Items.Select(s => new
+        {
+            systemId = s.SystemId,
+            name = s.Name,
+            acronym = s.Acronym,
+            tenantId = s.TenantId,
+            orgDisplayName = s.orgDisplayName,
+            impactLevel = s.ImpactLevel,
+            currentRmfPhase = s.CurrentRmfPhase,
+            complianceScore = s.ComplianceScore,
+            atoExpirationDate = s.AtoExpirationDate,
+            atoStatus = s.AtoStatus,
+            atoDaysRemaining = s.AtoDaysRemaining,
+            atoSeverity = s.AtoSeverity,
+            openPoamCount = s.OpenPoamCount,
+            overduePoamCount = s.OverduePoamCount,
         }).ToArray(),
         page = page.Page,
         pageSize = page.PageSize,

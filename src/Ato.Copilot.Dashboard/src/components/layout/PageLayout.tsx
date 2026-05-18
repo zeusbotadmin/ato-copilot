@@ -10,8 +10,6 @@ import TenantPicker from '../../features/tenancy/TenantPicker';
 import ImpersonationBanner from '../../features/tenancy/ImpersonationBanner';
 import { useNotifications } from '../../hooks/useNotifications';
 import { useCspBranding } from './useCspBranding';
-import { useCspDashboardAvailable } from './useCspDashboardAvailable';
-import { useCspInheritedComponentsAvailable } from './useCspInheritedComponentsAvailable';
 import spinLogo from '../../assets/2026-04-22_15-58-30.png';
 
 const navItems = [
@@ -40,14 +38,6 @@ export default function PageLayout({ title, children, sidePanel, leftPanel }: Pa
   // display name). Falls back to the default SPIN logo + "ATO Copilot"
   // wordmark in SingleTenant mode or while onboarding is incomplete.
   const cspBranding = useCspBranding();
-  // Feature 048 / US8 / T186: visibility probe for the CSP cross-tenant
-  // dashboard nav link. Self-hides in SingleTenant mode, for non-CSP-Admin
-  // callers, and while CSP onboarding is not yet `Active`.
-  const cspDashboardAvailable = useCspDashboardAvailable();
-  // Feature 048 / US9 / T215: visibility probe for the CSP-inherited
-  // components nav link. Visible to every authenticated user once CSP
-  // onboarding is `Active` in a `MultiTenant` deployment (FR-104).
-  const cspInheritedComponentsAvailable = useCspInheritedComponentsAvailable();
   const notifRef = useRef<HTMLDivElement>(null);
 
   // Close notification panel when clicking outside
@@ -119,36 +109,13 @@ export default function PageLayout({ title, children, sidePanel, leftPanel }: Pa
                 {item.label}
               </NavLink>
             ))}
-            {cspDashboardAvailable === true && (
-              <NavLink
-                to="/csp-dashboard"
-                className={({ isActive }) =>
-                  `rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                    isActive
-                      ? 'bg-indigo-50 text-indigo-700'
-                      : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
-                  }`
-                }
-                data-testid="nav-csp-dashboard"
-              >
-                CSP Dashboard
-              </NavLink>
-            )}
-            {cspInheritedComponentsAvailable === true && (
-              <NavLink
-                to="/csp/inherited-components"
-                className={({ isActive }) =>
-                  `rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                    isActive
-                      ? 'bg-indigo-50 text-indigo-700'
-                      : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
-                  }`
-                }
-                data-testid="nav-csp-inherited-components"
-              >
-                Inherited
-              </NavLink>
-            )}
+            {/* Feature 048 (T076 follow-up): the cross-tenant CSP dashboard
+                resolves at `/` via PortfolioRoute for CSP-Admins, and the
+                CSP-inherited components surface is folded into `/components`
+                via ComponentsRoute (CSP-Admin not impersonating ⇒
+                CspInheritedComponentsPage). The standalone `/csp-dashboard`
+                and `/csp/inherited-components` top-nav links have been
+                retired in favor of the scope-aware resolvers. */}
           </nav>
           <span className="hidden text-sm text-gray-400 lg:block">|</span>
           <h1 className="hidden text-sm font-medium text-gray-700 lg:block">{title}</h1>

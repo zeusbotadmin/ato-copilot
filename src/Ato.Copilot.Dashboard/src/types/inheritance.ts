@@ -84,7 +84,7 @@ export interface InheritanceDesignation {
    * the row is tenant-local (not a global baseline) to render
    * `Source: <Tenant.DisplayName>`.
    */
-  tenantDisplayName?: string | null;
+  orgDisplayName?: string | null;
 }
 
 export interface SourceBreakdown {

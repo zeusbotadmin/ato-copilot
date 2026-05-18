@@ -46,7 +46,7 @@ export default function AtoStatusChart({
       data-testid="csp-dashboard-ato-status-chart"
     >
       <h3 className="mb-3 text-sm font-semibold text-gray-700">
-        ATO status across tenants
+        ATO status across organizations
       </h3>
       <ResponsiveContainer width="100%" height={220}>
         <BarChart data={data} layout="vertical">

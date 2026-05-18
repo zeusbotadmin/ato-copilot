@@ -1,10 +1,11 @@
 import { useEffect } from 'react';
 import { Routes, Route } from 'react-router-dom';
-import PortfolioRiskProfile from './pages/PortfolioRiskProfile';
-import PortfolioDashboard from './pages/PortfolioDashboard';
+import PortfolioRoute from './pages/PortfolioRoute';
+import SystemsRoute from './pages/SystemsRoute';
+import ComponentsRoute from './pages/ComponentsRoute';
+import CapabilitiesRoute from './pages/CapabilitiesRoute';
+import ControlsRoute from './pages/ControlsRoute';
 import SystemDetail from './pages/SystemDetail';
-import CapabilityLibrary from './pages/CapabilityLibrary';
-import ComponentLibrary from './pages/ComponentLibrary';
 import Roadmap from './pages/Roadmap';
 import BoundaryManagement from './pages/BoundaryManagement';
 import Documents from './pages/Documents';
@@ -20,7 +21,6 @@ import ComponentInventory from './pages/ComponentInventory';
 import PoamManagement from './pages/PoamManagement';
 import ControlInheritance from './pages/ControlInheritance';
 import BaselineManagement from './pages/BaselineManagement';
-import ControlCatalog from './pages/ControlCatalog';
 import SystemProfile from './pages/SystemProfile';
 import SystemLayout from './components/layout/SystemLayout';
 import ChatPanel from './components/chat/ChatPanel';
@@ -34,7 +34,6 @@ import TenantWizard from './features/onboarding/TenantWizard';
 import TenantOnboardingGuard from './features/onboarding/TenantWizard/TenantOnboardingGuard';
 import CspWizard from './features/csp-onboarding/CspWizard';
 import CspOnboardingGuard from './features/csp-onboarding/CspOnboardingGuard';
-import CspDashboardPage from './features/csp-dashboard/CspDashboardPage';
 import CspInheritedComponentsPage from './features/csp-inherited-components/CspInheritedComponentsPage';
 import ImportedDocumentsView from './features/admin/imported-documents/ImportedDocumentsView';
 
@@ -58,8 +57,8 @@ function AppContent() {
       <CspOnboardingGuard>
         <TenantOnboardingGuard>
           <Routes>
-          <Route path="/" element={<PortfolioRiskProfile />} />
-          <Route path="/systems" element={<PortfolioDashboard />} />
+          <Route path="/" element={<PortfolioRoute />} />
+          <Route path="/systems" element={<SystemsRoute />} />
           <Route path="/systems/:id" element={<SystemLayout />}>
             <Route index element={<SystemDetail />} />
             <Route path="roadmap" element={<Roadmap />} />
@@ -79,15 +78,17 @@ function AppContent() {
             <Route path="baseline" element={<BaselineManagement />} />
             <Route path="profile/:sectionType" element={<SystemProfile />} />
           </Route>
-          <Route path="/capabilities" element={<CapabilityLibrary />} />
-          <Route path="/components" element={<ComponentLibrary />} />
+          <Route path="/capabilities" element={<CapabilitiesRoute />} />
+          <Route path="/components" element={<ComponentsRoute />} />
           <Route path="/onboarding" element={<OnboardingShell />} />
           <Route path="/onboarding/tenant" element={<TenantWizard />} />
           <Route path="/onboarding/csp" element={<CspWizard />} />
-          <Route path="/csp-dashboard" element={<CspDashboardPage />} />
+          {/* Feature 048 follow-up: the cross-tenant CSP dashboard now
+              resolves at `/` via PortfolioRoute for CSP-Admins. The standalone
+              `/csp-dashboard` route has been retired. */}
           <Route path="/csp/inherited-components" element={<CspInheritedComponentsPage />} />
           <Route path="/admin/imported-documents" element={<ImportedDocumentsView />} />
-          <Route path="/controls" element={<ControlCatalog />} />
+          <Route path="/controls" element={<ControlsRoute />} />
         </Routes>
         </TenantOnboardingGuard>
       </CspOnboardingGuard>

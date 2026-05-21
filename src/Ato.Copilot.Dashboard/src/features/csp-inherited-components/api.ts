@@ -26,7 +26,7 @@ export interface Envelope<T> {
 }
 
 export type CspInheritedComponentStatus = 'Draft' | 'Published' | 'Archived';
-export type CspInheritedCapabilityStatus = 'Mapped' | 'NeedsReview';
+export type CspInheritedCapabilityStatus = 'Mapped' | 'NeedsReview' | 'Archived';
 export type CspSourceFormat =
   | 'Pdf'
   | 'Docx'
@@ -75,16 +75,24 @@ export interface CspInheritedCapability {
   mappedBy: 'User' | 'AI';
   reviewedBy?: string | null;
   reviewedAt?: string | null;
+  reviewerNote?: string | null;
   createdAt?: string;
+  createdBy?: string;
   updatedAt?: string;
+  /** Optimistic concurrency token returned by the server. Required on PATCH. */
+  rowVersion?: string | null;
 }
 
 export interface CspInheritedComponentsPage {
   items: CspInheritedComponent[];
   page: number;
   pageSize: number;
-  totalItems: number;
-  totalPages: number;
+  /**
+   * Wire format is `total` (not `totalItems` / `totalPages`). Server
+   * does not return `totalPages` — callers compute it from
+   * `Math.ceil(total / pageSize)` if needed.
+   */
+  total: number;
 }
 
 export interface CspInheritedComponentPatchRequest {
@@ -96,6 +104,12 @@ export interface CspInheritedComponentPatchRequest {
 export interface CapabilityReviewRequest {
   mappedNistControlIds: string[];
   reviewerNote?: string;
+}
+
+export interface CspInheritedCapabilityPatchRequest {
+  name: string;
+  description: string;
+  mappedNistControlIds: string[];
 }
 
 export interface RemapResponse {
@@ -270,6 +284,40 @@ export async function reviewCspInheritedCapability(
     payload,
   );
   return unwrap(data);
+}
+
+/**
+ * `PATCH /csp/inherited-components/{componentId}/capabilities/{capabilityId}`
+ * — generic edit for a single capability (CSP-Admin). A NeedsReview row
+ * implicitly transitions to Mapped on edit. `rowVersion` is sent as the
+ * `If-Match` header for optimistic concurrency.
+ */
+export async function patchCspInheritedCapability(
+  componentId: string,
+  capabilityId: string,
+  payload: CspInheritedCapabilityPatchRequest,
+  rowVersion?: string | null,
+): Promise<CspInheritedCapability> {
+  const { data } = await cspClient.patch<Envelope<CspInheritedCapability>>(
+    `/csp/inherited-components/${encodeURIComponent(componentId)}/capabilities/${encodeURIComponent(capabilityId)}`,
+    payload,
+    rowVersion ? { headers: { 'If-Match': rowVersion } } : undefined,
+  );
+  return unwrap(data);
+}
+
+/**
+ * `DELETE /csp/inherited-components/{componentId}/capabilities/{capabilityId}`
+ * — soft-delete a capability (CSP-Admin). Sets `status = Archived` so the row
+ * is hidden from non-CSP-Admin readers but auditable in the catalog.
+ */
+export async function archiveCspInheritedCapability(
+  componentId: string,
+  capabilityId: string,
+): Promise<void> {
+  await cspClient.delete(
+    `/csp/inherited-components/${encodeURIComponent(componentId)}/capabilities/${encodeURIComponent(capabilityId)}`,
+  );
 }
 
 /**

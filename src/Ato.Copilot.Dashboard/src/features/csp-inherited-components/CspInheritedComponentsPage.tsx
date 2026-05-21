@@ -11,14 +11,16 @@ import {
 import { useNavigate } from 'react-router-dom';
 import PageLayout from '../../components/layout/PageLayout';
 import PageHero from '../../components/layout/PageHero';
-import MetricCard from '../../components/cards/MetricCard';
 import { useCspDashboardAvailable } from '../../components/layout/useCspDashboardAvailable';
 import {
+  archiveCspInheritedComponent,
   createCspInheritedComponent,
   importCspInheritedComponents,
   isUnavailable,
+  listCspInheritedCapabilities,
   listCspInheritedComponents,
   type CspComponentType,
+  type CspInheritedCapability,
   type CspInheritedComponent,
   type CspInheritedComponentStatus,
   type CspInheritedComponentsPage,
@@ -45,13 +47,22 @@ const STATUS_OPTIONS: { value: CspInheritedComponentStatus | ''; label: string }
   { value: 'Archived', label: 'Archived' },
 ];
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 200; // Pull catalogues in one shot; CSP catalogs are small (10s of components).
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const ACCEPT = '.pdf,.docx,.json,.xlsx,.zip';
 
 type LoadState =
   | { kind: 'loading' }
-  | { kind: 'ready'; page: CspInheritedComponentsPage }
+  | {
+      kind: 'ready';
+      page: CspInheritedComponentsPage;
+      /**
+       * Capability fan-out indexed by parent component id. Populated alongside
+       * the components fetch so each card can render its linked-capability
+       * chip strip (matches the org `ComponentLibrary` card visual).
+       */
+      capabilitiesByComponentId: Map<string, CspInheritedCapability[]>;
+    }
   | { kind: 'unavailable'; reason: string }
   | { kind: 'error'; message: string };
 
@@ -106,13 +117,32 @@ export default function CspInheritedComponentsPage(): ReactElement {
     let cancelled = false;
     setState({ kind: 'loading' });
     listCspInheritedComponents(params)
-      .then((result) => {
+      .then(async (result) => {
         if (cancelled) return;
         if (isUnavailable(result)) {
           setState({ kind: 'unavailable', reason: result.reason });
           return;
         }
-        setState({ kind: 'ready', page: result });
+        // Fan out to the per-component capabilities endpoint so each card
+        // can render its linked-capability chip strip (matches org
+        // `ComponentLibrary`'s card visual). The CSP catalog is small (10s
+        // of components, low 100s of capabilities); this Promise.all is
+        // measured at <1s against the local stack. If catalogs ever grow,
+        // promote this to a dedicated flat endpoint.
+        const capabilityArrays = await Promise.all(
+          result.items.map((c) =>
+            listCspInheritedCapabilities(c.id).catch(() => [] as CspInheritedCapability[]),
+          ),
+        );
+        if (cancelled) return;
+        const capabilitiesByComponentId = new Map<string, CspInheritedCapability[]>();
+        for (let i = 0; i < result.items.length; i += 1) {
+          const c = result.items[i];
+          const caps = capabilityArrays[i];
+          if (!c) continue;
+          capabilitiesByComponentId.set(c.id, caps ?? []);
+        }
+        setState({ kind: 'ready', page: result, capabilitiesByComponentId });
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -176,66 +206,25 @@ export default function CspInheritedComponentsPage(): ReactElement {
   }
 
   return (
-    <PageLayout title="CSP Inherited">
+    <PageLayout title="Component Library">
       <div data-testid="csp-inherited-components-page">
         <PageHero
-          eyebrow="CSP Catalog"
-          title="CSP Components"
-          description="The hosting CSP's catalog of building blocks (Infrastructure, Platform, Service, Identity, Network, Storage, Compute). Every tenant inherits this read-only catalog and can map their systems against it; only CSP administrators can edit, publish, archive, or resolve needs-review items."
-          actions={
-            canManage ? (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setCreateOpen(true)}
-                  className="inline-flex items-center rounded-md border border-white bg-white px-4 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-50"
-                  data-testid="csp-inherited-components-create-button"
-                >
-                  + Create component
-                </button>
-                <button
-                  type="button"
-                  onClick={() => importInputRef.current?.click()}
-                  disabled={importing}
-                  className="inline-flex items-center rounded-md bg-indigo-900/40 px-4 py-1.5 text-sm font-medium text-white ring-1 ring-inset ring-white/40 hover:bg-indigo-900/60 disabled:cursor-not-allowed disabled:opacity-60"
-                  data-testid="csp-inherited-components-import-button"
-                >
-                  {importing ? 'Importing…' : 'Import ATO documents'}
-                </button>
-                <input
-                  ref={importInputRef}
-                  type="file"
-                  multiple
-                  accept={ACCEPT}
-                  className="hidden"
-                  onChange={handleImport}
-                  aria-label="Import ATO documents"
-                />
-              </>
-            ) : undefined
-          }
+          eyebrow="Components"
+          title="Component Library"
+          description="CSP-wide People, Places, Things, and Policies inherited by every hosted organization. Only CSP administrators can edit, publish, archive, or resolve needs-review items."
+          showOrgName={false}
         />
 
-        {/* Summary metrics — mirrors org `ComponentInventory`'s MetricCard
-            strip so the CSP catalog page reads at-a-glance the same way as
-            the org system-components page. */}
-        {state.kind === 'ready' && (
-          <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
-            <MetricCard title="Total" value={state.page.totalItems} />
-            <MetricCard
-              title="Published"
-              value={state.page.items.filter((c) => c.status === 'Published').length}
-            />
-            <MetricCard
-              title="Draft"
-              value={state.page.items.filter((c) => c.status === 'Draft').length}
-            />
-            <MetricCard
-              title="Archived"
-              value={state.page.items.filter((c) => c.status === 'Archived').length}
-            />
-          </div>
-        )}
+        {/* Hidden file input — kept here so toolbar `Import` button can trigger it. */}
+        <input
+          ref={importInputRef}
+          type="file"
+          multiple
+          accept={ACCEPT}
+          className="hidden"
+          onChange={handleImport}
+          aria-label="Import ATO documents"
+        />
 
         {/* Import error banner */}
         {importError && (
@@ -261,9 +250,8 @@ export default function CspInheritedComponentsPage(): ReactElement {
           </div>
         )}
 
-        {/* Toolbar — search + status filter, matches org `CapabilityLibrary`
-            and `ComponentInventory` toolbar pattern (flex-wrap row above the
-            content card, plain bordered inputs, no per-input label chrome). */}
+        {/* Toolbar — visual parity with org `ComponentLibrary`: search + status
+            filter on the left, count text, primary actions right-aligned. */}
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <input
             type="text"
@@ -293,9 +281,35 @@ export default function CspInheritedComponentsPage(): ReactElement {
                 </option>
               ))}
           </select>
+          {state.kind === 'ready' && (
+            <span className="text-sm text-gray-500">
+              {state.page.total.toLocaleString()} components
+            </span>
+          )}
+          {canManage && (
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => importInputRef.current?.click()}
+                disabled={importing}
+                className="inline-flex items-center rounded-md border border-indigo-600 px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-60"
+                data-testid="csp-inherited-components-import-button"
+              >
+                {importing ? 'Importing…' : 'Import ATO documents'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setCreateOpen(true)}
+                className="inline-flex items-center rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
+                data-testid="csp-inherited-components-create-button"
+              >
+                + New Component
+              </button>
+            </div>
+          )}
         </div>
 
-        {/* Table */}
+        {/* Body */}
         {state.kind === 'loading' && (
           <p className="text-sm text-gray-500">Loading components…</p>
         )}
@@ -304,12 +318,39 @@ export default function CspInheritedComponentsPage(): ReactElement {
             {state.message}
           </div>
         )}
-        {state.kind === 'ready' && (
-          <ComponentsTable
-            page={state.page}
-            onSelect={(id) => setSelectedId(id)}
-            onPageChange={setPage}
-          />
+        {state.kind === 'ready' && state.page.items.length === 0 && (
+          <p className="rounded-md border border-gray-200 bg-white px-3 py-6 text-center text-sm text-gray-500">
+            No components match the current filters.
+          </p>
+        )}
+        {state.kind === 'ready' && state.page.items.length > 0 && (
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {state.page.items.map((c) => (
+              <ComponentCard
+                key={c.id}
+                component={c}
+                capabilities={state.capabilitiesByComponentId.get(c.id) ?? []}
+                canManage={canManage}
+                onOpen={() => setSelectedId(c.id)}
+                onArchive={async () => {
+                  if (
+                    !window.confirm(
+                      `Archive "${c.name}"? Mission owners will no longer see it. CSP-Admins can still view it via the Archived filter.`,
+                    )
+                  ) {
+                    return;
+                  }
+                  try {
+                    await archiveCspInheritedComponent(c.id);
+                    reload();
+                  } catch (err) {
+                    const ex = err as { message?: string };
+                    setImportError(ex?.message ?? 'Archive failed.');
+                  }
+                }}
+              />
+            ))}
+          </div>
         )}
       </div>
 
@@ -559,142 +600,135 @@ function CreateComponentModal({
   );
 }
 
-function ComponentsTable({
-  page,
-  onSelect,
-  onPageChange,
-}: {
-  page: CspInheritedComponentsPage;
-  onSelect: (id: string) => void;
-  onPageChange: (next: number) => void;
-}): ReactElement {
-  if (page.items.length === 0) {
-    return (
-      <p className="rounded-md border border-gray-200 bg-white px-3 py-6 text-center text-sm text-gray-500">
-        No components match the current filters.
-      </p>
-    );
-  }
-
-  return (
-    <>
-      <div className="overflow-x-auto rounded-md border border-gray-200 bg-white">
-        <table className="min-w-full divide-y divide-gray-200 text-sm">
-          <thead className="bg-gray-50">
-            <tr>
-              <th scope="col" className="px-3 py-2 text-left font-medium text-gray-700">
-                Name
-              </th>
-              <th scope="col" className="px-3 py-2 text-left font-medium text-gray-700">
-                Type
-              </th>
-              <th scope="col" className="px-3 py-2 text-left font-medium text-gray-700">
-                Source
-              </th>
-              <th scope="col" className="px-3 py-2 text-left font-medium text-gray-700">
-                Status
-              </th>
-              <th scope="col" className="px-3 py-2 text-right font-medium text-gray-700">
-                Mapped
-              </th>
-              <th scope="col" className="px-3 py-2 text-right font-medium text-gray-700">
-                Needs review
-              </th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {page.items.map((c) => (
-              <Row key={c.id} component={c} onSelect={onSelect} />
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <Pagination page={page} onPageChange={onPageChange} />
-    </>
-  );
-}
-
-function Row({
+function ComponentCard({
   component,
-  onSelect,
+  capabilities,
+  canManage,
+  onOpen,
+  onArchive,
 }: {
   component: CspInheritedComponent;
-  onSelect: (id: string) => void;
+  capabilities: CspInheritedCapability[];
+  canManage: boolean;
+  onOpen: () => void;
+  onArchive: () => void;
 }): ReactElement {
+  // Mirror the org `ComponentLibrary` card visual: name + type chip in the
+  // header, optional description below, then an indigo Linked Capabilities
+  // chip strip. CSP rows additionally carry a violet tint + "CSP" pill so
+  // mission-owner viewers immediately recognise inherited catalog items.
+  const isArchived = component.status === 'Archived';
   return (
-    <tr
-      className="cursor-pointer hover:bg-gray-50"
-      onClick={() => onSelect(component.id)}
-      data-testid={`csp-component-row-${component.id}`}
+    <div
+      onClick={onOpen}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      data-testid={`csp-component-card-${component.id}`}
+      className={`cursor-pointer rounded-lg border p-4 shadow-sm transition-shadow hover:shadow-md focus:outline-none focus:ring-2 focus:ring-indigo-300 ${
+        isArchived
+          ? 'border-gray-300 bg-gray-50/60 opacity-80'
+          : 'border-violet-200 bg-violet-50/40'
+      }`}
     >
-      <td className="px-3 py-2 text-gray-900">
-        <button
-          type="button"
-          className="text-left font-medium text-indigo-700 hover:underline"
-          onClick={(e) => {
-            e.stopPropagation();
-            onSelect(component.id);
-          }}
-        >
-          {component.name}
-        </button>
-        {component.description && (
-          <p className="mt-0.5 line-clamp-1 text-xs text-gray-500">{component.description}</p>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h3 className="truncate text-sm font-semibold text-gray-900">{component.name}</h3>
+            <span className="inline-flex shrink-0 items-center rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700">
+              CSP
+            </span>
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center rounded bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
+              {component.componentType}
+            </span>
+            <StatusBadge status={component.status} />
+          </div>
+        </div>
+        {canManage && (
+          <div className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpen();
+              }}
+              title="Edit"
+              aria-label={`Edit ${component.name}`}
+              className="rounded p-1 text-gray-500 hover:bg-white hover:text-indigo-700"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                className="h-4 w-4"
+              >
+                <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z" />
+              </svg>
+            </button>
+            {!isArchived && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onArchive();
+                }}
+                title="Archive"
+                aria-label={`Archive ${component.name}`}
+                className="rounded p-1 text-gray-500 hover:bg-white hover:text-red-700"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                  className="h-4 w-4"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+              </button>
+            )}
+          </div>
         )}
-      </td>
-      <td className="px-3 py-2 text-gray-700">{component.componentType}</td>
-      <td className="px-3 py-2 text-gray-700">
-        {component.sourceFileName ?? component.sourceFormat}
-      </td>
-      <td className="px-3 py-2">
-        <StatusBadge status={component.status} />
-      </td>
-      <td className="px-3 py-2 text-right text-gray-900">
-        {component.capabilityMappedCount ?? 0}
-      </td>
-      <td className="px-3 py-2 text-right text-gray-900">
-        {component.capabilityNeedsReviewCount ?? 0}
-      </td>
-    </tr>
-  );
-}
-
-function Pagination({
-  page,
-  onPageChange,
-}: {
-  page: CspInheritedComponentsPage;
-  onPageChange: (next: number) => void;
-}): ReactElement | null {
-  if (page.totalPages <= 1) return null;
-  return (
-    <div className="mt-3 flex items-center justify-between text-sm text-gray-600">
-      <span>
-        Showing {(page.page - 1) * page.pageSize + 1}–
-        {Math.min(page.page * page.pageSize, page.totalItems)} of {page.totalItems}
-      </span>
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          disabled={page.page <= 1}
-          onClick={() => onPageChange(page.page - 1)}
-          className="rounded-md border border-gray-300 bg-white px-2 py-1 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Prev
-        </button>
-        <span>
-          Page {page.page} of {page.totalPages}
-        </span>
-        <button
-          type="button"
-          disabled={page.page >= page.totalPages}
-          onClick={() => onPageChange(page.page + 1)}
-          className="rounded-md border border-gray-300 bg-white px-2 py-1 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Next
-        </button>
       </div>
+
+      {component.description && (
+        <p className="mt-2 line-clamp-2 text-xs text-gray-600">{component.description}</p>
+      )}
+
+      {/* Linked Capabilities chip strip — mirrors the org card. Shows up to
+          the first 6 capability names with a "+N more" overflow chip. */}
+      {capabilities.length > 0 && (
+        <div className="mt-3">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-gray-500">
+            Linked Capabilities
+          </div>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {capabilities.slice(0, 6).map((cap) => (
+              <span
+                key={cap.id}
+                className="inline-flex items-center rounded bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700"
+              >
+                {cap.name}
+              </span>
+            ))}
+            {capabilities.length > 6 && (
+              <span className="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">
+                +{capabilities.length - 6} more
+              </span>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

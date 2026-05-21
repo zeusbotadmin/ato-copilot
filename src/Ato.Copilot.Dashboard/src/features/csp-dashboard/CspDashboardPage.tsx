@@ -115,6 +115,10 @@ export default function CspDashboardPage(): ReactElement {
         <PageHero
           eyebrow="Portfolio"
           title={portfolioTitle}
+          // CSP portfolio spans every org — there is no "active org" to
+          // chip next to the title. Suppress the auto-rendered org name
+          // (which would otherwise echo the caller's home-tenant org).
+          showOrgName={false}
           description={`All-up KPIs and an entry table for every org (mission owner) in the ${cspName} portfolio. Click an org to drop into its workspace.`}
           actions={
             <span

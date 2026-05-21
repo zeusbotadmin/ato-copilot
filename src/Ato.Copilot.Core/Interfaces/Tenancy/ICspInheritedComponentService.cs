@@ -114,4 +114,43 @@ public interface ICspInheritedComponentService
         string? reviewerNote,
         string actor,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Update mutable metadata fields on a single
+    /// <see cref="CspInheritedCapability"/> (Name, Description, mapped NIST
+    /// control IDs). Used by the CSP-Admin capability detail drawer for
+    /// generic edits outside the NeedsReview-only
+    /// <see cref="ReviewCapabilityAsync"/> code-path. The row is stamped
+    /// with <see cref="MappedBy.User"/>, reviewer metadata is refreshed,
+    /// and the row is moved to
+    /// <see cref="CspInheritedCapabilityStatus.Mapped"/> when it was
+    /// previously NeedsReview (a manual edit implicitly resolves the
+    /// review). Throws <see cref="KeyNotFoundException"/> if the
+    /// capability id does not belong to the component id, and
+    /// <see cref="DbUpdateConcurrencyException"/> when the supplied
+    /// <paramref name="rowVersion"/> stamp is stale.
+    /// </summary>
+    Task<CspInheritedCapability> UpdateCapabilityAsync(
+        Guid componentId,
+        Guid capabilityId,
+        string name,
+        string description,
+        IReadOnlyList<string> mappedNistControlIds,
+        byte[]? rowVersion,
+        string actor,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Soft-delete a single <see cref="CspInheritedCapability"/> by flipping
+    /// its <see cref="CspInheritedCapability.Status"/> to
+    /// <see cref="CspInheritedCapabilityStatus.Archived"/>. Idempotent —
+    /// a row already Archived is returned unchanged. Throws
+    /// <see cref="KeyNotFoundException"/> if the capability does not
+    /// belong to the supplied <paramref name="componentId"/>.
+    /// </summary>
+    Task<CspInheritedCapability> ArchiveCapabilityAsync(
+        Guid componentId,
+        Guid capabilityId,
+        string actor,
+        CancellationToken ct = default);
 }

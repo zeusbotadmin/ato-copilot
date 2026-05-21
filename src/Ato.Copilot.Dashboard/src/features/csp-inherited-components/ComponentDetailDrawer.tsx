@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactElement, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type FormEvent, type ReactElement, type ReactNode } from 'react';
 import {
   addCspInheritedCapability,
   archiveCspInheritedComponent,
@@ -11,6 +11,7 @@ import {
   type CspInheritedCapability,
   type CspInheritedComponent,
 } from './api';
+import CapabilityDetailDrawer from './CapabilityDetailDrawer';
 import NeedsReviewQueue from './NeedsReviewQueue';
 
 interface Props {
@@ -95,6 +96,25 @@ export default function ComponentDetailDrawer({
   const [capControls, setCapControls] = useState('');
   const [capError, setCapError] = useState<string | null>(null);
   const [capSubmitting, setCapSubmitting] = useState(false);
+
+  // Linked-capabilities picker state — visual parity with the org
+  // `ComponentLibrary` capability picker (search-filterable, scrollable
+  // list). The CSP data model is 1:N (each capability has exactly one
+  // parent component), so the picker is click-to-open rather than
+  // multi-select reparent.
+  const [capSearch, setCapSearch] = useState('');
+  const [selectedCapabilityId, setSelectedCapabilityId] = useState<string | null>(null);
+
+  const filteredCapabilities = useMemo<CspInheritedCapability[]>(() => {
+    if (!capabilities) return [];
+    const q = capSearch.trim().toLowerCase();
+    if (q.length === 0) return capabilities;
+    return capabilities.filter((c) => {
+      if (c.name.toLowerCase().includes(q)) return true;
+      if (c.mappedNistControlIds.some((id) => id.toLowerCase().includes(q))) return true;
+      return false;
+    });
+  }, [capabilities, capSearch]);
 
   const resetCapForm = () => {
     setCapName('');
@@ -305,11 +325,19 @@ export default function ComponentDetailDrawer({
           <p className="text-sm text-gray-500">Loading component…</p>
         ) : (
           <div className="space-y-5">
-            {/* Edit form */}
+            {/* Edit form — visual parity with the org `ComponentLibrary`
+                edit form (Name *, Type * | Status *, Sub-Type, Description,
+                Owner). The CSP data model only persists Name / Description
+                / ComponentType; Status reflects the CSP lifecycle
+                (Draft / Published / Archived, mutated via the Publish and
+                Archive buttons), and Sub-Type / Owner are not stored at
+                CSP scope — they render disabled with a helper line so a
+                future schema extension can light them up without UI churn. */}
             {editing ? (
               <div className="space-y-3 rounded-md border border-indigo-200 bg-indigo-50 p-3">
+                {/* Name (active) */}
                 <label className="block text-xs font-medium text-gray-700">
-                  Name
+                  Name *
                   <input
                     type="text"
                     value={editName}
@@ -318,6 +346,58 @@ export default function ComponentDetailDrawer({
                     className="mt-1 block w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                   />
                 </label>
+
+                {/* Type | Status (2-col, mirrors the org form's layout) */}
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="block text-xs font-medium text-gray-700">
+                    Type *
+                    <select
+                      value={editType}
+                      onChange={(e) => setEditType(e.target.value as CspComponentType)}
+                      className="mt-1 block w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    >
+                      {COMPONENT_TYPES.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-400 mb-1">Status *</label>
+                    <select
+                      value={component.status}
+                      disabled
+                      aria-disabled
+                      className="block w-full rounded-md border border-gray-200 bg-gray-100 px-2 py-1.5 text-sm text-gray-500 cursor-not-allowed"
+                    >
+                      <option value="Draft">Draft</option>
+                      <option value="Published">Published</option>
+                      <option value="Archived">Archived</option>
+                    </select>
+                    <p className="mt-0.5 text-[11px] text-gray-400">
+                      Use Publish / Archive to change.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Sub-Type (visual parity, disabled) */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-400 mb-1">Sub-Type</label>
+                  <input
+                    type="text"
+                    value=""
+                    disabled
+                    aria-disabled
+                    placeholder="—"
+                    className="block w-full rounded-md border border-gray-200 bg-gray-100 px-2 py-1.5 text-sm text-gray-500 cursor-not-allowed"
+                  />
+                  <p className="mt-0.5 text-[11px] text-gray-400">
+                    Not stored at CSP scope — display-only for layout parity.
+                  </p>
+                </div>
+
+                {/* Description (active) */}
                 <label className="block text-xs font-medium text-gray-700">
                   Description
                   <textarea
@@ -327,20 +407,23 @@ export default function ComponentDetailDrawer({
                     className="mt-1 block w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                   />
                 </label>
-                <label className="block text-xs font-medium text-gray-700">
-                  Component type
-                  <select
-                    value={editType}
-                    onChange={(e) => setEditType(e.target.value as CspComponentType)}
-                    className="mt-1 block w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                  >
-                    {COMPONENT_TYPES.map((t) => (
-                      <option key={t} value={t}>
-                        {t}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+
+                {/* Owner (visual parity, disabled) */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-400 mb-1">Owner</label>
+                  <input
+                    type="text"
+                    value=""
+                    disabled
+                    aria-disabled
+                    placeholder="—"
+                    className="block w-full rounded-md border border-gray-200 bg-gray-100 px-2 py-1.5 text-sm text-gray-500 cursor-not-allowed"
+                  />
+                  <p className="mt-0.5 text-[11px] text-gray-400">
+                    Not stored at CSP scope — display-only for layout parity.
+                  </p>
+                </div>
+
                 <div className="flex justify-end gap-2">
                   <button
                     type="button"
@@ -362,12 +445,22 @@ export default function ComponentDetailDrawer({
               </div>
             ) : (
               <dl className="divide-y divide-gray-100 rounded-md border border-gray-200 text-sm">
+                <Row label="Type">{component.componentType}</Row>
+                <Row label="Status">
+                  <StatusBadge status={component.status} />
+                </Row>
+                <Row label="Sub-Type">
+                  <em className="text-gray-400">(not stored at CSP scope)</em>
+                </Row>
                 <Row label="Description">
                   {component.description ? (
                     component.description
                   ) : (
                     <em className="text-gray-400">(none)</em>
                   )}
+                </Row>
+                <Row label="Owner">
+                  <em className="text-gray-400">(not stored at CSP scope)</em>
                 </Row>
                 <Row label="Source file">
                   {component.sourceFileName ?? <em className="text-gray-400">(unknown)</em>}
@@ -609,9 +702,21 @@ export default function ComponentDetailDrawer({
               </form>
             )}
 
-            {/* Capability list */}
-            <section>
-              <h3 className="text-sm font-semibold text-gray-900">All capabilities</h3>
+            {/* Linked Capabilities — picker-styled visual parity with the
+                org `ComponentLibrary` capability picker. CSP capabilities
+                are 1:N (each cap has exactly one parent component) so this
+                renders as a click-to-open list rather than a multi-select
+                reparent toggle. Each row visually mirrors the picker
+                screenshot (search box, scrollable container, NIST family
+                code on the right) and opens the capability detail drawer
+                on click. */}
+            <section data-testid="csp-linked-capabilities">
+              <h3 className="text-sm font-semibold text-gray-900">
+                Linked Capabilities{' '}
+                {capabilities && capabilities.length > 0 && (
+                  <span className="text-gray-400 font-normal">({capabilities.length})</span>
+                )}
+              </h3>
               {capabilities === null ? (
                 <p className="mt-2 text-sm text-gray-500">Loading…</p>
               ) : capabilities.length === 0 ? (
@@ -619,29 +724,67 @@ export default function ComponentDetailDrawer({
                   No capabilities mapped to this component yet.
                 </p>
               ) : (
-                <ul className="mt-2 divide-y divide-gray-100 rounded-md border border-gray-200">
-                  {capabilities.map((cap) => (
-                    <li key={cap.id} className="px-3 py-2 text-sm">
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <p className="font-medium text-gray-900">{cap.name}</p>
-                        {cap.status === 'Mapped' ? (
-                          <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
-                            Mapped
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
-                            Needs review
-                          </span>
-                        )}
-                      </div>
-                      {cap.mappedNistControlIds.length > 0 && (
-                        <p className="mt-1 text-xs text-gray-600">
-                          Controls: {cap.mappedNistControlIds.join(', ')}
-                        </p>
-                      )}
-                    </li>
-                  ))}
-                </ul>
+                <>
+                  <input
+                    type="text"
+                    value={capSearch}
+                    onChange={(e) => setCapSearch(e.target.value)}
+                    placeholder="Search capabilities..."
+                    aria-label="Search linked capabilities"
+                    className="mt-2 block w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    data-testid="csp-linked-cap-search"
+                  />
+                  <div className="mt-2 max-h-48 overflow-y-auto rounded-md border border-gray-200 bg-gray-50 p-2 space-y-1">
+                    {filteredCapabilities.length === 0 ? (
+                      <p className="px-1 py-2 text-xs text-gray-500">No capabilities match your search.</p>
+                    ) : (
+                      filteredCapabilities.map((cap) => {
+                        const family =
+                          cap.mappedNistControlIds[0]?.split('-')[0]?.toUpperCase() ?? '';
+                        return (
+                          <button
+                            type="button"
+                            key={cap.id}
+                            onClick={() => setSelectedCapabilityId(cap.id)}
+                            className="flex w-full items-center gap-2 rounded px-1 py-0.5 text-left text-sm hover:bg-white focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            data-testid={`csp-linked-cap-row-${cap.id}`}
+                          >
+                            {/* Linked-indicator — visual analog to the
+                                org picker's checkbox column. Always
+                                checked because every row in this list is,
+                                by definition, linked to this component. */}
+                            <span
+                              aria-hidden="true"
+                              className="inline-flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-sm border border-indigo-500 bg-indigo-500 text-[10px] text-white"
+                              title="Linked to this component"
+                            >
+                              ✓
+                            </span>
+                            <span className="truncate text-gray-700">{cap.name}</span>
+                            {cap.status === 'NeedsReview' && (
+                              <span className="ml-1 inline-flex flex-shrink-0 items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
+                                needs review
+                              </span>
+                            )}
+                            {family && (
+                              <span
+                                className="ml-auto flex-shrink-0 text-xs text-gray-400"
+                                title={NIST_FAMILIES[family] ?? family}
+                              >
+                                {family}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                  <p className="mt-1 text-[11px] text-gray-500">
+                    Click a capability to open its detail panel. To move a
+                    capability to a different component, archive it here and
+                    re-add it under the new component.
+                  </p>
+                </>
               )}
             </section>
 
@@ -657,6 +800,24 @@ export default function ComponentDetailDrawer({
           </div>
         )}
       </div>
+
+      {/* Nested capability detail drawer — opened by clicking a row in the
+          Linked Capabilities picker above. Stacks on top of this drawer
+          (same z-40); user closes it to return here. */}
+      {selectedCapabilityId && component && (
+        <CapabilityDetailDrawer
+          componentId={component.id}
+          capabilityId={selectedCapabilityId}
+          componentName={component.name}
+          componentType={component.componentType}
+          canManage={canManage}
+          onClose={() => setSelectedCapabilityId(null)}
+          onMutated={() => {
+            void refreshCapabilities();
+            onMutated();
+          }}
+        />
+      )}
     </aside>
   );
 }

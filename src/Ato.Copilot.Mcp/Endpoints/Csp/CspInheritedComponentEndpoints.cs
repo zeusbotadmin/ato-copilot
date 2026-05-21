@@ -69,6 +69,10 @@ public static class CspInheritedComponentEndpoints
             .WithName("AddCspInheritedCapability");
         group.MapPatch("/{componentId:guid}/capabilities/{capabilityId:guid}/review", ReviewAsync)
             .WithName("ReviewCspInheritedCapability");
+        group.MapPatch("/{componentId:guid}/capabilities/{capabilityId:guid}", PatchCapabilityAsync)
+            .WithName("PatchCspInheritedCapability");
+        group.MapDelete("/{componentId:guid}/capabilities/{capabilityId:guid}", DeleteCapabilityAsync)
+            .WithName("DeleteCspInheritedCapability");
 
         // Post-onboarding import endpoint — same pipeline as the wizard
         // upload but gated on CspProfile.OnboardingState = Active.
@@ -421,7 +425,12 @@ public static class CspInheritedComponentEndpoints
             return NotFound(sw);
         }
 
-        var capabilities = component.Capabilities
+        // Non-CSP-Admin readers don't see soft-deleted (Archived) capabilities;
+        // CSP-Admin sees everything so the detail drawer can surface them.
+        var visibleCaps = tenantCtx.IsCspAdmin
+            ? component.Capabilities
+            : component.Capabilities.Where(c => c.Status != CspInheritedCapabilityStatus.Archived);
+        var capabilities = visibleCaps
             .Select(BuildCapabilityDto)
             .ToArray();
         return Success(sw, capabilities);
@@ -517,6 +526,114 @@ public static class CspInheritedComponentEndpoints
         catch (InvalidOperationException ex)
         {
             return Conflict(sw, "INVALID_TRANSITION", ex.Message);
+        }
+    }
+
+    // ─── PATCH /{id}/capabilities/{capId} (CSP-Admin) ───────────────────
+
+    private static async Task<IResult> PatchCapabilityAsync(
+        Guid componentId,
+        Guid capabilityId,
+        [FromBody] PatchCapabilityRequest? body,
+        HttpContext http,
+        ITenantContext tenantCtx,
+        ICspInheritedComponentService service,
+        IOptions<DeploymentOptions> deployment,
+        CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        if (ShouldShortCircuitSingleTenant(deployment, out var singleTenantResult))
+            return singleTenantResult;
+        if (!tenantCtx.IsCspAdmin) return ForbiddenNotCspAdmin(sw);
+
+        if (body is null
+            || string.IsNullOrWhiteSpace(body.Name)
+            || string.IsNullOrWhiteSpace(body.Description))
+        {
+            return ValidationError(sw, "name and description are required.");
+        }
+        if (body.MappedNistControlIds is null || body.MappedNistControlIds.Length == 0)
+        {
+            return ValidationError(sw, "mappedNistControlIds must be a non-empty array.");
+        }
+
+        // Optimistic concurrency — caller pins a row version via If-Match.
+        // Mirrors PatchAsync on the component itself; if the header is absent
+        // we fall through to last-write-wins (which is safe — the audit row
+        // captures the actor identity).
+        byte[]? rowVersion = null;
+        if (http.Request.Headers.TryGetValue("If-Match", out var ifMatchValues)
+            && !string.IsNullOrWhiteSpace(ifMatchValues.ToString()))
+        {
+            try
+            {
+                rowVersion = Convert.FromBase64String(ifMatchValues.ToString());
+            }
+            catch (FormatException)
+            {
+                return ValidationError(sw, "If-Match header must be a base64-encoded row version.");
+            }
+        }
+
+        try
+        {
+            var actor = ResolveActor(http);
+            var capability = await service.UpdateCapabilityAsync(
+                componentId,
+                capabilityId,
+                body.Name,
+                body.Description,
+                body.MappedNistControlIds,
+                rowVersion,
+                actor,
+                ct).ConfigureAwait(false);
+            return Success(sw, BuildCapabilityDto(capability));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(sw);
+        }
+        catch (ArgumentException ex)
+        {
+            return ValidationError(sw, ex.Message);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return Error(StatusCodes.Status412PreconditionFailed,
+                "ROW_VERSION_MISMATCH",
+                "Capability was modified by another user; reload and retry.");
+        }
+    }
+
+    // ─── DELETE /{id}/capabilities/{capId} (CSP-Admin) — archive ────────
+
+    private static async Task<IResult> DeleteCapabilityAsync(
+        Guid componentId,
+        Guid capabilityId,
+        HttpContext http,
+        ITenantContext tenantCtx,
+        ICspInheritedComponentService service,
+        IOptions<DeploymentOptions> deployment,
+        CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        if (ShouldShortCircuitSingleTenant(deployment, out var singleTenantResult))
+            return singleTenantResult;
+        if (!tenantCtx.IsCspAdmin) return ForbiddenNotCspAdmin(sw);
+
+        try
+        {
+            var actor = ResolveActor(http);
+            await service.ArchiveCapabilityAsync(
+                componentId,
+                capabilityId,
+                actor,
+                ct).ConfigureAwait(false);
+            return Results.NoContent();
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(sw);
         }
     }
 
@@ -728,6 +845,12 @@ public static class CspInheritedComponentEndpoints
         reviewedAt = cap.ReviewedAt,
         reviewedBy = cap.ReviewedBy,
         reviewerNote = cap.ReviewerNote,
+        // Base64-encoded RowVersion for the dashboard If-Match header on
+        // PATCH /{id}/capabilities/{capId} (parallels PatchAsync on the
+        // component itself).
+        rowVersion = cap.RowVersion is { Length: > 0 }
+            ? Convert.ToBase64String(cap.RowVersion)
+            : null,
     };
 
     private static object BuildUploadDto(CspAtoUploadHelpers.UploadResult result) => new
@@ -823,6 +946,7 @@ public static class CspInheritedComponentEndpoints
     public sealed record CreateComponentRequest(string? Name, string? Description, string? ComponentType);
     public sealed record AddCapabilityRequest(string? Name, string? Description, string[]? MappedNistControlIds);
     public sealed record PatchComponentRequest(string? Name, string? Description, string? ComponentType);
+    public sealed record PatchCapabilityRequest(string? Name, string? Description, string[]? MappedNistControlIds);
     public sealed record RemapRequest(bool ReplaceMapped);
     public sealed record ReviewCapabilityRequest(string[] MappedNistControlIds, string? ReviewerNote);
 }

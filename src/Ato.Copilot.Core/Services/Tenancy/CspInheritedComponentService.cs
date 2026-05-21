@@ -423,6 +423,154 @@ public sealed class CspInheritedComponentService : ICspInheritedComponentService
         return capability;
     }
 
+    /// <inheritdoc />
+    public async Task<CspInheritedCapability> UpdateCapabilityAsync(
+        Guid componentId,
+        Guid capabilityId,
+        string name,
+        string description,
+        IReadOnlyList<string> mappedNistControlIds,
+        byte[]? rowVersion,
+        string actor,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(actor);
+        ArgumentNullException.ThrowIfNull(mappedNistControlIds);
+
+        var trimmedName = TruncateOrThrow(nameof(name), name, 256);
+        var trimmedDesc = TruncateOrThrow(nameof(description), description, 2000);
+        if (mappedNistControlIds.Count == 0)
+        {
+            throw new ArgumentException(
+                "mappedNistControlIds must be non-empty.",
+                nameof(mappedNistControlIds));
+        }
+
+        await using var db = await _contextFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var capability = await db.CspInheritedCapabilities
+            .FirstOrDefaultAsync(c => c.Id == capabilityId, ct)
+            .ConfigureAwait(false)
+            ?? throw new KeyNotFoundException(
+                $"CspInheritedCapability '{capabilityId}' not found.");
+
+        if (capability.CspInheritedComponentId != componentId)
+        {
+            throw new KeyNotFoundException(
+                $"CspInheritedCapability '{capabilityId}' does not belong to "
+                + $"CspInheritedComponent '{componentId}'.");
+        }
+
+        // Optimistic concurrency — caller pins a row version if it has one;
+        // we feed it to EF Core's tracker so SaveChanges throws
+        // DbUpdateConcurrencyException on a mismatch.
+        if (rowVersion is not null && rowVersion.Length > 0)
+        {
+            db.Entry(capability).Property(c => c.RowVersion).OriginalValue = rowVersion;
+        }
+
+        var previousStatus = capability.Status;
+        capability.Name = trimmedName;
+        capability.Description = trimmedDesc;
+        capability.MappedNistControlIds = mappedNistControlIds.ToList();
+        capability.MappedBy = MappedBy.User;
+        capability.ReviewedAt = DateTimeOffset.UtcNow;
+        capability.ReviewedBy = actor;
+        // A manual edit implicitly resolves a NeedsReview row — the CSP-Admin
+        // has explicitly chosen the mapped control IDs by editing.
+        if (capability.Status == CspInheritedCapabilityStatus.NeedsReview)
+        {
+            capability.Status = CspInheritedCapabilityStatus.Mapped;
+            capability.MappingFailureReason = null;
+        }
+
+        // Audit row — parallel to ReviewAsync (FR-105). Captures the
+        // before/after status so an auditor can see the implicit resolution.
+        db.AuditLogs.Add(new AuditLogEntry
+        {
+            Id = Guid.NewGuid().ToString(),
+            UserId = actor,
+            UserRole = "CSP.Admin",
+            Action = "CspInheritedCapability.Update",
+            Outcome = AuditOutcome.Success,
+            Timestamp = DateTime.UtcNow,
+            AffectedControls = capability.MappedNistControlIds.ToList(),
+            Details = JsonSerializer.Serialize(new
+            {
+                componentId,
+                capabilityId,
+                previousStatus = previousStatus.ToString(),
+                newStatus = capability.Status.ToString(),
+                name = capability.Name,
+            }),
+        });
+
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        _logger.LogInformation(
+            "Updated CspInheritedCapability {CapabilityId} on component {ComponentId} by {Actor}",
+            capability.Id, componentId, actor);
+        return capability;
+    }
+
+    /// <inheritdoc />
+    public async Task<CspInheritedCapability> ArchiveCapabilityAsync(
+        Guid componentId,
+        Guid capabilityId,
+        string actor,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(actor);
+
+        await using var db = await _contextFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var capability = await db.CspInheritedCapabilities
+            .FirstOrDefaultAsync(c => c.Id == capabilityId, ct)
+            .ConfigureAwait(false)
+            ?? throw new KeyNotFoundException(
+                $"CspInheritedCapability '{capabilityId}' not found.");
+
+        if (capability.CspInheritedComponentId != componentId)
+        {
+            throw new KeyNotFoundException(
+                $"CspInheritedCapability '{capabilityId}' does not belong to "
+                + $"CspInheritedComponent '{componentId}'.");
+        }
+
+        // Idempotent — already Archived rows return unchanged so the
+        // archive button stays safe to re-click after a stale reload.
+        if (capability.Status == CspInheritedCapabilityStatus.Archived)
+        {
+            return capability;
+        }
+
+        var previousStatus = capability.Status;
+        capability.Status = CspInheritedCapabilityStatus.Archived;
+        capability.MappedBy = MappedBy.User;
+        capability.ReviewedAt = DateTimeOffset.UtcNow;
+        capability.ReviewedBy = actor;
+
+        db.AuditLogs.Add(new AuditLogEntry
+        {
+            Id = Guid.NewGuid().ToString(),
+            UserId = actor,
+            UserRole = "CSP.Admin",
+            Action = "CspInheritedCapability.Archive",
+            Outcome = AuditOutcome.Success,
+            Timestamp = DateTime.UtcNow,
+            AffectedControls = capability.MappedNistControlIds.ToList(),
+            Details = JsonSerializer.Serialize(new
+            {
+                componentId,
+                capabilityId,
+                previousStatus = previousStatus.ToString(),
+            }),
+        });
+
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        _logger.LogInformation(
+            "Archived CspInheritedCapability {CapabilityId} on component {ComponentId} by {Actor}",
+            capability.Id, componentId, actor);
+        return capability;
+    }
+
     // ─── Helpers ────────────────────────────────────────────────────────
 
     private static void PopulateCounts(CspInheritedComponent component)

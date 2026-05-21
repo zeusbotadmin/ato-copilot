@@ -3,6 +3,9 @@ import { describe, it, expect, vi } from 'vitest';
 import WizardStepper from '../../../components/wizard/WizardStepper';
 import { WizardStep } from '../../../types/dashboard';
 
+// Step labels must match exactly the `STEPS` array in
+// `src/components/wizard/WizardStepper.tsx`. Order is meaningful — the
+// `completedSteps: boolean[]` prop is index-aligned to this list.
 const STEP_LABELS = [
   'System Registration',
   'Security Capabilities',
@@ -10,15 +13,19 @@ const STEP_LABELS = [
   'Authorization Boundaries',
   'Assign RMF Roles',
   'Verify Roles',
-  'Set Categorization',
+  'Categorization & Baseline',
+  'Privacy Analysis',
 ];
 
+// 8-step wizard (Privacy Analysis added in Feature 021 — PIA & Interconnections).
+const NONE_COMPLETED: boolean[] = [false, false, false, false, false, false, false, false];
+
 describe('WizardStepper', () => {
-  it('renders all 7 step labels', () => {
+  it('renders all 8 step labels', () => {
     render(
       <WizardStepper
         currentStep={WizardStep.Registration}
-        completedSteps={[false, false, false, false, false, false, false]}
+        completedSteps={NONE_COMPLETED}
         onStepClick={vi.fn()}
       />,
     );
@@ -32,7 +39,7 @@ describe('WizardStepper', () => {
     const { container } = render(
       <WizardStepper
         currentStep={WizardStep.SecurityCapabilities}
-        completedSteps={[true, false, false, false, false, false, false]}
+        completedSteps={[true, false, false, false, false, false, false, false]}
         onStepClick={vi.fn()}
       />,
     );
@@ -49,7 +56,7 @@ describe('WizardStepper', () => {
     render(
       <WizardStepper
         currentStep={WizardStep.SystemComponents}
-        completedSteps={[true, true, false, false, false, false, false]}
+        completedSteps={[true, true, false, false, false, false, false, false]}
         onStepClick={vi.fn()}
       />,
     );
@@ -66,7 +73,7 @@ describe('WizardStepper', () => {
     render(
       <WizardStepper
         currentStep={WizardStep.SystemComponents}
-        completedSteps={[true, true, false, false, false, false, false]}
+        completedSteps={[true, true, false, false, false, false, false, false]}
         onStepClick={onStepClick}
       />,
     );
@@ -82,7 +89,7 @@ describe('WizardStepper', () => {
     render(
       <WizardStepper
         currentStep={WizardStep.Registration}
-        completedSteps={[false, false, false, false, false, false, false]}
+        completedSteps={NONE_COMPLETED}
         onStepClick={onStepClick}
       />,
     );

@@ -193,6 +193,27 @@ public static class AtoCopilotMcpServiceExtensions
         services.AddScoped<Ato.Copilot.Core.Services.Ticketing.ITicketingProvider, Ato.Copilot.Core.Services.Ticketing.JiraProvider>();
         services.AddScoped<Ato.Copilot.Core.Services.Ticketing.ITicketingProvider, Ato.Copilot.Core.Services.Ticketing.ServiceNowProvider>();
 
+        // Feature 049: Unified RMF Role Assignments — DI per
+        // specs/049-unified-rmf-role-assignments/contracts/internal-services.md § DI Registration.
+        // The fanout queue is a Singleton (one channel per process), the worker is hosted, and
+        // the read-side services are Singletons that resolve a DbContext from the factory per
+        // call (matches the IDbContextFactory pattern used by every other Feature 049 service).
+        services.AddSingleton<Ato.Copilot.Core.Observability.RoleMetrics>();
+        services.AddSingleton<Ato.Copilot.Core.Services.Roles.IOrganizationRoleFanoutQueue,
+            Ato.Copilot.Core.Services.Roles.OrganizationRoleFanoutQueue>();
+        services.AddSingleton<Ato.Copilot.Core.Services.Roles.IRoleAuthorizationService,
+            Ato.Copilot.Core.Services.Roles.RoleAuthorizationService>();
+        services.AddSingleton<Ato.Copilot.Core.Services.Roles.IUnifiedRoleReader,
+            Ato.Copilot.Core.Services.Roles.UnifiedRoleReader>();
+        services.AddSingleton<Ato.Copilot.Core.Services.Roles.ICallerEffectiveRoleResolver,
+            Ato.Copilot.Core.Services.Roles.CallerEffectiveRoleResolver>();
+        services.AddSingleton<Ato.Copilot.Core.Services.Roles.ISoDConflictDetector,
+            Ato.Copilot.Core.Services.Roles.SoDConflictDetector>();
+        if (includeHostedServices)
+        {
+            services.AddHostedService<Ato.Copilot.Mcp.Workers.OrganizationRoleFanoutWorker>();
+        }
+
         return services;
     }
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   getCspOnboardingState,
   isUnavailable,
@@ -169,6 +169,16 @@ function completedStepsFor(server: CspOnboardingStep): Set<WizardStep> {
 
 export default function CspWizard(): ReactElement {
   const navigate = useNavigate();
+  // `?reentry=admin` is set by Settings → Administration → "Open CSP onboarding
+  // wizard" so a CSP-Admin can revisit an already-Active wizard for review or
+  // edits. Without this flag the wizard auto-redirects to `/` when the CSP
+  // profile is Active (its original "first-run only" contract). When reentry
+  // is true we keep the user on the wizard; per-step save handlers still call
+  // the same `/api/csp/onboarding/*` endpoints, which will surface a server-side
+  // 409 (`CSP_ALREADY_ONBOARDED`) translated by `describeError()` if the server
+  // refuses post-finalization edits — explicit error beats silent bounce.
+  const [searchParams] = useSearchParams();
+  const reentry = searchParams.get('reentry') !== null;
   const [state, setState] = useState<CspOnboardingStateDto | null>(null);
   const [unavailable, setUnavailable] = useState<string | null>(null);
   const [step, setStep] = useState<WizardStep>('Identity');
@@ -189,15 +199,17 @@ export default function CspWizard(): ReactElement {
       // left off (FR-091 reentrancy contract).
       setStep(toWizardStep(next.currentStep));
       // If the CSP is already onboarded, kick the user back to home — this
-      // route exists only for the unfinished singleton.
-      if (next.onboardingState === 'Active') {
+      // route normally exists only for the unfinished singleton. The admin
+      // re-entry path (`?reentry=…`) opts out of this redirect so a CSP-Admin
+      // can review/edit the finalized profile from Settings.
+      if (next.onboardingState === 'Active' && !reentry) {
         navigate('/', { replace: true });
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [navigate]);
+  }, [navigate, reentry]);
 
   function describeError(err: unknown): string {
     const e = err as { errorCode?: string; message?: string };

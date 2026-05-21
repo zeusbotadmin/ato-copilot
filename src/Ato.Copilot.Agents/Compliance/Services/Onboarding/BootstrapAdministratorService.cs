@@ -82,9 +82,19 @@ public class BootstrapAdministratorService : IBootstrapAdministratorService
 
             if (person is null)
             {
+                // FR-001 — the bootstrap Person MUST carry `Id == subjectUserId`
+                // (the caller's `oid`). Downstream authorization (in particular
+                // `CallerEffectiveRoleResolver.ResolveAsync` and every endpoint
+                // that hydrates a caller-role snapshot from
+                // `OrganizationRoleAssignments.PersonId == oid`) treats the
+                // person id and the Entra object id as the same value. If we
+                // mint a random Guid here, the assignment we create one line
+                // below is recorded under that random id, the resolver can't
+                // find it on the very next request, and the just-promoted
+                // Administrator is rejected with `RBAC_ROLE_ASSIGN_DENIED`.
                 person = new Person
                 {
-                    Id = Guid.NewGuid(),
+                    Id = subjectUserId,
                     TenantId = tenantId,
                     EntraObjectId = subjectUserId,
                     DisplayName = subjectDisplayName ?? "Bootstrap Administrator",

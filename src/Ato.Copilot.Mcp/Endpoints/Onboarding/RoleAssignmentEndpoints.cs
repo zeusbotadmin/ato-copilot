@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Routing;
 using Ato.Copilot.Core.Interfaces.Onboarding;
 using Ato.Copilot.Core.Models.Onboarding;
 using Ato.Copilot.Core.Onboarding;
+using Ato.Copilot.Core.Services.Roles;
 using Ato.Copilot.Mcp.Authorization;
 
 namespace Ato.Copilot.Mcp.Endpoints.Onboarding;
@@ -38,6 +39,8 @@ public static class RoleAssignmentEndpoints
                 HttpContext http,
                 IOrganizationRoleAssignmentService service,
                 IOnboardingStateService stateService,
+                ICallerEffectiveRoleResolver callerRoleResolver,
+                IRoleAuthorizationService authz,
                 Microsoft.Extensions.Logging.ILoggerFactory loggerFactory,
                 CancellationToken ct) =>
             {
@@ -58,6 +61,32 @@ public static class RoleAssignmentEndpoints
                 {
                     return Envelope.Failure(WizardErrorCodes.JobFailed, "PersonId is required.");
                 }
+
+                // FR-027: enforce role-tiered authorization matrix at the HTTP boundary.
+                // Administrator targets are allowed for any caller already inside the
+                // OnboardingAdministratorRequirement policy (last-admin invariant is
+                // protected separately at delete time, FR-002); the matrix is keyed on
+                // RmfRole and is therefore only consulted for the 6 RmfRole-equivalent
+                // targets emitted by OrganizationRoleToRmfRoleMap.
+                var rmfTarget = OrganizationRoleToRmfRoleMap.TryMap(role);
+                if (rmfTarget is { } target)
+                {
+                    var caller = await callerRoleResolver.ResolveAsync(tenantId, actorId, ct);
+                    var decision = authz.Authorize(caller, target, isBootstrapSession: false);
+                    if (!decision.Allowed)
+                    {
+                        return Results.Json(new
+                        {
+                            ok = false,
+                            errorCode = "RBAC_ROLE_ASSIGN_DENIED",
+                            callerEffectiveRole = caller.RmfRole?.ToString(),
+                            targetRole = target.ToString(),
+                            message = decision.DeniedReason ?? "You do not have permission to assign this role.",
+                            suggestion = "Ask an ISSM (or your tenant Administrator) to assign this role.",
+                        }, statusCode: 403);
+                    }
+                }
+
                 try
                 {
                     var result = await service.AddAsync(

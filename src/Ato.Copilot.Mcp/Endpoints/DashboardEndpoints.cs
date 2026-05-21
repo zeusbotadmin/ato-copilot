@@ -283,7 +283,11 @@ public static class DashboardEndpoints
                     {
                         Error = $"Invalid role '{body.Role}'",
                         ErrorCode = "INVALID_INPUT",
-                        Suggestion = "Use: AuthorizingOfficial, Issm, Isso, Sca, SystemOwner"
+                        // Feature 049 / T041 — cross-endpoint contract pins the 7-role universe
+                        // (FR-012 SC-007). NOTE: this legacy endpoint still operates on the 6-value
+                        // RmfRole enum; the suggestion text MUST still surface the full 7-role
+                        // universe so the client experience matches the unified /api/roles surface.
+                        Suggestion = "Use one of: AuthorizingOfficial, Issm, Isso, Sca, SystemOwner, MissionOwner, Administrator"
                     });
 
                 var userId = body.UserId ?? body.UserDisplayName.Replace(" ", ".").ToLowerInvariant();

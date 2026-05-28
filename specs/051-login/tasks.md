@@ -268,13 +268,13 @@ with correlation id + support link, AND writes a `LoginFailure` audit row.
 
 ### 6.2 Dashboard `LoginErrorPage` + canned copy
 
-- [ ] T081 [P] [US4] Fill out [src/Ato.Copilot.Dashboard/src/features/auth/errorCopy.ts](src/Ato.Copilot.Dashboard/src/features/auth/errorCopy.ts) with 10 entries — title + body text + remediation suggestion per FR-014 / FR-015 / FR-016
-- [ ] T082 [TDD-Test] [P] [US4] [src/Ato.Copilot.Dashboard/src/__tests__/auth/LoginErrorPage.test.tsx](src/Ato.Copilot.Dashboard/src/__tests__/auth/LoginErrorPage.test.tsx) — for each `ErrorClass`, renders the right copy + shows `correlationId` + shows support email mailto link. RED.
-- [ ] T083 [US4] Create [src/Ato.Copilot.Dashboard/src/features/auth/LoginErrorPage.tsx](src/Ato.Copilot.Dashboard/src/features/auth/LoginErrorPage.tsx) and register the `/login/error` route in [src/Ato.Copilot.Dashboard/src/App.tsx](src/Ato.Copilot.Dashboard/src/App.tsx). GREEN T082.
+- [X] T081 [P] [US4] Replaced stub copy in [src/Ato.Copilot.Dashboard/src/features/auth/errorCopy.ts](src/Ato.Copilot.Dashboard/src/features/auth/errorCopy.ts) with canonical 10-entry map per FR-014 / FR-015 / FR-016.
+- [X] T082 [TDD-Test] [P] [US4] [src/Ato.Copilot.Dashboard/src/__tests__/auth/LoginErrorPage.test.tsx](src/Ato.Copilot.Dashboard/src/__tests__/auth/LoginErrorPage.test.tsx) — 17 tests: one per `ErrorClass` value asserting title+body, plus correlation-id rendering, mailto/fallback wording, `ConditionalAccessBlock` remediation-URL link, generic fallback for unknown class, and "Try again" CTA wiring `loginRedirect`. RED → GREEN.
+- [X] T083 [US4] Created [src/Ato.Copilot.Dashboard/src/features/auth/LoginErrorPage.tsx](src/Ato.Copilot.Dashboard/src/features/auth/LoginErrorPage.tsx) (Tailwind, reads query params via `useSearchParams`, dispatches `loginRedirect` on Try-Again, surfaces Conditional-Access remediation URL when present) and registered `<Route path="/login/error" element={<LoginErrorPage />} />` in [src/Ato.Copilot.Dashboard/src/App.tsx](src/Ato.Copilot.Dashboard/src/App.tsx) (public route — must NOT be wrapped in `RequireAuth` or failed-auth users loop forever).
 
 ### 6.3 Manual sign-off
 
-- [ ] T084 [US4] Execute [quickstart.md § 13](specs/051-login/quickstart.md) for each of the 10 classes
+- [ ] T084 [US4] Execute [quickstart.md § 13](specs/051-login/quickstart.md) for each of the 10 classes — **Pending live verification** (deferred to live-Docker run; classes that require real CAC cert state or Conditional Access policy cannot be simulated in the test harness).
 
 **Checkpoint US4**: Every error class renders correct copy; `LoginFailure` row with correct `ErrorClass` written.
 

@@ -40,6 +40,7 @@ import ImportedDocumentsView from './features/admin/imported-documents/ImportedD
 import LoginPage from './features/auth/LoginPage';
 import LoginCallbackPage from './features/auth/LoginCallbackPage';
 import TenantPickerPage from './features/auth/TenantPickerPage';
+import LoginErrorPage from './features/auth/LoginErrorPage';
 import RequireAuth from './features/auth/RequireAuth';
 import IdleWarningModal from './features/auth/IdleWarningModal';
 import RestoreUnsavedChangesPrompt from './features/auth/RestoreUnsavedChangesPrompt';
@@ -70,6 +71,9 @@ function AppContent() {
           {/* Feature 051 [US1]: public login routes — MUST NOT be wrapped in RequireAuth. */}
           <Route path="/login" element={<LoginPage />} />
           <Route path="/login/callback" element={<LoginCallbackPage />} />
+          {/* Feature 051 T083 [US4]: error page is public — RequireAuth would
+              loop a failed-auth user back through MSAL forever. */}
+          <Route path="/login/error" element={<LoginErrorPage />} />
           {/* Feature 051 T073 [US3]: tenant picker is authenticated. */}
           <Route path="/login/select-tenant" element={<RequireAuth><TenantPickerPage /></RequireAuth>} />
           {/* All other routes require authentication; RequireAuth triggers

@@ -49,6 +49,7 @@ public static class AuthEndpoints
         group.MapGet("/me", GetMeAsync).WithName("GetMe");
         group.MapPost("/signout", PostSignOutAsync).WithName("PostSignOut");
         group.MapPost("/select-tenant", PostSelectTenantAsync).WithName("PostSelectTenant");
+        group.MapPost("/simulate", PostSimulateAsync).WithName("PostSimulate");
         group.MapGet("/events", GetEventsAsync).WithName("GetAuthEvents");
 
         return app;
@@ -124,38 +125,11 @@ public static class AuthEndpoints
         IHostEnvironment env,
         CacAuthOptions cacAuth)
     {
-        if (!env.IsDevelopment())
-        {
-            return null;
-        }
-        if (!cacAuth.SimulationMode)
-        {
-            return null;
-        }
-        var sim = cacAuth.SimulatedIdentity;
-        if (sim is null || string.IsNullOrWhiteSpace(sim.UserPrincipalName))
-        {
-            return null;
-        }
-
-        // Today CacAuthOptions ships a single SimulatedIdentity; project
-        // it into the array-shaped descriptor expected by the SPA.
-        return new
-        {
-            identities = new[]
-            {
-                new
-                {
-                    id = sim.UserPrincipalName,
-                    displayName = string.IsNullOrWhiteSpace(sim.DisplayName)
-                        ? sim.UserPrincipalName
-                        : sim.DisplayName,
-                    persona = sim.Roles.FirstOrDefault() ?? "Developer",
-                    tenantId = sim.TenantId?.ToString() ?? string.Empty,
-                    roles = sim.Roles.ToArray(),
-                },
-            },
-        };
+        // Feature 051 T125 [US7] — delegates to the canonical
+        // SimulationGate.BuildDescriptor which enforces the three-condition
+        // gate (env=Development AND CacAuth:SimulationMode=true AND
+        // SimulatedIdentities non-empty) per FR-023 / analysis C10.
+        return SimulationGate.BuildDescriptor(env, cacAuth);
     }
 
     // ─── GET /me ────────────────────────────────────────────────────────
@@ -744,6 +718,193 @@ public static class AuthEndpoints
     }
 
     private sealed record SelectTenantRequestBody(string? TenantId, bool? Remember);
+
+    // ─── POST /simulate ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Feature 051 T123 [US7] — Development-only simulated login per
+    /// <c>contracts/http-api.md § 5</c> / FR-024 / FR-025.
+    /// </summary>
+    /// <remarks>
+    /// <para>Layer 3 of the three-layer simulation-panel security invariant
+    /// (research.md § R-Summary item 4). When the host's
+    /// <see cref="IHostEnvironment"/> is NOT <c>Development</c>, the
+    /// endpoint returns a BARE 404 (no envelope, no body — pretend the
+    /// route does not exist) AND writes a
+    /// <see cref="LoginAuditEventType.SimulationBlocked"/> audit row stamped
+    /// with the attempted <c>identityId</c> + the actual environment name
+    /// for SOC triage. A Serilog scope tag <c>severity=Security</c> is also
+    /// attached to the blocked log line so downstream SIEM can elevate.</para>
+    /// <para>In Development, the endpoint:
+    /// <list type="number">
+    ///   <item>Looks up the simulated identity in
+    ///   <c>CacAuth:SimulatedIdentities</c>; 404 envelope
+    ///   <c>SIMULATED_IDENTITY_NOT_FOUND</c> on miss.</item>
+    ///   <item>Issues an HMAC-resistant session cookie
+    ///   (<c>ato-simulation</c>) carrying the simulated principal so
+    ///   downstream <c>/me</c> reads can render it. The cookie is
+    ///   server-opaque — the simulated identity is re-resolved from config
+    ///   on each request.</item>
+    ///   <item>Issues a discrete <c>X-Simulated=true</c> cookie per FR-025
+    ///   (clarified 2026-05-28 / analysis C9) so downstream
+    ///   evidence-generation services can stamp <c>IsSimulation=true</c> on
+    ///   persisted artifacts (Feature 027).</item>
+    ///   <item>Writes a <see cref="LoginAuditEventType.SimulatedLogin"/>
+    ///   audit row with <c>MetadataJson = {"identityId":"&lt;key&gt;"}</c>
+    ///   per data-model.md § 1.5.</item>
+    ///   <item>Returns 204.</item>
+    /// </list></para>
+    /// </remarks>
+    private static async Task<IResult> PostSimulateAsync(
+        HttpContext http,
+        IHostEnvironment env,
+        IOptions<CacAuthOptions> cacAuthOptions,
+        IDbContextFactory<AtoCopilotContext> dbFactory,
+        ILoginAuditService audit,
+        LoginAuditContextAccessor auditCtxAccessor,
+        ILoggerFactory loggerFactory,
+        CancellationToken ct,
+        string? identityId = null)
+    {
+        var sw = Stopwatch.StartNew();
+        var logger = loggerFactory.CreateLogger("AuthEndpoints.Simulate");
+        var auditCtx = auditCtxAccessor.FromHttpContext(http);
+
+        // ─── Layer 3 — environment gate ────────────────────────────────
+        // MUST run FIRST so non-Development requests cannot leak signal
+        // about identity-lookup state. The response is a BARE 404 (no
+        // envelope, no body) so the route looks like it does not exist.
+        if (!env.IsDevelopment())
+        {
+            var blockedMetadata = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                attemptedIdentityId = identityId ?? string.Empty,
+                environment = env.EnvironmentName,
+            });
+
+            // Best-effort audit write — never let an audit-storage failure
+            // collapse the 404 cover into something more revealing.
+            try
+            {
+                await using var db = await dbFactory.CreateDbContextAsync(ct);
+                await audit.AppendAsync(db, new LoginAuditEventDraft(
+                    EventType: LoginAuditEventType.SimulationBlocked,
+                    Oid: null,
+                    Tid: null,
+                    EffectiveTenantId: Guid.Empty,
+                    CorrelationId: auditCtx.CorrelationId,
+                    SourceIp: auditCtx.SourceIp,
+                    UserAgent: auditCtx.UserAgent,
+                    Surface: LoginSurface.Dashboard,
+                    MetadataJson: blockedMetadata), ct);
+                await db.SaveChangesAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex,
+                    "SimulationBlocked audit write failed — gate response still returned");
+            }
+
+            // T124 — scope tag for downstream SIEM elevation. The Logger.BeginScope
+            // dictionary surfaces as structured Serilog properties via the
+            // Serilog.Extensions.Logging bridge, AND is captured by tests'
+            // CapturingLoggerProvider when registered as an additional
+            // provider via `UseSerilog(writeToProviders: true)`.
+            SimulationGate.LogSimulationBlocked(logger, env.EnvironmentName, identityId);
+
+            return Results.NotFound();
+        }
+
+        // ─── Development branch ────────────────────────────────────────
+
+        if (string.IsNullOrWhiteSpace(identityId))
+        {
+            return ErrorEnvelope(sw,
+                StatusCodes.Status400BadRequest,
+                "VALIDATION_FAILED",
+                "identityId query parameter is required.",
+                "Send `POST /api/auth/simulate?identityId=<key>` where <key> matches an entry in CacAuth:SimulatedIdentities.");
+        }
+
+        var descriptor = SimulationGate.FindIdentity(cacAuthOptions.Value, identityId);
+        if (descriptor is null)
+        {
+            return ErrorEnvelope(sw,
+                StatusCodes.Status404NotFound,
+                "SIMULATED_IDENTITY_NOT_FOUND",
+                $"No simulated identity with id '{identityId}' is configured.",
+                "Confirm CacAuth:SimulatedIdentities has an entry with the requested IdentityId.");
+        }
+
+        // Validate the descriptor — bad config should never surface a half-
+        // wired session cookie.
+        try
+        {
+            descriptor.EnsureValid();
+        }
+        catch (InvalidOperationException ex)
+        {
+            logger.LogError(ex,
+                "Simulated identity {IdentityId} failed validation", identityId);
+            return ErrorEnvelope(sw,
+                StatusCodes.Status500InternalServerError,
+                "INVALID_SIMULATED_IDENTITY",
+                "The configured simulated identity is invalid.",
+                ex.Message);
+        }
+
+        // Issue the simulated-session cookie. The value is the IdentityId —
+        // server-opaque from the SPA's point of view (it never reads it);
+        // downstream middleware re-resolves the identity from config on
+        // every request, so cookie tampering cannot escalate beyond the
+        // configured set.
+        var sessionCookieOpts = new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = true,
+            SameSite = SameSiteMode.Strict,
+            Path = "/",
+        };
+        http.Response.Cookies.Append("ato-simulation", descriptor.IdentityId, sessionCookieOpts);
+
+        // FR-025 (clarified 2026-05-28 / analysis C9) — discrete X-Simulated
+        // sentinel cookie. NOT a cookie attribute, a separate cookie.
+        var sentinelOpts = new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = true,
+            SameSite = SameSiteMode.Strict,
+            Path = "/",
+        };
+        http.Response.Cookies.Append("X-Simulated", "true", sentinelOpts);
+
+        // Audit row — § 5.3 step 5 + data-model.md § 1.5.
+        var metadata = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            identityId = descriptor.IdentityId,
+        });
+
+        await using (var db = await dbFactory.CreateDbContextAsync(ct))
+        {
+            await audit.AppendAsync(db, new LoginAuditEventDraft(
+                EventType: LoginAuditEventType.SimulatedLogin,
+                Oid: descriptor.Oid,
+                Tid: descriptor.Tid,
+                EffectiveTenantId: descriptor.TenantId,
+                CorrelationId: auditCtx.CorrelationId,
+                SourceIp: auditCtx.SourceIp,
+                UserAgent: auditCtx.UserAgent,
+                Surface: LoginSurface.Dashboard,
+                MetadataJson: metadata), ct);
+            await db.SaveChangesAsync(ct);
+        }
+
+        logger.LogInformation(
+            "Simulated login issued for identityId={IdentityId} (oid={Oid}, tenantId={TenantId})",
+            descriptor.IdentityId, descriptor.Oid, descriptor.TenantId);
+
+        return Results.NoContent();
+    }
 
     // ─── GET /events ────────────────────────────────────────────────────
 

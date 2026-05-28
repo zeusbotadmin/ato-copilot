@@ -103,4 +103,16 @@ public class LoginConfigEndpointTests
         resp.StatusCode.Should().NotBe(HttpStatusCode.Unauthorized);
         resp.StatusCode.Should().Be(HttpStatusCode.OK);
     }
+
+    // ─── T125 [US7] — non-Development gate (Layer 1 of the 3-layer gate) ───
+    //
+    // The host runs in env=Testing (pinned by MultiTenantWebApplicationFactory),
+    // which is NOT Development. Per FR-023 / analysis C10 the simulation
+    // descriptor MUST be omitted in this case regardless of the other two
+    // gate conditions (CacAuth:SimulationMode + SimulatedIdentities). The
+    // existing Get_LoginConfig_OutsideDevelopment_SimulationIsNull test above
+    // proves the env-gate; the unit tests on SimulationGate cover the
+    // Development-branch matrix (mode=true+identities present/empty,
+    // mode=false, etc.) without paying the WebApplicationFactory tax of
+    // flipping ASPNETCORE_ENVIRONMENT mid-test.
 }

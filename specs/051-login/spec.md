@@ -37,6 +37,16 @@ reference the issue:
 
 > **Still open** (deferred to `/speckit.clarify`): Teams SSO baseline — Required, Optional (default), or Disabled per tenant?
 
+## Clarifications
+
+### Session 2026-05-28
+
+- Q: For US6 / FR-021, what is the default `Auth:TeamsSso:Mode` and at what scope is it configured? → A: **Optional, deployment-wide** — SSO is used when the Teams manifest supports it; OAuthPrompt fallback runs otherwise. Single deployment-wide config (no per-tenant override) keeps parity with the other Auth-stack decisions (C2 idle timeout, C5 throttling, C7 account picker) which are all deployment-wide.
+- Q: Who owns `LoginAuditEvent` rows for events fired before a session exists (`SimulationBlocked`, FR-024) or before a tenant mapping resolves (`LoginFailure` with `errorClass = NoTenantAssignment`, FR-015)? → A: **System tenant owns them all**. `EffectiveTenantId = SYSTEM_TENANT_ID` for any pre-session or unmapped audit row, regardless of whether Entra issued an `oid` / `tid` before the failure. Matches Feature 048's bootstrap-phase pattern and keeps SOC tooling's tenant filter simple (a single `TenantId = SYSTEM_TENANT_ID` query finds every security-relevant pre-auth event).
+- Q: How long does `LoginAuditEvent` data live? → A: **13 months hot + immutable cold archive (indefinite).** Rows stay queryable in `LoginAuditEvents` for 13 months so SOC tooling and US10 / SC-004 "tune the idle threshold from real data" both work; rows older than 13 months migrate to an immutable append-blob archive (Azure Storage append-blob in production, local filesystem for dev) where SOC analysts can still pull them for forensic investigations but they no longer bloat the operational table. 13 months covers the NIST 800-53 AU-11 12-month interpretation with a 30-day overlap for annual audits.
+- Q: How does the dashboard SPA refresh its access token between login and the idle threshold (e.g., access token = 1h, idle = 30 min)? → A: **MSAL.js owns silent refresh under the hood.** The SPA only handles the failure path — `401 from API → acquireTokenSilent() → if-fails interactive loginRedirect()` — there is no bespoke refresh-token storage, no server-side refresh endpoint, and no SPA-level refresh-token cookie. The idle timer (FR-007) tracks **user activity** and is orthogonal to token validity: token renewal can succeed silently many times during an active session, but the idle timer still fires sign-out at `Auth:IdleTimeoutMinutes` of no input. Matches the canonical MSAL.js pattern and the existing Feature 003 `@azure/msal-react` plumbing.
+- Q: How does the "login race" edge case detect a session established in a sibling tab? → A: **Storage event on the MSAL cache key.** The waiting tab listens via `window.addEventListener('storage', ...)` for writes to the MSAL.js `localStorage` cache. MSAL.js writes the session cache on successful `loginRedirect`; the storage event fires immediately in every other same-origin tab, the waiting tab's React Router boundary observes the new session, and it completes its deep-link redirect without forcing a second login. No focus event, no polling — the storage event is sufficient and matches Constitution § II Simplicity.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 — First-Time Login from the Dashboard (Priority: P1)
@@ -335,7 +345,7 @@ throttled with `429 TOO_MANY_LOGINS` and a `Retry-After` header. Repeat with
 
 ### Edge Cases
 
-- **Login race** — the user opens two browser tabs to protected URLs before authenticating. Both redirect to `/login`. After they sign in in one tab, the other tab MUST detect the established session (storage event or focus event) and complete its redirect without forcing a second login.
+- **Login race** — the user opens two browser tabs to protected URLs before authenticating. Both redirect to `/login`. After they sign in in one tab, the other tab MUST detect the established session via a `window.addEventListener('storage', ...)` listener on the MSAL.js `localStorage` cache key. On that event, the waiting tab MUST complete its deep-link redirect without forcing a second login. Focus events and polling are NOT used.
 - **Deep-link with a hash route** — `/login?return=/dashboard/systems/abc#components`. The fragment MUST survive the redirect.
 - **Deep-link to a route the user is not authorized for** — sign-in succeeds, the user lands on the requested URL, then the route's authz guard renders the standard 403 page from 048-tenant-isolation. The login flow does **not** silently substitute a default route.
 - **Idle expiration during a long-running upload** — the upload's request bearer is still valid until the server-side session expires; the SPA does **not** abort an in-flight write. The idle timer resets on the next user interaction post-completion.
@@ -363,6 +373,7 @@ throttled with `429 TOO_MANY_LOGINS` and a `Retry-After` header. Repeat with
 - **FR-005**: `POST /api/auth/signout` MUST revoke the current session (refresh token or MSAL cache entry) server-side and return `204 NoContent`.
 - **FR-006**: On sign-out, the SPA MUST clear Redux / React Query caches, in-memory chat state, any first-party auth or impersonation cookies, and the `X-Impersonated-Tenant` cookie if present.
 - **FR-007**: The SPA MUST track user activity (mouse / keyboard / touch / API success) and, after `Auth:IdleTimeoutMinutes` of inactivity, perform the same full sign-out path as the explicit sign-out — no soft-lock overlay, no silent renew. The redirect URL is `/login?reason=idle_timeout`.
+- **FR-007a**: Access-token renewal MUST be performed by MSAL.js's silent-renewal path (`acquireTokenSilent`); the SPA MUST NOT implement bespoke refresh-token storage or call a server-side refresh endpoint. The dashboard's axios interceptor MUST handle a `401` response by invoking `acquireTokenSilent` and retrying the original request once; if `acquireTokenSilent` fails, the interceptor MUST trigger an interactive `loginRedirect` (preserving the originating URL per FR-001 / FR-004). The idle timer (FR-007) is orthogonal to token validity — a silently-renewed token MUST NOT reset the idle counter; only genuine user input resets it.
 - **FR-008**: Before performing an idle sign-out, the SPA MUST persist the current form's in-flight state to localStorage under a key namespaced by `oid` so a "Restore unsaved changes" prompt can offer recovery on next sign-in.
 
 #### C. Tenant picker (US3)
@@ -388,7 +399,7 @@ throttled with `429 TOO_MANY_LOGINS` and a `Retry-After` header. Repeat with
 #### F. M365 / Teams bot login (US6)
 
 - **FR-020**: First-mention by an unlinked Teams user MUST trigger an Adaptive Card with a sign-in button — never a free-text prompt.
-- **FR-021**: With Bot Framework SSO enabled in the manifest, token exchange MUST be silent. Without SSO, the OAuthPrompt fallback MUST run.
+- **FR-021**: `Auth:TeamsSso:Mode` MUST default to `Optional` and MUST be configured deployment-wide (no per-tenant override). When `Optional` and the Teams app manifest supports SSO, the token exchange MUST be silent; otherwise the OAuthPrompt fallback MUST run. When set to `Required`, deployments without a manifest configured for SSO MUST fail at startup with a clear log line. When set to `Disabled`, the OAuthPrompt path MUST always be used regardless of manifest capability.
 - **FR-022**: Identity links MUST be Teams-tenant-wide, not per-client (mobile, desktop, web). One sign-in MUST satisfy all clients of the same Teams user.
 
 #### G. Dev simulation login (US7)
@@ -411,11 +422,12 @@ throttled with `429 TOO_MANY_LOGINS` and a `Retry-After` header. Repeat with
 
 #### J. Login audit trail (US10)
 
-- **FR-032**: Every authentication event MUST write one structured row to `LoginAuditEvents` (`eventType`, `oid`, `tid`, `effectiveTenantId`, `correlationId`, `sourceIp`, `userAgent`, `surface`, `occurredAt`, optional `errorClass`, optional `metadataJson`).
+- **FR-032**: Every authentication event MUST write one structured row to `LoginAuditEvents` (`eventType`, `oid`, `tid`, `effectiveTenantId`, `correlationId`, `sourceIp`, `userAgent`, `surface`, `occurredAt`, optional `errorClass`, optional `metadataJson`). `effectiveTenantId` MUST be non-null on every row: pre-session events (`SimulationBlocked`, FR-024) and unmapped events (`LoginFailure` with `errorClass = NoTenantAssignment`, FR-015) MUST use `SYSTEM_TENANT_ID`. The captured Entra `tid` remains available for forensic context but does NOT determine row ownership.
 - **FR-033**: Failed-login audit rows MUST contain the error class but MUST NOT contain cert thumbprints or any PII beyond `oid`.
 - **FR-034**: Failed logins MUST be throttled per identity and per source IP. Thresholds MUST be drawn from `Auth:Throttle:Development` when `ASPNETCORE_ENVIRONMENT=Development` and from `Auth:Throttle:Production` otherwise. Defaults: Development 100 / min / IP and 100 / min / identity; Production 20 / min / IP and 10 / min / identity.
 - **FR-035**: When throttled, the server MUST return `429 TOO_MANY_LOGINS` with a `Retry-After` header and the user-facing message "Too many sign-in attempts. Try again in {N} minutes."
 - **FR-036**: The throttle counter MUST be backed by a persistent or distributed store so a process restart cannot be used to bypass throttling.
+- **FR-036a**: `LoginAuditEvent` rows MUST be retained for **13 months in the hot operational table** (`LoginAuditEvents`) so SOC tooling and SC-004 "tune the idle threshold from real data" both work over a full annual window with a 30-day overlap. Rows older than 13 months MUST be migrated to an **immutable append-only cold archive** (Azure Storage append-blob in production, local filesystem under `archive/LoginAuditEvents/{yyyy}/{MM}/` for dev). Migration MUST run as a daily background job at low-traffic hours; once archived, rows MUST be deletable from the hot table without losing forensic capability. Archive rows MUST remain queryable by SOC tooling but MUST NOT participate in the hot-table tenant query filter.
 
 #### K. Cross-cutting
 
@@ -425,7 +437,7 @@ throttled with `429 TOO_MANY_LOGINS` and a `Retry-After` header. Repeat with
 
 ### Key Entities
 
-- **`LoginAuditEvent`** — append-only audit row (Feature 010-style telemetry table). Fields: `Id` (Guid), `EventType` (enum: `LoginSuccess`, `LoginFailure`, `SignOut`, `IdleSignOut`, `ImpersonationStart`, `ImpersonationEnd`, `TenantSwitch`, `SimulatedLogin`, `SimulationBlocked`), `Oid` (string?), `Tid` (string?), `EffectiveTenantId` (Guid?), `CorrelationId` (string), `SourceIp` (string), `UserAgent` (string), `Surface` (enum: `Dashboard`, `VSCode`, `M365`, `Chat`), `OccurredAt` (DateTimeOffset), `ErrorClass` (string?), `MetadataJson` (string?). Tenant-scoped by `EffectiveTenantId` where applicable; otherwise cross-tenant rows are owned by the system tenant.
+- **`LoginAuditEvent`** — append-only audit row (Feature 010-style telemetry table). Fields: `Id` (Guid), `EventType` (enum: `LoginSuccess`, `LoginFailure`, `SignOut`, `IdleSignOut`, `ImpersonationStart`, `ImpersonationEnd`, `TenantSwitch`, `SimulatedLogin`, `SimulationBlocked`), `Oid` (string?), `Tid` (string?), `EffectiveTenantId` (Guid; **non-null**), `CorrelationId` (string), `SourceIp` (string), `UserAgent` (string), `Surface` (enum: `Dashboard`, `VSCode`, `M365`, `Chat`), `OccurredAt` (DateTimeOffset), `ErrorClass` (string?), `MetadataJson` (string?). Tenant-scoped by `EffectiveTenantId`. **Pre-session events** (`SimulationBlocked` and `LoginFailure` with `ErrorClass = NoTenantAssignment`) and any other row where the tenant cannot be resolved MUST set `EffectiveTenantId = SYSTEM_TENANT_ID` so the tenant query filter still applies uniformly. The captured Entra `Tid` (the user's home directory) remains in the `Tid` column for forensic context but does NOT participate in row ownership.
 - **`LoginAttemptCounter`** — distributed-cache counter keyed by `(identity, IP, minute-bucket)` used by the throttle middleware. Not a database entity.
 - **`RememberedTenantCookie`** — first-party signed cookie payload (`tenantId` Guid, `iat`, `exp`, HMAC). Owned by the device only; no server-side mirror.
 - **`AuthConfiguration`** — strongly-typed `Auth` options binding for the configuration surface enumerated in the Configuration Surface block below. Validated at startup.
@@ -457,8 +469,8 @@ throttled with `429 TOO_MANY_LOGINS` and a `Retry-After` header. Repeat with
     },
 
     "TeamsSso": {
-      // OPEN — to be resolved in /speckit.clarify
-      "Mode": "Optional"                    // Required | Optional | Disabled
+      // Deployment-wide; no per-tenant override (clarification 2026-05-28 Q1).
+      "Mode": "Optional"                    // Required | Optional (default) | Disabled
     }
   }
 }
@@ -509,7 +521,4 @@ This feature builds on, and does NOT modify the contracts of:
 - **ATO-Copilot-hosted short-code service for VS Code device login** — explicitly rejected by clarification C4; we use Entra's device-code endpoint directly.
 - **Per-tenant idle timeouts** — out of scope; deployment-wide only (clarification C2).
 - **Login throttling beyond per-identity / per-IP** — geo-blocking, device fingerprinting, and risk-based auth are owned by Entra's conditional-access policies, not this feature.
-
-## Open Questions (deferred to `/speckit.clarify`)
-
-- **Q1 (Teams SSO baseline)**: For US6, should Teams SSO be `Required`, `Optional` (default), or `Disabled` — and is this set deployment-wide or per-tenant? The Configuration Surface above shows `Auth:TeamsSso:Mode = Optional` as a placeholder.
+- **Variable / tenant-configurable audit retention** — the 13-month hot + indefinite cold archive policy (FR-036a) is deployment-wide. Per-tenant retention overrides are out of scope; tenants requiring different retention horizons MUST work directly with their deployment operator.

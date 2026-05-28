@@ -405,6 +405,19 @@ async Task RunHttpModeAsync(string[] args)
         builder.Configuration.GetSection(Ato.Copilot.Mcp.Configuration.DeploymentOptions.SectionName));
     builder.Services.Configure<Ato.Copilot.Mcp.Configuration.RoleClaimMappingsOptions>(
         builder.Configuration.GetSection(Ato.Copilot.Mcp.Configuration.RoleClaimMappingsOptions.SectionName));
+
+    // Feature 051 (T021–T024 / FR-001..FR-036a): bind AuthOptions + register the
+    // startup validator. Per contracts/internal-services.md § 5.2 the validator
+    // requires IHostEnvironment so it can flip the cookie-key gate on/off based
+    // on ASPNETCORE_ENVIRONMENT. ValidateOnStart fails fast in Staging/Production
+    // if Auth:Cookie:SigningKey is missing.
+    builder.Services.AddOptions<Ato.Copilot.Core.Configuration.Auth.AuthOptions>()
+        .Bind(builder.Configuration.GetSection(Ato.Copilot.Core.Configuration.Auth.AuthOptions.SectionName))
+        .ValidateOnStart();
+    builder.Services.AddSingleton<
+        Microsoft.Extensions.Options.IValidateOptions<Ato.Copilot.Core.Configuration.Auth.AuthOptions>,
+        Ato.Copilot.Core.Configuration.Auth.AuthOptionsValidator>();
+
     builder.Services.AddSingleton<Ato.Copilot.Core.Interfaces.Tenancy.ITenantContextAccessor,
         Ato.Copilot.Core.Services.Tenancy.TenantContextAccessor>();
     builder.Services.AddScoped<Ato.Copilot.Core.Interfaces.Tenancy.ITenantContext,

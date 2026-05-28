@@ -71,10 +71,10 @@ interceptor base. EVERY user story phase depends on this phase.
 
 ### 2.4 Options binding
 
-- [ ] T021 [P] Create [src/Ato.Copilot.Core/Configuration/Auth/AuthOptions.cs](src/Ato.Copilot.Core/Configuration/Auth/AuthOptions.cs) — root + nested per [contracts/internal-services.md § 5.1](specs/051-login/contracts/internal-services.md)
-- [ ] T022 [P] Create [src/Ato.Copilot.Core/Configuration/Auth/AuthOptionsValidator.cs](src/Ato.Copilot.Core/Configuration/Auth/AuthOptionsValidator.cs) — `IValidateOptions<AuthOptions>` per [contracts/internal-services.md § 5.2](specs/051-login/contracts/internal-services.md) and [research.md § R12](specs/051-login/research.md)
-- [ ] T023 [TDD-Test] [tests/Ato.Copilot.Tests.Unit/Auth/AuthOptionsValidatorTests.cs](tests/Ato.Copilot.Tests.Unit/Auth/AuthOptionsValidatorTests.cs) — assert missing `Cookie.SigningKey` fails outside Development, `IdleTimeoutMinutes` range, `Throttle.Production.PerIpPerMinute > 0`, `TeamsSso.Mode = Required` requires `ConnectionName`. RED then GREEN.
-- [ ] T024 Bind `AuthOptions` in [src/Ato.Copilot.Mcp/Program.cs](src/Ato.Copilot.Mcp/Program.cs) with `.AddOptions<AuthOptions>().Bind(config.GetSection("Auth")).ValidateOnStart()` and register the validator
+- [X] T021 [P] Create [src/Ato.Copilot.Core/Configuration/Auth/AuthOptions.cs](src/Ato.Copilot.Core/Configuration/Auth/AuthOptions.cs) — root + nested per [contracts/internal-services.md § 5.1](specs/051-login/contracts/internal-services.md)
+- [X] T022 [P] Create [src/Ato.Copilot.Core/Configuration/Auth/AuthOptionsValidator.cs](src/Ato.Copilot.Core/Configuration/Auth/AuthOptionsValidator.cs) — `IValidateOptions<AuthOptions>` per [contracts/internal-services.md § 5.2](specs/051-login/contracts/internal-services.md) and [research.md § R12](specs/051-login/research.md)
+- [X] T023 [TDD-Test] [tests/Ato.Copilot.Tests.Unit/Auth/AuthOptionsValidatorTests.cs](tests/Ato.Copilot.Tests.Unit/Auth/AuthOptionsValidatorTests.cs) — assert missing `Cookie.SigningKey` fails outside Development, `IdleTimeoutMinutes` range, `Throttle.Production.PerIpPerMinute > 0`, `TeamsSso.Mode = Required` requires `ConnectionName`. RED then GREEN.
+- [X] T024 Bind `AuthOptions` in [src/Ato.Copilot.Mcp/Program.cs](src/Ato.Copilot.Mcp/Program.cs) with `.AddOptions<AuthOptions>().Bind(config.GetSection("Auth")).ValidateOnStart()` and register the validator
 
 ### 2.5 Audit write service (`AppendAsync` only)
 

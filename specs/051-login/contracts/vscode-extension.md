@@ -45,6 +45,7 @@ export interface VsCodeLoginConfig {
   authority: string;
   scopes: string[];
   serverBaseUrl: string;                      // The MCP server's base URL
+  cloud: 'AzurePublic' | 'AzureUSGovernment'; // mirrors Auth:Cloud
 }
 ```
 
@@ -52,6 +53,24 @@ The extension fetches `VsCodeLoginConfig` from the MCP server's
 `GET /api/auth/login-config` endpoint at command-invocation time (NOT
 at activation — the user may not have a server configured until they
 run `@ato sign in`).
+
+### 2.1 Cloud → device-code verification URL mapping (FR-017)
+
+FR-017 mandates the displayed verification URL be cloud-correct.
+`@azure/msal-node` emits the verification URL via the
+`DeviceCodeResponse.verificationUri` field, but the extension MUST
+validate it against the expected base for the configured `Auth:Cloud`
+value to defend against an authority-misconfiguration that would
+otherwise route a Gov-tenant user to the public endpoint:
+
+| `cloud` value         | Expected verification URL base    |
+|-----------------------|-----------------------------------|
+| `AzurePublic`         | `https://microsoft.com/devicelogin` |
+| `AzureUSGovernment`   | `https://microsoft.us/devicelogin`  |
+
+The sign-in command (§ 3.2) MUST compare `response.verificationUri`
+against the table above and abort with a clear error if they do not
+match. Test T104 asserts this invariant for both cloud values.
 
 ## 3. Sign-in command contract
 

@@ -276,6 +276,64 @@ dashboard) wrapper around `GET /api/auth/me` with:
 - Refetch on `'ato:tenant-changed'` custom event (dispatched by the
   tenant picker after `POST /api/auth/select-tenant`).
 
+### 4.4 `useIdleFormStateBackup` (FR-008 — added per analysis C1)
+
+```ts
+// src/features/auth/useIdleFormStateBackup.ts
+export interface FormSnapshotSerializer<T> {
+  /** Stable id used as part of the localStorage key. */
+  formId: string;
+  /** Called synchronously on 'ato:idle-warning'; MUST return a JSON-serializable snapshot. */
+  serialize: () => T;
+}
+
+export interface UseIdleFormStateBackupResult {
+  register: <T>(s: FormSnapshotSerializer<T>) => void;
+  unregister: (formId: string) => void;
+}
+
+export function useIdleFormStateBackup(oid: string): UseIdleFormStateBackupResult;
+
+/** Idempotent purge — call on explicit (non-idle) sign-out. */
+export function purgeUnsavedChanges(oid: string): void;
+```
+
+Per FR-008: writes snapshots to `localStorage` under key
+`ato.unsavedChanges.{oid}.{formId}` with a wall-clock `savedAt` timestamp.
+The hook subscribes once to `'ato:idle-warning'` (fired by `useIdleTimer`
+60s before idle expiry) and walks every registered serializer
+synchronously so the write completes before the user is signed out.
+Snapshots are scoped by `oid` so a multi-user device never cross-pollinates.
+
+### 4.5 `RestoreUnsavedChangesPrompt` data flow
+
+```ts
+// src/features/auth/RestoreUnsavedChangesPrompt.tsx
+export interface UnsavedSnapshot<T = unknown> {
+  formId: string;
+  savedAt: string;        // ISO-8601
+  data: T;
+}
+
+export interface RestoreUnsavedChangesPromptProps {
+  /** Authenticated user's `oid` — used to filter localStorage keys. */
+  oid: string;
+}
+
+declare global {
+  interface WindowEventMap {
+    /** Dispatched when the user clicks "Restore" for a given form. */
+    'ato:restore-unsaved': CustomEvent<UnsavedSnapshot>;
+  }
+}
+```
+
+Mounted in `<AppShell />`. On mount, scans `localStorage` for keys
+matching `ato.unsavedChanges.{oid}.*`. Renders nothing when no
+snapshots exist. Otherwise shows a dismissible prompt listing each
+affected form with its saved-at timestamp; "Restore" dispatches
+`'ato:restore-unsaved'` and removes the key, "Discard" removes the key.
+
 ## 5. Components
 
 | Component | File | Purpose |
@@ -288,6 +346,7 @@ dashboard) wrapper around `GET /api/auth/me` with:
 | `ImpersonationBanner` | `src/features/auth/ImpersonationBanner.tsx` | Sticky banner when `me.isImpersonating === true`. |
 | `SimulationPanel` | `src/features/auth/SimulationPanel.tsx` | The dev-only identity selector. Route-guarded behind `useLoginConfig().simulation != null`. |
 | `IdleWarningModal` | `src/features/auth/IdleWarningModal.tsx` | Renders on `'ato:idle-warning'` event with a countdown + "Stay signed in" button. |
+| `RestoreUnsavedChangesPrompt` | `src/features/auth/RestoreUnsavedChangesPrompt.tsx` | FR-008 — surfaces on next sign-in when `localStorage` holds an `ato.unsavedChanges.{oid}.*` key (analysis C1). |
 
 ## 6. Routing
 
@@ -316,6 +375,7 @@ to preserve the deep link.
 | FR-004 | `RequireAuth` deep-link state, `LoginCallbackPage` redirect | § 6 |
 | FR-005 / FR-006 | `AccountMenu` sign-out, `LoginErrorPage` post-sign-out copy | § 5 |
 | FR-007 / FR-007a | `useIdleTimer`, axios interceptor `_silentRenewal` tag | § 3.3, § 4.1 |
+| FR-008 | `useIdleFormStateBackup`, `RestoreUnsavedChangesPrompt` | § 4.4, § 4.5 |
 | FR-008 | `useLoginRaceListener` | § 4.2 |
 | FR-009 / FR-010 / FR-011 / FR-012 / FR-013 | `TenantPickerPage`, `SelectTenantRequest`, `me.effectiveTenant` | § 1, § 5 |
 | FR-014 / FR-015 / FR-016 | `LoginErrorPage`, `ErrorClass`, `errorCopy.ts` | § 2, § 5 |

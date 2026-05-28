@@ -277,15 +277,23 @@ No body; the `identityId` query parameter selects an entry from
    `SimulationBlocked` audit row with `severity=Security` per FR-024.
 2. Look up the identity descriptor in `CacAuth:SimulatedIdentities`.
    404 if not found.
-3. Issue a session cookie with the configured oid / tid / tenant / roles
-   AND set `X-Simulated=true` on the cookie attributes per FR-025.
-4. Emit a `SimulatedLogin` audit row.
-5. Return 204.
+3. Issue the normal session cookie with the configured oid / tid /
+   tenant / roles for the simulated identity.
+4. **Additionally** issue a discrete sentinel cookie named `X-Simulated`
+   with value `true` per FR-025 (clarified 2026-05-28 — see spec.md
+   analysis C9). Cookie attributes: `HttpOnly=true`, `Secure=true`,
+   `SameSite=Strict`, `Path=/`, lifetime tied to the session cookie. The
+   SPA and downstream evidence-generation services check the presence of
+   this cookie to set `IsSimulation=true` on persisted artifacts per
+   Feature 027.
+5. Emit a `SimulatedLogin` audit row.
+6. Return 204.
 
 ### 5.4 Response — 204 No Content
 
-The session cookie is set on the response. The SPA then calls
-`GET /api/auth/me` to render the dashboard as that identity.
+The session cookie AND the `X-Simulated=true` sentinel cookie are set on
+the response. The SPA then calls `GET /api/auth/me` to render the
+dashboard as that identity.
 
 ### 5.5 Error responses
 

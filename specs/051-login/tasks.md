@@ -31,9 +31,9 @@ quickstart.md.
 **Purpose**: Branch, packages, DI scaffolding shared by every later phase.
 
 - [ ] T001 Verify branch `051-login` is checked out and clean: `git status --short && git rev-parse --abbrev-ref HEAD`
-- [ ] T002 [P] Add NuGet package `Microsoft.Extensions.Caching.StackExchangeRedis` 9.0 to `src/Ato.Copilot.Mcp/Ato.Copilot.Mcp.csproj`
-- [ ] T003 [P] Add npm packages `@azure/msal-browser@^3` `@azure/msal-react@^2` `js-cookie@^3` `@types/js-cookie@^3` to [src/Ato.Copilot.Dashboard/package.json](src/Ato.Copilot.Dashboard/package.json) via `npm install`
-- [ ] T004 [P] Add npm package `@azure/msal-node@^2` to [extensions/vscode/package.json](extensions/vscode/package.json) via `npm install`
+- [ ] T002 [P] Add NuGet package `Microsoft.Extensions.Caching.StackExchangeRedis` 9.0 to `src/Ato.Copilot.Mcp/Ato.Copilot.Mcp.csproj`. **Commit `packages.lock.json` delta in the same atomic change per analysis C16.**
+- [ ] T003 [P] Add npm packages `@azure/msal-browser@^3` `@azure/msal-react@^2` `js-cookie@^3` `@types/js-cookie@^3` to [src/Ato.Copilot.Dashboard/package.json](src/Ato.Copilot.Dashboard/package.json) via `npm install`. **Commit `package-lock.json` delta in the same atomic change (C16).**
+- [ ] T004 [P] Add npm package `@azure/msal-node@^2` to [extensions/vscode/package.json](extensions/vscode/package.json) via `npm install`. **Commit `package-lock.json` delta in the same atomic change (C16).**
 - [ ] T005 [P] Create folder skeletons: `src/Ato.Copilot.Core/Models/Auth/`, `src/Ato.Copilot.Core/Interfaces/Auth/`, `src/Ato.Copilot.Core/Services/Auth/`, `src/Ato.Copilot.Core/Configuration/Auth/`, `src/Ato.Copilot.Core/Data/Migrations/EnsureSchemaAdditions/`, `src/Ato.Copilot.Mcp/Endpoints/Auth/`, `src/Ato.Copilot.Dashboard/src/features/auth/`, `extensions/vscode/src/auth/`, `extensions/m365/src/auth/`, `tests/Ato.Copilot.Tests.Unit/Auth/`, `tests/Ato.Copilot.Tests.Integration/Auth/`, `src/Ato.Copilot.Dashboard/src/__tests__/auth/`
 - [ ] T006 [P] Add `stark-redis` dependency to the `ato-copilot-mcp` service block in [docker-compose.mcp.yml](docker-compose.mcp.yml) and confirm `REDIS_CONNECTION_STRING=stark-redis:6379` env var
 - [ ] T007 [P] Create `dotnet test` filter file [tests/Ato.Copilot.Tests.Unit/Auth/.gitkeep](tests/Ato.Copilot.Tests.Unit/Auth/.gitkeep) so empty folder commits cleanly
@@ -86,7 +86,7 @@ interceptor base. EVERY user story phase depends on this phase.
 ### 2.6 Throttle service + distributed cache
 
 - [ ] T029 [P] Create [src/Ato.Copilot.Core/Interfaces/Auth/ILoginThrottleService.cs](src/Ato.Copilot.Core/Interfaces/Auth/ILoginThrottleService.cs) + `LoginThrottleDecision` record per [contracts/internal-services.md § 2.2](specs/051-login/contracts/internal-services.md)
-- [ ] T030 [TDD-Test] [tests/Ato.Copilot.Tests.Unit/Auth/LoginThrottleServiceTests.cs](tests/Ato.Copilot.Tests.Unit/Auth/LoginThrottleServiceTests.cs) — backed by `IDistributedMemoryCache`: assert 11th attempt within 60s on same IP returns `Allowed=false` with `RetryAfter` ≤ 60s; per-identity counter separate from per-IP; `ResetIdentityAsync` clears identity but not IP. RED.
+- [ ] T030 [TDD-Test] [tests/Ato.Copilot.Tests.Unit/Auth/LoginThrottleServiceTests.cs](tests/Ato.Copilot.Tests.Unit/Auth/LoginThrottleServiceTests.cs) — backed by `IDistributedMemoryCache`. **Defaults under test MUST match spec.md FR-034 (analysis C2): Production = 20/min/IP + 10/min/identity; Development = 100/min/IP + 100/min/identity.** Assert 21st failed attempt within 60s on the same IP returns `Allowed=false` with `RetryAfter` ≤ 60s; per-identity counter separate from per-IP; `ResetIdentityAsync` clears identity but not IP. **Add explicit test cases that read `AuthThrottleOptions` defaults and assert the documented values match FR-034.** RED.
 - [ ] T031 Create [src/Ato.Copilot.Core/Services/Auth/LoginThrottleService.cs](src/Ato.Copilot.Core/Services/Auth/LoginThrottleService.cs) — implement bucket-key design per [research.md § R7](specs/051-login/research.md). GREEN T030.
 - [ ] T032 Register `services.AddSingleton<ILoginThrottleService, LoginThrottleService>()` and add `IDistributedMemoryCache` (dev) / `AddStackExchangeRedisCache` (prod) per [contracts/internal-services.md § 6](specs/051-login/contracts/internal-services.md) in [src/Ato.Copilot.Mcp/Program.cs](src/Ato.Copilot.Mcp/Program.cs)
 
@@ -140,7 +140,20 @@ via the configured method, and reaches their dashboard (deep link preserved).
 - [ ] T052 [US1] Add `/login` and `/login/callback` routes + wrap protected routes in `<RequireAuth>` in [src/Ato.Copilot.Dashboard/src/App.tsx](src/Ato.Copilot.Dashboard/src/App.tsx)
 - [ ] T053 [US1] Replace `localStorage.getItem('auth_token')` with the new MSAL interceptor in every `*/api.ts` (14 files — use `grep -rl "localStorage.getItem.*auth_token" src/Ato.Copilot.Dashboard/src` to enumerate; each file deletes its inline header logic and relies on the global interceptor configured in T038)
 
-### 3.5 Manual sign-off
+### 3.6 Cross-tab login race (relocated from Phase 5 per analysis C3)
+
+The `useLoginRaceListener` hook + its tests originally landed under US3,
+but the underlying edge case (sibling tab completes deep-link after
+sign-in elsewhere) belongs to US1's deep-link preservation contract.
+These tasks run as part of US1 and unblock the MVP without requiring
+US3 to be in scope. **Note (C3): legacy task IDs T074–T076 are RETIRED;
+these replacement IDs T053a–T053c carry the work.**
+
+- [ ] T053a [TDD-Test] [P] [US1] [src/Ato.Copilot.Dashboard/src/__tests__/auth/useLoginRaceListener.test.tsx](src/Ato.Copilot.Dashboard/src/__tests__/auth/useLoginRaceListener.test.tsx) — synthetic `StorageEvent` with `key='msal.account.keys.0'` and non-empty accounts calls `onLoginCompletedInAnotherTab`; storage event on an unrelated key does NOT. RED.
+- [ ] T053b [US1] Create [src/Ato.Copilot.Dashboard/src/features/auth/useLoginRaceListener.ts](src/Ato.Copilot.Dashboard/src/features/auth/useLoginRaceListener.ts) per [contracts/frontend-types.md § 4.2](specs/051-login/contracts/frontend-types.md). GREEN T053a.
+- [ ] T053c [US1] Mount the listener on `LoginPage` AND on `LoginCallbackPage` so a parallel-tab sign-in advances the waiting tab to its deep link without requiring user click.
+
+### 3.7 Manual sign-off
 
 - [ ] T054 [US1] Execute [quickstart.md § 1, § 2, § 4](specs/051-login/quickstart.md) against the local docker stack and tick the boxes
 
@@ -175,7 +188,19 @@ and emit audit rows. Silent token renewal does NOT reset the idle counter.
 
 - [ ] T062 [US2] Stub `AccountMenu.tsx` sign-out button — full menu lands in US9; this task adds just the button at the existing header location and wires it to `POST /api/auth/signout` then `msalInstance.logoutRedirect()` (file: [src/Ato.Copilot.Dashboard/src/features/auth/AccountMenu.tsx](src/Ato.Copilot.Dashboard/src/features/auth/AccountMenu.tsx))
 
-### 4.5 Manual sign-off
+### 4.5 FR-008 — Restore unsaved changes on idle sign-out (analysis C1)
+
+FR-008 requires the SPA to persist in-flight form state to localStorage
+before idle sign-out, namespaced by `oid`, then offer a "Restore unsaved
+changes" prompt on next sign-in. The original tasks list missed this
+requirement entirely. Tasks below close the gap.
+
+- [ ] T062a [TDD-Test] [P] [US2] [src/Ato.Copilot.Dashboard/src/__tests__/auth/useIdleFormStateBackup.test.tsx](src/Ato.Copilot.Dashboard/src/__tests__/auth/useIdleFormStateBackup.test.tsx) — Vitest with fake timers: assert (a) a registered form serializer is invoked synchronously on `'ato:idle-warning'` before the timer expires; (b) the serialized snapshot is written to `localStorage` under key `ato.unsavedChanges.{oid}.{formId}` with a wall-clock timestamp; (c) `useIdleFormStateBackup` returns `{ register, unregister }` for components to opt in; (d) on explicit (non-idle) sign-out, the snapshot is purged. RED.
+- [ ] T062b [US2] Create [src/Ato.Copilot.Dashboard/src/features/auth/useIdleFormStateBackup.ts](src/Ato.Copilot.Dashboard/src/features/auth/useIdleFormStateBackup.ts) — thin React hook that subscribes to `'ato:idle-warning'` and walks registered serializers; persists JSON snapshots; co-located helper `purgeUnsavedChanges(oid)` for explicit sign-out. GREEN T062a.
+- [ ] T062c [TDD-Test] [P] [US2] [src/Ato.Copilot.Dashboard/src/__tests__/auth/RestoreUnsavedChangesPrompt.test.tsx](src/Ato.Copilot.Dashboard/src/__tests__/auth/RestoreUnsavedChangesPrompt.test.tsx) — component renders ONLY when `localStorage` has at least one `ato.unsavedChanges.{me.oid}.*` key; lists each affected form with its timestamp; "Restore" emits `'ato:restore-unsaved'` CustomEvent with the snapshot; "Discard" purges the key; ignores keys belonging to a different `oid`. RED.
+- [ ] T062d [US2] Create [src/Ato.Copilot.Dashboard/src/features/auth/RestoreUnsavedChangesPrompt.tsx](src/Ato.Copilot.Dashboard/src/features/auth/RestoreUnsavedChangesPrompt.tsx) and mount it inside `<AppShell />` so it surfaces right after sign-in completes. GREEN T062c. Document in [contracts/frontend-types.md § 4](specs/051-login/contracts/frontend-types.md) (add hook + component signatures).
+
+### 4.6 Manual sign-off
 
 - [ ] T063 [US2] Execute [quickstart.md § 5, § 6](specs/051-login/quickstart.md)
 
@@ -204,19 +229,20 @@ and emit audit rows. Silent token renewal does NOT reset the idle counter.
 
 ### 5.3 Bootstrap honoring of remembered cookie
 
-- [ ] T070 [US3] Extend `GET /api/auth/me` handler to read the remembered cookie via `IRememberedTenantCookieService.Validate`; if present + tenant is valid + user is a member, set the effective tenant scope without requiring a `/select-tenant` call. Test: extend [tests/Ato.Copilot.Tests.Integration/Auth/MeEndpointTests.cs](tests/Ato.Copilot.Tests.Integration/Auth/MeEndpointTests.cs) with a "remembered cookie skips picker" scenario.
+- [ ] T070 [US3] Extend `GET /api/auth/me` handler to read the remembered cookie via `IRememberedTenantCookieService.Validate`; if present + tenant is `Active` (NOT `Suspended` or `Disabled`) + user is a member, set the effective tenant scope without requiring a `/select-tenant` call. **Per FR-013 (analysis C5): when the validated cookie points at a tenant whose current status is `Disabled`, the cookie MUST be ignored and the user routed to the picker; no `TenantSwitch` audit row is written for the ignored cookie.** Test: extend [tests/Ato.Copilot.Tests.Integration/Auth/MeEndpointTests.cs](tests/Ato.Copilot.Tests.Integration/Auth/MeEndpointTests.cs) with three scenarios: (a) remembered cookie + Active tenant skips picker, (b) remembered cookie + Disabled tenant routes to picker with no `TenantSwitch` row, (c) remembered cookie + tampered HMAC routes to picker.
 
 ### 5.4 Dashboard `TenantPickerPage`
 
-- [ ] T071 [TDD-Test] [P] [US3] [src/Ato.Copilot.Dashboard/src/__tests__/auth/TenantPickerPage.test.tsx](src/Ato.Copilot.Dashboard/src/__tests__/auth/TenantPickerPage.test.tsx) — renders one row per tenant with status badge; `Disabled` rows are disabled for non-CSP-Admin; "Remember on this device" checkbox below list; `POST /api/auth/select-tenant` body matches selection + remember flag. RED.
+- [ ] T071 [TDD-Test] [P] [US3] [src/Ato.Copilot.Dashboard/src/__tests__/auth/TenantPickerPage.test.tsx](src/Ato.Copilot.Dashboard/src/__tests__/auth/TenantPickerPage.test.tsx) — renders one row per tenant with status badge; `Disabled` rows are hidden for non-CSP-Admin AND rendered grayed-out (disabled) for CSP-Admin per FR-010; "Remember on this device" checkbox below list; `POST /api/auth/select-tenant` body matches selection + remember flag. **Per FR-011 (analysis C4): when `me.isCspAdmin === true`, an extra row labeled "All Tenants (CSP view)" MUST render AND clicking it MUST navigate to `/csp/dashboard` (Feature 048 root) without calling `/select-tenant`.** RED.
 - [ ] T072 [US3] Create [src/Ato.Copilot.Dashboard/src/features/auth/TenantPickerPage.tsx](src/Ato.Copilot.Dashboard/src/features/auth/TenantPickerPage.tsx). GREEN T071.
 - [ ] T073 [US3] Add `/login/select-tenant` route (wrapped in `<RequireAuth>`) in [src/Ato.Copilot.Dashboard/src/App.tsx](src/Ato.Copilot.Dashboard/src/App.tsx); auto-redirect to it from `LoginCallbackPage` when `me.homeTenant === null` and the user has > 1 tenant membership
 
-### 5.5 `useLoginRaceListener` hook
+### 5.5 (Retired) `useLoginRaceListener` hook — moved to Phase 3 (US1)
 
-- [ ] T074 [TDD-Test] [P] [US3] [src/Ato.Copilot.Dashboard/src/__tests__/auth/useLoginRaceListener.test.tsx](src/Ato.Copilot.Dashboard/src/__tests__/auth/useLoginRaceListener.test.tsx) — synthetic `StorageEvent` with `key='msal.account.keys.0'` and non-empty accounts calls `onLoginCompletedInAnotherTab`; storage event on an unrelated key does NOT. RED.
-- [ ] T075 [US3] Create [src/Ato.Copilot.Dashboard/src/features/auth/useLoginRaceListener.ts](src/Ato.Copilot.Dashboard/src/features/auth/useLoginRaceListener.ts) per [contracts/frontend-types.md § 4.2](specs/051-login/contracts/frontend-types.md). GREEN T074.
-- [ ] T076 [US3] Mount the listener on `LoginPage` so a parallel-tab sign-in advances the waiting tab
+T074, T075, T076 were originally listed here. Analysis C3 (2026-05-28)
+identified the cross-tab race as US1 work (deep-link preservation),
+not US3 (tenant picker). The replacement tasks T053a–T053c live in
+Phase 3 § 3.6. **Do NOT re-introduce work under T074–T076.**
 
 ### 5.6 Manual sign-off
 
@@ -268,7 +294,7 @@ immutable cold storage. (Write-side already wired in Phase 2.)
 
 ### 7.2 SOC-analyst claim mapping
 
-- [ ] T088 [US10] Add `RoleClaimMappings:Auth.SocAnalyst` config slot to [src/Ato.Copilot.Mcp/appsettings.json](src/Ato.Copilot.Mcp/appsettings.json) and wire it through the existing Feature 003 role-claim resolver so endpoints can check the claim
+- [ ] T088 [US10] **Verify (analysis C13): read [src/Ato.Copilot.Core/Configuration/RoleClaimMappings*](src/Ato.Copilot.Core/Configuration/) to confirm Feature 003 already exposes a `RoleClaimMappings:Auth.SocAnalyst` config slot. If absent, this task MUST extend Feature 003's claim resolver to recognize `Auth.SocAnalyst` as a first-class role claim before adding the slot to appsettings.** Add `RoleClaimMappings:Auth.SocAnalyst` config slot to [src/Ato.Copilot.Mcp/appsettings.json](src/Ato.Copilot.Mcp/appsettings.json) and wire it through the existing Feature 003 role-claim resolver so endpoints can check the claim
 
 ### 7.3 Read endpoint
 
@@ -307,13 +333,13 @@ immutable cold storage. (Write-side already wired in Phase 2.)
 
 ### 8.1 MSAL Node configuration
 
-- [ ] T101 [P] [US5] Create [extensions/vscode/src/auth/msalNode.ts](extensions/vscode/src/auth/msalNode.ts) — `buildMsalNodeConfig` + `VsCodeLoginConfig` per [contracts/vscode-extension.md § 2](specs/051-login/contracts/vscode-extension.md)
+- [ ] T101 [P] [US5] Create [extensions/vscode/src/auth/msalNode.ts](extensions/vscode/src/auth/msalNode.ts) — `buildMsalNodeConfig` + `VsCodeLoginConfig` per [contracts/vscode-extension.md § 2](specs/051-login/contracts/vscode-extension.md). **Per FR-017 (analysis C14): include the `cloud` field on `VsCodeLoginConfig` and implement the validator described in [contracts/vscode-extension.md § 2.1](specs/051-login/contracts/vscode-extension.md) that maps `AzurePublic` → `https://microsoft.com/devicelogin` and `AzureUSGovernment` → `https://microsoft.us/devicelogin`.**
 - [ ] T102 [P] [US5] Create [extensions/vscode/src/auth/secretStorage.ts](extensions/vscode/src/auth/secretStorage.ts) — per-tenant token + account persistence using the `ato.auth.token.{tenantId}` / `ato.auth.account.{tenantId}` key naming per [contracts/vscode-extension.md § 5](specs/051-login/contracts/vscode-extension.md)
 - [ ] T103 [TDD-Test] [P] [US5] [extensions/vscode/test/auth/secretStorage.test.ts](extensions/vscode/test/auth/secretStorage.test.ts) — mocha + `vscode-test`: persist + read + delete per tenant key, signing out one tenant leaves another intact. RED then GREEN.
 
 ### 8.2 Sign-in / out / switch commands
 
-- [ ] T104 [TDD-Test] [US5] [extensions/vscode/test/auth/signInCommand.test.ts](extensions/vscode/test/auth/signInCommand.test.ts) — mocks `PublicClientApplication`: assert device-code callback shows the notification with verification URL + code, copies code to clipboard on action click, persists token under correct tenant key, updates status bar to `signedIn`. RED.
+- [ ] T104 [TDD-Test] [US5] [extensions/vscode/test/auth/signInCommand.test.ts](extensions/vscode/test/auth/signInCommand.test.ts) — mocks `PublicClientApplication`: assert device-code callback shows the notification with verification URL + code, copies code to clipboard on action click, persists token under correct tenant key, updates status bar to `signedIn`. **Per FR-017 (analysis C14): add two cases asserting `cloud=AzurePublic` requires the response's `verificationUri` to start with `https://microsoft.com/devicelogin` and `cloud=AzureUSGovernment` requires `https://microsoft.us/devicelogin`; a mismatched URL aborts sign-in with a clear error.** RED.
 - [ ] T105 [US5] Create [extensions/vscode/src/auth/signInCommand.ts](extensions/vscode/src/auth/signInCommand.ts) per [contracts/vscode-extension.md § 3.2](specs/051-login/contracts/vscode-extension.md). GREEN T104.
 - [ ] T106 [P] [US5] Create [extensions/vscode/src/auth/signOutCommand.ts](extensions/vscode/src/auth/signOutCommand.ts) per [contracts/vscode-extension.md § 3.3](specs/051-login/contracts/vscode-extension.md)
 - [ ] T107 [P] [US5] Create [extensions/vscode/src/auth/switchTenantCommand.ts](extensions/vscode/src/auth/switchTenantCommand.ts) per [contracts/vscode-extension.md § 3.4](specs/051-login/contracts/vscode-extension.md)
@@ -377,8 +403,8 @@ non-Development.
 
 ### 10.2 Endpoint: POST /api/auth/simulate
 
-- [ ] T122 [TDD-Test] [US7] [tests/Ato.Copilot.Tests.Integration/Auth/SimulateEndpointTests.cs](tests/Ato.Copilot.Tests.Integration/Auth/SimulateEndpointTests.cs) — `ASPNETCORE_ENVIRONMENT=Development` + known identity → 204 + cookie issued + `SimulatedLogin` row; unknown identity → 404 `SIMULATED_IDENTITY_NOT_FOUND`; `ASPNETCORE_ENVIRONMENT=Staging` → bare 404 (no envelope) + `SimulationBlocked` audit row with `MetadataJson.environment="Staging"`. RED.
-- [ ] T123 [US7] Implement `POST /api/auth/simulate` per [contracts/http-api.md § 5](specs/051-login/contracts/http-api.md). GREEN T122.
+- [ ] T122 [TDD-Test] [US7] [tests/Ato.Copilot.Tests.Integration/Auth/SimulateEndpointTests.cs](tests/Ato.Copilot.Tests.Integration/Auth/SimulateEndpointTests.cs) — `ASPNETCORE_ENVIRONMENT=Development` + known identity → 204 + session cookie issued **AND a discrete `X-Simulated=true` cookie issued with `HttpOnly=true, Secure=true, SameSite=Strict` per FR-025 (analysis C9)** + `SimulatedLogin` row; unknown identity → 404 `SIMULATED_IDENTITY_NOT_FOUND`; `ASPNETCORE_ENVIRONMENT=Staging` → bare 404 (no envelope) + `SimulationBlocked` audit row with `MetadataJson.environment="Staging"`. RED.
+- [ ] T123 [US7] Implement `POST /api/auth/simulate` per [contracts/http-api.md § 5](specs/051-login/contracts/http-api.md). **Issue the `X-Simulated` discrete cookie (not a cookie attribute) per the analysis C9 clarification of FR-025.** GREEN T122.
 
 ### 10.3 SimulationBlocked logging severity
 
@@ -386,7 +412,7 @@ non-Development.
 
 ### 10.4 Server: extend login-config response
 
-- [ ] T125 [US7] Extend the `GET /api/auth/login-config` handler to include `simulation: { identities: [...] }` ONLY when `env=Development AND CacAuth:SimulationMode=true AND SimulatedIdentities non-empty`; extend [tests/Ato.Copilot.Tests.Integration/Auth/LoginConfigEndpointTests.cs](tests/Ato.Copilot.Tests.Integration/Auth/LoginConfigEndpointTests.cs) with two cases (Development → present; Staging → null)
+- [ ] T125 [US7] Extend the `GET /api/auth/login-config` handler to include `simulation: { identities: [...] }` ONLY when `env=Development AND CacAuth:SimulationMode=true AND CacAuth:SimulatedIdentities non-empty`. **Per analysis C10: the gate uses Feature 027's `CacAuth:SimulationMode` ONLY — do NOT add or check a parallel `Auth:Simulation:Enabled` flag.** Extend [tests/Ato.Copilot.Tests.Integration/Auth/LoginConfigEndpointTests.cs](tests/Ato.Copilot.Tests.Integration/Auth/LoginConfigEndpointTests.cs) with two cases (Development+SimulationMode=true → present; Staging → null; Development+SimulationMode=false → null).
 
 ### 10.5 Dashboard: `SimulationPanel`
 
@@ -410,19 +436,24 @@ on expire / sign-out / idle.
 
 **Independent test criteria**: [quickstart.md § 11](specs/051-login/quickstart.md).
 
-### 11.1 Audit rows for impersonation transitions
+### 11.1 Pre-impersonation URL capture (FR-029, analysis C6)
+
+- [ ] T129a [TDD-Test] [P] [US8] [src/Ato.Copilot.Dashboard/src/__tests__/auth/preImpersonationUrl.test.ts](src/Ato.Copilot.Dashboard/src/__tests__/auth/preImpersonationUrl.test.ts) — Vitest: assert the "Switch into tenant" affordance writes the current `window.location.pathname + search + hash` to a session-scoped key (`ato.preImpersonationUrl`) BEFORE issuing the Feature 048 impersonate request; assert key removed on explicit Exit; assert key removed on auto-expire. RED.
+- [ ] T129b [US8] Create [src/Ato.Copilot.Dashboard/src/features/auth/preImpersonationUrl.ts](src/Ato.Copilot.Dashboard/src/features/auth/preImpersonationUrl.ts) — thin getter/setter/clearer for the sessionStorage key. GREEN T129a.
+
+### 11.2 Audit rows for impersonation transitions
 
 - [ ] T130 [TDD-Test] [US8] [tests/Ato.Copilot.Tests.Integration/Auth/ImpersonationAuditTests.cs](tests/Ato.Copilot.Tests.Integration/Auth/ImpersonationAuditTests.cs) — POST to the existing Feature 048 impersonate endpoint writes `ImpersonationStart` audit row; DELETE / Exit writes `ImpersonationEnd` with `reason=manual`; auto-expiry writes `ImpersonationEnd` with `reason=expired`; idle sign-out also closes impersonation with `reason=idle_timeout`. RED.
 - [ ] T131 [US8] Extend the existing Feature 048 impersonation start handler in [src/Ato.Copilot.Mcp/Endpoints/](src/Ato.Copilot.Mcp/Endpoints/) (locate via `grep -rln "Impersonate" src/Ato.Copilot.Mcp/Endpoints/`) to write `ImpersonationStart` via `ILoginAuditService`. GREEN T130 (start).
 - [ ] T132 [US8] Extend the impersonation-end paths (manual + expiry + idle) to write `ImpersonationEnd` with the correct `reason`. GREEN T130 (end).
 
-### 11.2 Dashboard `ImpersonationBanner`
+### 11.3 Dashboard `ImpersonationBanner`
 
-- [ ] T133 [TDD-Test] [P] [US8] [src/Ato.Copilot.Dashboard/src/__tests__/auth/ImpersonationBanner.test.tsx](src/Ato.Copilot.Dashboard/src/__tests__/auth/ImpersonationBanner.test.tsx) — renders when `me.isImpersonating === true`; shows impersonated-tenant name + countdown computed from `expiresAt`; "Exit" button calls the Feature 048 end endpoint then refetches `/me`. RED.
+- [ ] T133 [TDD-Test] [P] [US8] [src/Ato.Copilot.Dashboard/src/__tests__/auth/ImpersonationBanner.test.tsx](src/Ato.Copilot.Dashboard/src/__tests__/auth/ImpersonationBanner.test.tsx) — renders when `me.isImpersonating === true`; shows impersonated-tenant name + countdown computed from `expiresAt`; "Exit" button calls the Feature 048 end endpoint then refetches `/me`. **Per FR-029 (analysis C6): on Exit click, the SPA MUST navigate to the value of `sessionStorage.getItem('ato.preImpersonationUrl')` if present, falling back to the persona-default landing page when the key is absent or stale (not to `/csp/dashboard` or `/`).** RED.
 - [ ] T134 [US8] Create [src/Ato.Copilot.Dashboard/src/features/auth/ImpersonationBanner.tsx](src/Ato.Copilot.Dashboard/src/features/auth/ImpersonationBanner.tsx). GREEN T133.
-- [ ] T135 [US8] Mount `<ImpersonationBanner />` at the top of `AppShell` (sticky); refetch on `'ato:tenant-changed'` event
+- [ ] T135 [US8] Mount `<ImpersonationBanner />` at the top of `AppShell` (sticky); refetch on `'ato:tenant-changed'` event. **Wire the Exit click handler to read + clear `sessionStorage['ato.preImpersonationUrl']` and call `navigate()` to that URL per FR-029 (analysis C6).**
 
-### 11.3 Manual sign-off
+### 11.4 Manual sign-off
 
 - [ ] T136 [US8] Execute [quickstart.md § 11](specs/051-login/quickstart.md)
 
@@ -445,7 +476,7 @@ Phase 4 — this phase fills the rest.)
 
 ### 12.2 Account menu
 
-- [ ] T139 [TDD-Test] [US9] [src/Ato.Copilot.Dashboard/src/__tests__/auth/AccountMenu.test.tsx](src/Ato.Copilot.Dashboard/src/__tests__/auth/AccountMenu.test.tsx) — renders displayName + persona + homeTenant.displayName; shows each PIM role with `expiresAt`; auto-hides PIM rows whose `expiresAt` is in the past; sign-out button still works (regression-guard for Phase 4 wire-up). RED.
+- [ ] T139 [TDD-Test] [US9] [src/Ato.Copilot.Dashboard/src/__tests__/auth/AccountMenu.test.tsx](src/Ato.Copilot.Dashboard/src/__tests__/auth/AccountMenu.test.tsx) — renders displayName + persona + homeTenant.displayName; shows each PIM role with `expiresAt`; auto-hides PIM rows whose `expiresAt` is in the past; sign-out button still works (regression-guard for Phase 4 wire-up). **Per FR-031 (analysis C8): assert `aria-expanded` toggles on open/close, Esc key closes the menu, focus is trapped while open, Tab/Shift-Tab cycles inside the menu, AND a screen-reader live-region announces the active PIM role's expiry on render (`aria-live="polite"`).** RED.
 - [ ] T140 [US9] Extend [src/Ato.Copilot.Dashboard/src/features/auth/AccountMenu.tsx](src/Ato.Copilot.Dashboard/src/features/auth/AccountMenu.tsx) — replace the Phase-4 stub with the full menu. GREEN T139.
 
 ### 12.3 Manual sign-off
@@ -460,33 +491,37 @@ Phase 4 — this phase fills the rest.)
 
 ### 13.1 Throttle middleware integration
 
-- [ ] T142 [TDD-Test] [tests/Ato.Copilot.Tests.Integration/Auth/LoginThrottleMiddlewareTests.cs](tests/Ato.Copilot.Tests.Integration/Auth/LoginThrottleMiddlewareTests.cs) — 11th failed-login attempt from same IP in Production env returns 429 with `Retry-After` header + `error.errorCode=TOO_MANY_LOGINS` envelope + `LoginFailure` audit row with `MetadataJson.throttled=true`. RED.
-- [ ] T143 Create [src/Ato.Copilot.Mcp/Middleware/LoginThrottleMiddleware.cs](src/Ato.Copilot.Mcp/Middleware/LoginThrottleMiddleware.cs) — wraps the auth-gated endpoints, calls `ILoginThrottleService.RegisterAttemptAsync` per [contracts/http-api.md § 6](specs/051-login/contracts/http-api.md). GREEN T142.
+- [ ] T142 [TDD-Test] [tests/Ato.Copilot.Tests.Integration/Auth/LoginThrottleMiddlewareTests.cs](tests/Ato.Copilot.Tests.Integration/Auth/LoginThrottleMiddlewareTests.cs) — 21st failed-login attempt from same IP in Production env (analysis C2 — spec FR-034 default is 20/min/IP) returns 429 with `Retry-After` header + `error.errorCode=TOO_MANY_LOGINS` envelope + `LoginFailure` audit row with `MetadataJson.throttled=true`. **Per analysis C11: also assert that `ASPNETCORE_ENVIRONMENT=Staging` uses the Production block (NOT Development), so the 21st attempt also throttles.** RED.
+- [ ] T143 Create [src/Ato.Copilot.Mcp/Middleware/LoginThrottleMiddleware.cs](src/Ato.Copilot.Mcp/Middleware/LoginThrottleMiddleware.cs) — wraps the auth-gated endpoints, calls `ILoginThrottleService.RegisterAttemptAsync` per [contracts/http-api.md § 6](specs/051-login/contracts/http-api.md). **Per analysis C17: increment the throttle counter ONLY on response statuses `401 UNAUTHORIZED` AND `403 FORBIDDEN_NO_TENANT_ASSIGNMENT` (failed-auth signals); a 2xx, 4xx-validation, or 5xx response MUST NOT increment the counter. Unit-test the signal selector in isolation.** GREEN T142.
 - [ ] T144 Wire the middleware AFTER `CacAuthenticationMiddleware` in [src/Ato.Copilot.Mcp/Program.cs](src/Ato.Copilot.Mcp/Program.cs)
 
 ### 13.2 Logging discipline (FR-038)
 
 - [ ] T145 Audit every Serilog `LogXxx` call introduced by this feature (greppable: `grep -rn "LogInformation\|LogWarning\|LogError" src/Ato.Copilot.Core/Services/Auth/ src/Ato.Copilot.Mcp/Endpoints/Auth/ src/Ato.Copilot.Mcp/Middleware/`); confirm no access tokens, refresh tokens, cert thumbprints, or `MetadataJson` raw payloads appear in log message arguments; add `LogContext.PushProperty("Surface", ...)` scopes where missing
 
-### 13.3 Local type-check parity
+### 13.3 WCAG 2.1 AA accessibility (FR-039, analysis C7)
+
+- [ ] T144a [TDD-Test] [P] [src/Ato.Copilot.Dashboard/src/__tests__/auth/a11y.test.tsx](src/Ato.Copilot.Dashboard/src/__tests__/auth/a11y.test.tsx) — wire `jest-axe` (`vitest-axe`) and run `axe` against `<LoginPage />`, `<TenantPickerPage />`, `<AccountMenu />` (opened state), `<ImpersonationBanner />`, `<LoginErrorPage errorClass="ClockSkew" />`, `<IdleWarningModal />`, and `<RestoreUnsavedChangesPrompt />`. Assert zero violations of category `wcag2a, wcag2aa, wcag21a, wcag21aa, cat.aria, cat.color`. RED initially; **fix the components, not the test**, until GREEN. Add a Lighthouse / pa11y CLI run to [quickstart.md](specs/051-login/quickstart.md) as a manual sign-off step (operator runs `npx pa11y http://localhost:5174/login` and asserts no errors).
+
+### 13.4 Local type-check parity
 
 - [ ] T146 [P] Run `npm --prefix src/Ato.Copilot.Dashboard run typecheck` and fix any new errors
 - [ ] T147 [P] Run `npm --prefix extensions/vscode run compile` and fix any new errors
 - [ ] T148 [P] Run `npm --prefix extensions/m365 run build` and fix any new errors
 
-### 13.4 GitHub issue discipline (Constitution NON-NEGOTIABLE)
+### 13.5 GitHub issue discipline (Constitution NON-NEGOTIABLE)
 
 - [ ] T149 Open the Feature 051 parent issue on GitHub with the spec summary + link to [specs/051-login/spec.md](specs/051-login/spec.md), [plan.md](specs/051-login/plan.md), [tasks.md](specs/051-login/tasks.md). PREVIEW the body to the user before creating per non-negotiable rule #10.
 - [ ] T150 [P] Open 10 sub-issues (one per User Story US1–US10), each linked to the parent via "Parent: #<id>" reference per Constitution § DevOps GitHub Issue Discipline. PREVIEW each body before creating.
 
-### 13.5 Documentation
+### 13.6 Documentation
 
 - [ ] T151 [P] Add `docs/features/051-login.md` to MkDocs with screenshots from [quickstart.md](specs/051-login/quickstart.md) sign-off and a link back to the spec
 - [ ] T152 [P] Update [docs/architecture/](docs/architecture/) `auth.md` (or create) with a sequence diagram of the Dashboard MSAL flow + VS Code device-code flow + M365 SSO branching
 - [ ] T153 [P] Update [extensions/vscode/README.md](extensions/vscode/README.md) with the new `@ato sign in / sign out / switch tenant` commands
 - [ ] T154 [P] Update [extensions/m365/README.md](extensions/m365/README.md) with the `Auth:TeamsSso:Mode` 3-mode setting
 
-### 13.6 Final verification
+### 13.7 Final verification
 
 - [ ] T155 Run full unit test pass: `dotnet test tests/Ato.Copilot.Tests.Unit/Ato.Copilot.Tests.Unit.csproj --filter "FullyQualifiedName~Auth"`
 - [ ] T156 Run full integration test pass: `dotnet test tests/Ato.Copilot.Tests.Integration/Ato.Copilot.Tests.Integration.csproj --filter "FullyQualifiedName~Auth"`
@@ -537,8 +572,15 @@ Within Phase 2:
 - T021, T022, T029 in parallel (different files)
 - T033, T034, T035 in parallel (different dashboard files)
 
+Within Phase 3 (US1):
+- T046, T049 in parallel (LoginPage test, LoginCallbackPage test)
+- T053a in parallel with the page-test pair (login-race hook test)
+
+Within Phase 4 (US2):
+- T057, T059, T062a, T062c in parallel (independent test files)
+
 Within Phase 5 (US3):
-- T064, T071, T074 in parallel (interface, page test, hook test)
+- T064, T071 in parallel (interface, page test)
 
 Within Phase 7 (US10):
 - T091, T092, T094, T096 in parallel (interface + sink tests)
@@ -595,7 +637,7 @@ After MVP ships, the P2 phases can land in any order:
 
 ## Format Validation
 
-All 161 tasks above conform to:
+All 165 active tasks above (T074–T076 retired per analysis C3) conform to:
 
 - ✅ Checkbox `- [ ]` prefix on every task
 - ✅ Sequential `T###` IDs starting at T001
@@ -610,21 +652,41 @@ All 161 tasks above conform to:
 |---|---|---|---|
 | 1 | Setup | T001–T008 (8) | — |
 | 2 | Foundational | T009–T040 (32) | — |
-| 3 | First-Time Login (Dashboard) | T041–T054 (14) | US1 P1 |
-| 4 | Sign Out + Idle | T055–T063 (9) | US2 P1 |
-| 5 | Tenant Picker | T064–T077 (14) | US3 P1 |
+| 3 | First-Time Login (Dashboard) | T041–T054 + T053a–T053c (17) | US1 P1 |
+| 4 | Sign Out + Idle | T055–T063 + T062a–T062d (13) | US2 P1 |
+| 5 | Tenant Picker | T064–T077 (11 active; T074–T076 RETIRED per C3) | US3 P1 |
 | 6 | Login Error States | T078–T084 (7) | US4 P1 |
 | 7 | Audit Trail | T085–T100 (16) | US10 P1 |
 | 8 | VS Code Sign-In | T101–T111 (11) | US5 P2 |
 | 9 | M365 Teams Bot | T112–T119 (8) | US6 P2 |
 | 10 | Dev Simulation | T120–T129 (10) | US7 P2 |
-| 11 | CSP-Admin Impersonation | T130–T136 (7) | US8 P2 |
+| 11 | CSP-Admin Impersonation | T129a–T129b + T130–T136 (9) | US8 P2 |
 | 12 | Account Menu | T137–T141 (5) | US9 P3 |
-| 13 | Polish | T142–T161 (20) | — |
-| **Total** | | **161** | |
+| 13 | Polish | T142–T161 + T144a (21) | — |
+| **Total** | | **165 active** (T074–T076 retired) | |
 
-**Parallel opportunities**: 38 tasks marked `[P]`.
+**Parallel opportunities**: 41 tasks marked `[P]`.
+
+**Analysis remediation applied (2026-05-28)**:
+
+- **C1** (CRITICAL FR-008): added T062a–T062d in Phase 4
+- **C2** (CRITICAL throttle defaults): tightened T030 + T142 to FR-034 values (20 IP / 10 identity in Production)
+- **C3** (login race misplacement): T074–T076 retired; T053a–T053c added to Phase 3 (US1)
+- **C4** (FR-011 "All Tenants (CSP view)" row): tightened T071
+- **C5** (FR-013 Disabled tenant cookie ignore): tightened T070
+- **C6** (FR-029 return URL): added T129a–T129b; tightened T133 + T135
+- **C7** (FR-039 WCAG): added T144a
+- **C8** (FR-031 keyboard / ARIA): tightened T139
+- **C9** (FR-025 `X-Simulated` as cookie name): tightened T122 + T123
+- **C10** (duplicate simulation flag): tightened T125; contracts/internal-services.md updated
+- **C11** (non-Dev → Production throttle block): tightened T142
+- **C12** (FR-005 wording): spec.md FR-005 reworded
+- **C13** (Feature 003 RoleClaimMappings verification): tightened T088
+- **C14** (Cloud → device-code URL mapping): tightened T101 + T104; contracts/vscode-extension.md § 2.1 added
+- **C15** (LoginAttemptCounter cross-ref): added data-model.md § 4.1
+- **C16** (lockfile commits): tightened T002 + T003 + T004
+- **C17** (throttle counter signal selection): tightened T143
 
 **Independent test criteria per story**: every story phase ends with a manual sign-off task linking to its quickstart section.
 
-**Suggested MVP**: P1 phases only (Phases 1–7) — 100 tasks, delivers FR-001 through FR-016 + FR-030 through FR-036a.
+**Suggested MVP**: P1 phases only (Phases 1–7) — ~104 tasks, delivers FR-001 through FR-016 + FR-030 through FR-036a.

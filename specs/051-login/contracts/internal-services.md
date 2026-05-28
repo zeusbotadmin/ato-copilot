@@ -286,7 +286,13 @@ public sealed class AuthOptions
 
     public AuthCookieOptions Cookie { get; set; } = new();
     public AuthVsCodeOptions VSCode { get; set; } = new();
-    public AuthSimulationOptions Simulation { get; set; } = new();
+    // NOTE: The simulation-enable gate is sourced from the existing Feature 027
+    //       `CacAuth:SimulationMode` flag, NOT from a new Auth:Simulation:Enabled
+    //       flag (analysis C10). This avoids two parallel feature flags for the
+    //       same behavior. The simulation panel is shown when:
+    //         ASPNETCORE_ENVIRONMENT == "Development"
+    //         AND CacAuthOptions.SimulationMode == true
+    //         AND CacAuthOptions.SimulatedIdentities is non-empty.
     public AuthThrottleOptions Throttle { get; set; } = new();
     public AuthTeamsSsoOptions TeamsSso { get; set; } = new();
     public AuthArchiveOptions Archive { get; set; } = new();
@@ -306,16 +312,24 @@ public sealed class AuthVsCodeOptions
     public string Mode { get; set; } = "DeviceCode";  // "DeviceCode" only for now
 }
 
-public sealed class AuthSimulationOptions
-{
-    /// <summary>Gate flag — when <c>false</c> the simulation panel does not appear even in Development.</summary>
-    public bool Enabled { get; set; } = false;
-}
+// AuthSimulationOptions removed (analysis C10) — simulation gate is owned by
+// Feature 027's `CacAuthOptions.SimulationMode` flag. Adding a second Auth-side
+// flag would be redundant and create two startup-validation paths for the same
+// invariant.
 
 public sealed class AuthThrottleOptions
 {
+    /// <summary>
+    /// Throttle thresholds per 60-second sliding bucket. Selection:
+    ///   ASPNETCORE_ENVIRONMENT == "Development"  → <see cref="Development"/>
+    ///   ANY OTHER value (Staging, Production, ...)→ <see cref="Production"/>
+    /// (Analysis C11 — non-Development environments use the Production block.)
+    ///
+    /// Defaults match spec.md FR-034: Production 20/min/IP + 10/min/identity;
+    /// Development 100/min/IP + 100/min/identity.
+    /// </summary>
     public ThrottleBucket Development { get; set; } = new() { PerIpPerMinute = 100, PerIdentityPerMinute = 100 };
-    public ThrottleBucket Production  { get; set; } = new() { PerIpPerMinute = 10,  PerIdentityPerMinute = 5 };
+    public ThrottleBucket Production  { get; set; } = new() { PerIpPerMinute = 20,  PerIdentityPerMinute = 10 };
 }
 
 public sealed class ThrottleBucket

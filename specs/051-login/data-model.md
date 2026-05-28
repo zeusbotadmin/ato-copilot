@@ -395,14 +395,33 @@ the database. See [contracts/internal-services.md § 3](./contracts/internal-ser
 for the strongly-typed bindings.
 
 - `AuthOptions` — `DefaultMethod`, `IdleTimeoutMinutes`,
-  `RememberTenantCookieDays`, `Cloud`, `VSCode`, `Simulation` (gating-only
-  in non-Development), `TeamsSso`. Validated at startup.
+  `RememberTenantCookieDays`, `Cloud`, `VSCode`, `Throttle`, `TeamsSso`,
+  `Archive`, `Msal`, `Cookie`. Validated at startup. (Note: the simulation
+  gate lives on Feature 027's `CacAuthOptions.SimulationMode` flag, not on
+  `AuthOptions`, per analysis C10.)
 - `AuthThrottleOptions` — `Development` / `Production` blocks each
   containing `PerIpPerMinute` + `PerIdentityPerMinute`.
 - `SimulatedIdentityDescriptor` (under `CacAuthOptions:SimulatedIdentities`)
   — `IdentityId` (string key for `POST /api/auth/simulate`), `DisplayName`,
   `Oid`, `Tid`, `TenantId`, `Roles` (string[]), `Persona`. Extends Feature
   027 from a single identity to a list per US7.
+
+### 4.1 `LoginAttemptCounter` (distributed-cache only)
+
+**Not a database entity.** Documented here only so implementers reading
+`data-model.md` do not overlook it (analysis C15). Full contract lives at
+[contracts/internal-services.md § 2](./contracts/internal-services.md) and
+the key-design in [research.md § R7](./research.md).
+
+Two `IDistributedCache` keys per throttle decision:
+
+- `login-throttle:ip:{ip}:{minute-bucket}` — integer count, TTL 60 s.
+- `login-throttle:identity:{oid|tid|anonymous}:{minute-bucket}` — integer
+  count, TTL 60 s.
+
+Backed by Redis in production (already deployed as `stark-redis`) and
+`IDistributedMemoryCache` in dev / CI. No persistence, no migration, no
+entity class.
 
 ## 5. State transitions
 

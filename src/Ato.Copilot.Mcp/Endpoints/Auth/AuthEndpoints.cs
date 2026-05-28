@@ -47,6 +47,7 @@ public static class AuthEndpoints
         group.MapGet("/login-config", GetLoginConfig).WithName("GetLoginConfig");
         group.MapGet("/me", GetMeAsync).WithName("GetMe");
         group.MapPost("/signout", PostSignOutAsync).WithName("PostSignOut");
+        group.MapPost("/select-tenant", PostSelectTenantAsync).WithName("PostSelectTenant");
 
         return app;
     }
@@ -174,6 +175,7 @@ public static class AuthEndpoints
         LoginAuditContextAccessor auditCtxAccessor,
         IDistributedCache cache,
         ITenantImpersonationService impersonation,
+        IRememberedTenantCookieService rememberedTenantCookie,
         IOptions<RoleClaimMappingsOptions> roleMap,
         ILoggerFactory loggerFactory,
         CancellationToken ct)
@@ -247,6 +249,45 @@ public static class AuthEndpoints
             {
                 effectiveTenant = target;
                 impPayload = payload;
+            }
+        }
+
+        // Feature 051 T070 / US3 / FR-013 — when the impersonation cookie
+        // did NOT bind a scope, honor the device-only "remembered tenant"
+        // cookie. The cookie is silently ignored when:
+        //   • Validate returns null (tampered / expired / wrong key)
+        //   • the target tenant does not exist
+        //   • the target tenant is NOT Active (Suspended or Disabled)
+        //   • the caller is not a member of the target tenant
+        // No TenantSwitch audit row is written here — that is reserved
+        // for the explicit POST /select-tenant path. Ignoring a stale
+        // remembered cookie surfaces in the SPA as the picker being
+        // re-shown on the next sign-in (the SPA computes that decision
+        // from the response).
+        if (impPayload is null &&
+            http.Request.Cookies.TryGetValue("ato-remembered-tenant", out var remVal))
+        {
+            var rememberedTenantId = rememberedTenantCookie.Validate(remVal);
+            if (rememberedTenantId is { } rtid)
+            {
+                var rememberedTenant = await db.Tenants
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(t => t.Id == rtid, ct);
+                if (rememberedTenant is not null &&
+                    rememberedTenant.Status == TenantStatus.Active)
+                {
+                    // Membership: caller's tid (= EntraTenantId on a Tenant)
+                    // must equal the target tenant's EntraTenantId, OR the
+                    // caller is CSP-Admin. Mirrors POST /select-tenant.
+                    var isCspAdminForCookie = http.User.IsInRole("CSP.Admin");
+                    var isMember = isCspAdminForCookie ||
+                                   (Guid.TryParse(tid, out var tidGuid2) &&
+                                    rememberedTenant.EntraTenantId == tidGuid2);
+                    if (isMember)
+                    {
+                        effectiveTenant = rememberedTenant;
+                    }
+                }
             }
         }
 
@@ -487,6 +528,199 @@ public static class AuthEndpoints
     }
 
     private sealed record SignOutRequestBody(string? Reason);
+
+    // ─── POST /select-tenant ────────────────────────────────────────────
+
+    /// <summary>
+    /// US3 / FR-009 / FR-012 — locks the session scope to a tenant the
+    /// user chose in the picker and optionally issues the HMAC-signed
+    /// <c>ato-remembered-tenant</c> cookie. Per
+    /// <c>contracts/http-api.md § 4</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>Membership rule: per the current data model the only
+    /// authoritative "user→tenant membership" signal is the Entra
+    /// <c>tid</c> claim mapped to <see cref="Tenant.EntraTenantId"/> —
+    /// there is no separate membership table. A non-CSP-Admin caller is
+    /// therefore a "member" of exactly one tenant (their home tenant).
+    /// CSP-Admins can pick any non-Disabled tenant (and Disabled tenants
+    /// too, per FR-010).</para>
+    /// <para>Session-scope binding (e.g. via an impersonation cookie for
+    /// CSP-Admin tenant switches) is deferred to Phase 11 / US8 — the
+    /// existing <c>/me</c> handler already reads <c>ato-impersonate</c>,
+    /// which Phase 11 will issue here. For now this endpoint records
+    /// the audit row and (optionally) issues the remember cookie; that
+    /// satisfies FR-009 / FR-012 today and unblocks the picker UI.</para>
+    /// </remarks>
+    private static async Task<IResult> PostSelectTenantAsync(
+        HttpContext http,
+        IDbContextFactory<AtoCopilotContext> dbFactory,
+        ILoginAuditService audit,
+        LoginAuditContextAccessor auditCtxAccessor,
+        IRememberedTenantCookieService cookieService,
+        IOptions<AuthOptions> authOptions,
+        CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+
+        if (!(http.User.Identity?.IsAuthenticated ?? false))
+        {
+            return Unauthorized(sw);
+        }
+
+        var oid = http.User.FindFirst("oid")?.Value
+                  ?? http.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        var tid = http.User.FindFirst("tid")?.Value;
+        if (string.IsNullOrEmpty(oid))
+        {
+            return Unauthorized(sw);
+        }
+
+        // Parse body — must be present.
+        if (http.Request.ContentLength is null or 0)
+        {
+            return ErrorEnvelope(sw,
+                StatusCodes.Status400BadRequest,
+                "VALIDATION_FAILED",
+                "Request body is required.",
+                "Send { \"tenantId\": \"<guid>\", \"remember\": false }.");
+        }
+
+        SelectTenantRequestBody? body;
+        try
+        {
+            body = await http.Request.ReadFromJsonAsync<SelectTenantRequestBody>(ct);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return ErrorEnvelope(sw,
+                StatusCodes.Status400BadRequest,
+                "VALIDATION_FAILED",
+                "Request body is not valid JSON.",
+                "Send { \"tenantId\": \"<guid>\", \"remember\": false }.");
+        }
+
+        if (body is null || string.IsNullOrWhiteSpace(body.TenantId) ||
+            !Guid.TryParse(body.TenantId, out var targetTenantId))
+        {
+            return ErrorEnvelope(sw,
+                StatusCodes.Status400BadRequest,
+                "VALIDATION_FAILED",
+                "tenantId is required and must be a GUID.",
+                "Send { \"tenantId\": \"<guid>\", \"remember\": false }.");
+        }
+
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+
+        // Resolve the target tenant (ignore query filters — tenancy scope is
+        // not yet bound for this call, and we need to see Disabled rows too).
+        var target = await db.Tenants
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(t => t.Id == targetTenantId, ct);
+        if (target is null)
+        {
+            return ErrorEnvelope(sw,
+                StatusCodes.Status404NotFound,
+                "TENANT_NOT_FOUND",
+                $"No tenant with id '{targetTenantId}' is provisioned in this deployment.",
+                "Confirm the tenant id and try again.");
+        }
+
+        var isCspAdmin = http.User.IsInRole("CSP.Admin");
+
+        // Disabled-tenant gate (FR-010): non-CSP-Admin callers are rejected.
+        if (target.Status == TenantStatus.Disabled && !isCspAdmin)
+        {
+            return ErrorEnvelope(sw,
+                StatusCodes.Status409Conflict,
+                "TENANT_DISABLED",
+                "The selected tenant is disabled.",
+                "Contact CSP support to re-enable the tenant.");
+        }
+
+        // Membership check (FR-009). Non-CSP-Admin: tid claim must map to
+        // the target tenant's EntraTenantId. CSP-Admin bypasses this gate.
+        if (!isCspAdmin)
+        {
+            var tidGuid = Guid.TryParse(tid, out var t) ? (Guid?)t : null;
+            var isMember = tidGuid is not null &&
+                           target.EntraTenantId == tidGuid;
+            if (!isMember)
+            {
+                return ErrorEnvelope(sw,
+                    StatusCodes.Status403Forbidden,
+                    "FORBIDDEN_NOT_TENANT_MEMBER",
+                    "You are not a member of the selected tenant.",
+                    "Pick a tenant from your assigned list.");
+            }
+        }
+
+        // Resolve the user's current home tenant so the audit row records
+        // the from→to transition. Best-effort — null when the tid claim
+        // does not map to a known tenant (CSP-Admin onboarding flow).
+        Guid fromTenantId = Guid.Empty;
+        if (Guid.TryParse(tid, out var tidGuid2))
+        {
+            var home = await db.Tenants
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(t => t.EntraTenantId == tidGuid2, ct);
+            if (home is not null)
+            {
+                fromTenantId = home.Id;
+            }
+        }
+
+        var auditCtx = auditCtxAccessor.FromHttpContext(http);
+        var metadata = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            fromTenantId = fromTenantId == Guid.Empty ? null : fromTenantId.ToString(),
+            toTenantId = target.Id.ToString(),
+            remember = body.Remember == true,
+        });
+
+        await audit.AppendAsync(db, new LoginAuditEventDraft(
+            EventType: LoginAuditEventType.TenantSwitch,
+            Oid: oid,
+            Tid: tid,
+            EffectiveTenantId: target.Id,
+            CorrelationId: auditCtx.CorrelationId,
+            SourceIp: auditCtx.SourceIp,
+            UserAgent: auditCtx.UserAgent,
+            Surface: LoginSurface.Dashboard,
+            MetadataJson: metadata), ct);
+        await db.SaveChangesAsync(ct);
+
+        // Issue the remembered-tenant cookie when opted in. Cookie
+        // attributes mirror research.md § R8 — HttpOnly=false so the SPA
+        // can detect it, Secure, SameSite=Strict, deployment domain when
+        // configured, Max-Age in seconds.
+        if (body.Remember == true)
+        {
+            var opts = authOptions.Value;
+            var ttlDays = Math.Max(1, opts.RememberTenantCookieDays);
+            var ttl = TimeSpan.FromDays(ttlDays);
+            var value = cookieService.Issue(target.Id, ttl);
+
+            var cookieOpts = new CookieOptions
+            {
+                HttpOnly = false,
+                Secure = opts.Cookie.Secure,
+                SameSite = SameSiteMode.Strict,
+                Path = "/",
+                MaxAge = ttl,
+            };
+            if (!string.IsNullOrWhiteSpace(opts.Cookie.Domain))
+            {
+                cookieOpts.Domain = opts.Cookie.Domain;
+            }
+
+            http.Response.Cookies.Append("ato-remembered-tenant", value, cookieOpts);
+        }
+
+        return Results.NoContent();
+    }
+
+    private sealed record SelectTenantRequestBody(string? TenantId, bool? Remember);
 
     // ─── Helpers ────────────────────────────────────────────────────────
 

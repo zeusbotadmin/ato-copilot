@@ -225,12 +225,12 @@ requirement entirely. Tasks below close the gap.
 
 ### 5.2 Endpoint: POST /api/auth/select-tenant
 
-- [ ] T068 [TDD-Test] [US3] [tests/Ato.Copilot.Tests.Integration/Auth/SelectTenantEndpointTests.cs](tests/Ato.Copilot.Tests.Integration/Auth/SelectTenantEndpointTests.cs) — 204 on valid tenant + member; sets `ato-remembered-tenant` cookie when `remember=true`; 403 `FORBIDDEN_NOT_TENANT_MEMBER` when not a member; 409 `TENANT_DISABLED` when Disabled and caller is not CSP-Admin; 404 on unknown tenant; emits `TenantSwitch` audit row. RED.
-- [ ] T069 [US3] Implement `POST /api/auth/select-tenant` per [contracts/http-api.md § 4](specs/051-login/contracts/http-api.md). GREEN T068.
+- [X] T068 [TDD-Test] [US3] [tests/Ato.Copilot.Tests.Integration/Auth/SelectTenantEndpointTests.cs](tests/Ato.Copilot.Tests.Integration/Auth/SelectTenantEndpointTests.cs) — 204 on valid tenant + member; sets `ato-remembered-tenant` cookie when `remember=true`; 403 `FORBIDDEN_NOT_TENANT_MEMBER` when not a member; 409 `TENANT_DISABLED` when Disabled and caller is not CSP-Admin; 404 on unknown tenant; emits `TenantSwitch` audit row. RED.
+- [X] T069 [US3] Implement `POST /api/auth/select-tenant` per [contracts/http-api.md § 4](specs/051-login/contracts/http-api.md). GREEN T068.
 
 ### 5.3 Bootstrap honoring of remembered cookie
 
-- [ ] T070 [US3] Extend `GET /api/auth/me` handler to read the remembered cookie via `IRememberedTenantCookieService.Validate`; if present + tenant is `Active` (NOT `Suspended` or `Disabled`) + user is a member, set the effective tenant scope without requiring a `/select-tenant` call. **Per FR-013 (analysis C5): when the validated cookie points at a tenant whose current status is `Disabled`, the cookie MUST be ignored and the user routed to the picker; no `TenantSwitch` audit row is written for the ignored cookie.** Test: extend [tests/Ato.Copilot.Tests.Integration/Auth/MeEndpointTests.cs](tests/Ato.Copilot.Tests.Integration/Auth/MeEndpointTests.cs) with three scenarios: (a) remembered cookie + Active tenant skips picker, (b) remembered cookie + Disabled tenant routes to picker with no `TenantSwitch` row, (c) remembered cookie + tampered HMAC routes to picker.
+- [X] T070 [US3] Extend `GET /api/auth/me` handler to read the remembered cookie via `IRememberedTenantCookieService.Validate`; if present + tenant is `Active` (NOT `Suspended` or `Disabled`) + user is a member, set the effective tenant scope without requiring a `/select-tenant` call. **Per FR-013 (analysis C5): when the validated cookie points at a tenant whose current status is `Disabled`, the cookie MUST be ignored and the user routed to the picker; no `TenantSwitch` audit row is written for the ignored cookie.** Test: extend [tests/Ato.Copilot.Tests.Integration/Auth/MeEndpointTests.cs](tests/Ato.Copilot.Tests.Integration/Auth/MeEndpointTests.cs) with three scenarios: (a) remembered cookie + Active tenant skips picker, (b) remembered cookie + Disabled tenant routes to picker with no `TenantSwitch` row, (c) remembered cookie + tampered HMAC routes to picker.
 
 ### 5.4 Dashboard `TenantPickerPage`
 

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Ato.Copilot.Core.Data.Context;
+using Ato.Copilot.Core.Interfaces.Auth;
 using Ato.Copilot.Core.Models.Auth;
 using Ato.Copilot.Core.Models.Tenancy;
 using Ato.Copilot.Mcp;
@@ -144,6 +145,151 @@ public class MeEndpointTests : IClassFixture<LoginAuthTestFactory>
 
         count.Should().Be(1,
             "§ 2.3 step 6 debounces LoginSuccess rows to one per 5-min window keyed on oid+tenant");
+    }
+
+    // ─── T070 (FR-013) — remembered-tenant cookie honored on /me ────────
+
+    private static readonly Guid DisabledTenantId =
+        Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd");
+    private static readonly Guid EntraTidForDisabledTenant =
+        Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc");
+
+    [Fact]
+    public async Task Get_Me_WithValidRememberedTenantCookie_OnActiveTenant_SetsEffectiveTenant_NoExtraAuditRow()
+    {
+        // Arrange — caller is a member of Tenant A (their home tenant)
+        // and presents a valid remembered cookie pointing at Tenant A.
+        // The cookie path MUST NOT write an additional audit row vs the
+        // baseline LoginSuccess that /me already emits.
+        var client = _factory.CreateClient();
+        var oid = $"oid-rememberme-ok-{Guid.NewGuid():N}";
+        client.DefaultRequestHeaders.Add("X-Test-Oid", oid);
+        client.DefaultRequestHeaders.Add("X-Test-Tid", EntraTidForTenantA.ToString());
+        client.DefaultRequestHeaders.Add("X-Test-DisplayName", "Remember OK");
+
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var svc = ServiceProviderServiceExtensions
+                .GetRequiredService<IRememberedTenantCookieService>(scope.ServiceProvider);
+            var cookie = svc.Issue(
+                MultiTenantWebApplicationFactory<McpProgram>.TenantAId,
+                TimeSpan.FromMinutes(30));
+            client.DefaultRequestHeaders.Add("Cookie", $"ato-remembered-tenant={cookie}");
+        }
+
+        // Act
+        var resp = await client.GetAsync("/api/auth/me");
+
+        // Assert
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("data").GetProperty("effectiveTenant").GetProperty("id").GetGuid()
+            .Should().Be(MultiTenantWebApplicationFactory<McpProgram>.TenantAId,
+                "valid remembered cookie pointing at an Active tenant SHOULD set effectiveTenant");
+
+        await using var verifyScope = _factory.Services.CreateAsyncScope();
+        var db = ServiceProviderServiceExtensions
+            .GetRequiredService<AtoCopilotContext>(verifyScope.ServiceProvider);
+        // No TenantSwitch row was written by /me — that's reserved for
+        // /select-tenant. /me may write at most one LoginSuccess row.
+        var switchCount = await db.LoginAuditEvents
+            .IgnoreQueryFilters()
+            .Where(e => e.Oid == oid && e.EventType == LoginAuditEventType.TenantSwitch)
+            .CountAsync();
+        switchCount.Should().Be(0, "/me honoring a remembered cookie MUST NOT write TenantSwitch");
+    }
+
+    [Fact]
+    public async Task Get_Me_WithRememberedTenantCookie_OnDisabledTenant_IgnoresCookie_NoTenantSwitchRow()
+    {
+        // Arrange — caller is a member of Tenant A; presents a cookie
+        // pointing at the Disabled tenant. FR-013 demands the cookie be
+        // ignored and effective tenant fall back to the home tenant.
+        var client = _factory.CreateClient();
+        var oid = $"oid-rememberme-disabled-{Guid.NewGuid():N}";
+        client.DefaultRequestHeaders.Add("X-Test-Oid", oid);
+        client.DefaultRequestHeaders.Add("X-Test-Tid", EntraTidForTenantA.ToString());
+        client.DefaultRequestHeaders.Add("X-Test-DisplayName", "Remember Disabled");
+
+        await EnsureDisabledTenantSeedAsync();
+
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var svc = ServiceProviderServiceExtensions
+                .GetRequiredService<IRememberedTenantCookieService>(scope.ServiceProvider);
+            var cookie = svc.Issue(DisabledTenantId, TimeSpan.FromMinutes(30));
+            client.DefaultRequestHeaders.Add("Cookie", $"ato-remembered-tenant={cookie}");
+        }
+
+        // Act
+        var resp = await client.GetAsync("/api/auth/me");
+
+        // Assert
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("data").GetProperty("effectiveTenant").GetProperty("id").GetGuid()
+            .Should().Be(MultiTenantWebApplicationFactory<McpProgram>.TenantAId,
+                "FR-013: a remembered cookie pointing at a Disabled tenant MUST be ignored");
+
+        await using var verifyScope = _factory.Services.CreateAsyncScope();
+        var db = ServiceProviderServiceExtensions
+            .GetRequiredService<AtoCopilotContext>(verifyScope.ServiceProvider);
+        var switchCount = await db.LoginAuditEvents
+            .IgnoreQueryFilters()
+            .Where(e => e.Oid == oid && e.EventType == LoginAuditEventType.TenantSwitch)
+            .CountAsync();
+        switchCount.Should().Be(0,
+            "ignoring a Disabled-tenant remembered cookie MUST NOT write any audit row");
+    }
+
+    [Fact]
+    public async Task Get_Me_WithTamperedRememberedTenantCookie_IgnoresCookie()
+    {
+        // Arrange — bogus 4-part cookie that decodes to the wrong byte lengths.
+        var client = _factory.CreateClient();
+        var oid = $"oid-rememberme-tampered-{Guid.NewGuid():N}";
+        client.DefaultRequestHeaders.Add("X-Test-Oid", oid);
+        client.DefaultRequestHeaders.Add("X-Test-Tid", EntraTidForTenantA.ToString());
+        client.DefaultRequestHeaders.Add("X-Test-DisplayName", "Remember Tampered");
+        client.DefaultRequestHeaders.Add("Cookie",
+            "ato-remembered-tenant=AAAA.BBBB.CCCC.DDDD");
+
+        // Act
+        var resp = await client.GetAsync("/api/auth/me");
+
+        // Assert — falls back to home tenant; /me still 200.
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("data").GetProperty("effectiveTenant").GetProperty("id").GetGuid()
+            .Should().Be(MultiTenantWebApplicationFactory<McpProgram>.TenantAId);
+    }
+
+    private async Task EnsureDisabledTenantSeedAsync()
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = ServiceProviderServiceExtensions
+            .GetRequiredService<AtoCopilotContext>(scope.ServiceProvider);
+        var existing = await db.Tenants
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(t => t.Id == DisabledTenantId);
+        if (existing is null)
+        {
+            db.Tenants.Add(new Tenant
+            {
+                Id = DisabledTenantId,
+                DisplayName = "Test Disabled Tenant (Me)",
+                Status = TenantStatus.Disabled,
+                OnboardingState = OnboardingState.Active,
+                CreatedBy = "test",
+                EntraTenantId = EntraTidForDisabledTenant,
+            });
+            await db.SaveChangesAsync();
+        }
+        else if (existing.Status != TenantStatus.Disabled)
+        {
+            existing.Status = TenantStatus.Disabled;
+            await db.SaveChangesAsync();
+        }
     }
 
     private async Task WireEntraTidOnTenantAAsync()

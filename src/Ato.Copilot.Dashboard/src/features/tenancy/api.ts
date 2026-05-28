@@ -202,11 +202,33 @@ export async function listTenants(params?: ListTenantsParams): Promise<ListTenan
  * POST /api/tenants/{tenantId}/impersonate — issues an HttpOnly cookie and
  * mirrors the active tenant in `sessionStorage` so the dashboard can render
  * the impersonation banner.
+ *
+ * Feature 051 T135 [US8] / FR-029 (analysis C6) — BEFORE issuing the
+ * request, capture the URL the caller is on so the Exit handler can
+ * return them there. We do this here (rather than in each call site)
+ * so every entry point into impersonation — OrgsTable, CspSystemsPage,
+ * TenantPicker, future flows — inherits the behavior for free.
  */
 export async function startImpersonation(
   tenantId: string,
   displayName: string,
 ): Promise<ImpersonationResponse> {
+  // Capture the pre-impersonation URL synchronously, BEFORE any network
+  // I/O. Use dynamic import so this module remains side-effect-free for
+  // consumers that do not need the helper at module load time, and so
+  // there is no risk of an undefined `window` in SSR scenarios (the SPA
+  // never SSRs today but the contract should be robust).
+  if (typeof window !== 'undefined') {
+    try {
+      const { setPreImpersonationUrl } = await import('../auth/preImpersonationUrl');
+      const here = window.location.pathname + window.location.search + window.location.hash;
+      setPreImpersonationUrl(here);
+    } catch {
+      // Best-effort — a failure here only means the Exit handler will
+      // fall back to the persona-default landing, not a functional break.
+    }
+  }
+
   const { data } = await tenancyClient.post<Envelope<ImpersonationResponse>>(
     `/tenants/${encodeURIComponent(tenantId)}/impersonate`,
   );
@@ -216,12 +238,26 @@ export async function startImpersonation(
     displayName,
     expiresAt: result.expiresAt,
   });
+  // Feature 051 T135 — fan out a tenant-changed event so the new
+  // ImpersonationBanner (and any other tenant-aware component) can
+  // refetch /me without polling.
+  if (typeof window !== 'undefined') {
+    try {
+      window.dispatchEvent(new CustomEvent('ato:tenant-changed'));
+    } catch {
+      // ignore (no window in tests)
+    }
+  }
   return result;
 }
 
 /**
  * DELETE /api/tenants/impersonation — clears the cookie and the local mirror.
  * Returns silently when no impersonation is in progress (idempotent).
+ *
+ * Feature 051 T135 [US8] also fires an `ato:tenant-changed` event so the
+ * new ImpersonationBanner (and other tenant-aware components) refetch
+ * /me promptly after the scope flips back to the home tenant.
  */
 export async function endImpersonation(): Promise<void> {
   try {
@@ -230,6 +266,13 @@ export async function endImpersonation(): Promise<void> {
     // Always clear local state, even if the network call fails — otherwise
     // the dashboard would keep showing the banner indefinitely.
     writeImpersonation(null);
+    if (typeof window !== 'undefined') {
+      try {
+        window.dispatchEvent(new CustomEvent('ato:tenant-changed'));
+      } catch {
+        // ignore (no window in tests)
+      }
+    }
   }
 }
 

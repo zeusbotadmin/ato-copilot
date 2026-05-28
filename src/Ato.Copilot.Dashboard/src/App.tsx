@@ -44,6 +44,7 @@ import LoginErrorPage from './features/auth/LoginErrorPage';
 import RequireAuth from './features/auth/RequireAuth';
 import IdleWarningModal from './features/auth/IdleWarningModal';
 import RestoreUnsavedChangesPrompt from './features/auth/RestoreUnsavedChangesPrompt';
+import ImpersonationBanner from './features/auth/ImpersonationBanner';
 import { useIdleTimer } from './features/auth/useIdleTimer';
 import { useLoginConfig } from './features/auth/LoginConfigContext';
 
@@ -163,6 +164,11 @@ function AuthenticatedSessionGuardsActive() {
   useIdleTimer(idleTimeoutMinutes);
   return (
     <>
+      {/* Feature 051 T135 [US8] — sticky impersonation banner driven by
+          the server-side /me state. Mounted at the authenticated app
+          shell so every route inherits it without per-page wiring.
+          Self-hides when me.isImpersonating === false. */}
+      <ImpersonationBanner />
       <IdleWarningModal />
       {oid && <RestoreUnsavedChangesPrompt oid={oid} />}
     </>

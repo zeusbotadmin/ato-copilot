@@ -8,7 +8,12 @@ import SettingsPanel from '../settings/SettingsPanel';
 import NotificationPanel from '../notifications/NotificationPanel';
 import RoleSwitcher from './RoleSwitcher';
 import TenantPicker from '../../features/tenancy/TenantPicker';
-import ImpersonationBanner from '../../features/tenancy/ImpersonationBanner';
+// Feature 051 T135 [US8] — the impersonation banner is now mounted at
+// the App shell top (App.tsx > AuthenticatedSessionGuardsActive) so it
+// renders globally, sticky, and is driven by server-side /me state.
+// The previous Feature 048 PageLayout-mounted banner
+// (features/tenancy/ImpersonationBanner) has been superseded; the file
+// is retained intact for reference but is no longer mounted here.
 import AccountMenu from '../../features/auth/AccountMenu';
 import { useNotifications } from '../../hooks/useNotifications';
 import { useCspBranding } from './useCspBranding';
@@ -62,10 +67,6 @@ export default function PageLayout({ title, children, sidePanel, leftPanel }: Pa
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
-      {/* Feature 048 (T075/T076): persistent banner while CSP-Admin is
-          impersonating a tenant. Self-hides when no impersonation is active
-          (and therefore in SingleTenant mode). */}
-      <ImpersonationBanner />
       {/* Top header */}
       <header className="flex h-14 flex-shrink-0 items-center justify-between border-b border-gray-200 bg-white px-6">
         <div className="flex items-center gap-6">

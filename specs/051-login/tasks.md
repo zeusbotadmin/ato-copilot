@@ -451,13 +451,13 @@ on expire / sign-out / idle.
 
 ### 11.3 Dashboard `ImpersonationBanner`
 
-- [ ] T133 [TDD-Test] [P] [US8] [src/Ato.Copilot.Dashboard/src/__tests__/auth/ImpersonationBanner.test.tsx](src/Ato.Copilot.Dashboard/src/__tests__/auth/ImpersonationBanner.test.tsx) — renders when `me.isImpersonating === true`; shows impersonated-tenant name + countdown computed from `expiresAt`; "Exit" button calls the Feature 048 end endpoint then refetches `/me`. **Per FR-029 (analysis C6): on Exit click, the SPA MUST navigate to the value of `sessionStorage.getItem('ato.preImpersonationUrl')` if present, falling back to the persona-default landing page when the key is absent or stale (not to `/csp/dashboard` or `/`).** RED.
-- [ ] T134 [US8] Create [src/Ato.Copilot.Dashboard/src/features/auth/ImpersonationBanner.tsx](src/Ato.Copilot.Dashboard/src/features/auth/ImpersonationBanner.tsx). GREEN T133.
-- [ ] T135 [US8] Mount `<ImpersonationBanner />` at the top of `AppShell` (sticky); refetch on `'ato:tenant-changed'` event. **Wire the Exit click handler to read + clear `sessionStorage['ato.preImpersonationUrl']` and call `navigate()` to that URL per FR-029 (analysis C6).**
+- [X] T133 [TDD-Test] [P] [US8] [src/Ato.Copilot.Dashboard/src/__tests__/auth/ImpersonationBanner.test.tsx](src/Ato.Copilot.Dashboard/src/__tests__/auth/ImpersonationBanner.test.tsx) — renders when `me.isImpersonating === true`; shows impersonated-tenant name + countdown computed from `expiresAt`; "Exit" button calls the Feature 048 end endpoint then refetches `/me`. **Per FR-029 (analysis C6): on Exit click, the SPA MUST navigate to the value of `sessionStorage.getItem('ato.preImpersonationUrl')` if present, falling back to the persona-default landing page when the key is absent or stale (not to `/csp/dashboard` or `/`).** RED.
+- [X] T134 [US8] Create [src/Ato.Copilot.Dashboard/src/features/auth/ImpersonationBanner.tsx](src/Ato.Copilot.Dashboard/src/features/auth/ImpersonationBanner.tsx). GREEN T133.
+- [X] T135 [US8] Mount `<ImpersonationBanner />` at the top of `AppShell` (sticky); refetch on `'ato:tenant-changed'` event. **Wire the Exit click handler to read + clear `sessionStorage['ato.preImpersonationUrl']` and call `navigate()` to that URL per FR-029 (analysis C6).**
 
 ### 11.4 Manual sign-off
 
-- [ ] T136 [US8] Execute [quickstart.md § 11](specs/051-login/quickstart.md)
+- [ ] T136 [US8] Execute [quickstart.md § 11](specs/051-login/quickstart.md) **— Pending live verification** (requires Docker MCP stack + CSP-Admin login + manual impersonate → navigate → Exit cycle to confirm the FR-029 return-URL behavior in vivo and the auto-end auto-toast cycle).
 
 **Checkpoint US8**: Banner appears; countdown ticks; all three end-paths write the correct audit row.
 

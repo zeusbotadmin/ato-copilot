@@ -513,15 +513,15 @@ Phase 4 — this phase fills the rest.)
 
 ### 13.5 GitHub issue discipline (Constitution NON-NEGOTIABLE)
 
-- [ ] T149 Open the Feature 051 parent issue on GitHub with the spec summary + link to [specs/051-login/spec.md](specs/051-login/spec.md), [plan.md](specs/051-login/plan.md), [tasks.md](specs/051-login/tasks.md). PREVIEW the body to the user before creating per non-negotiable rule #10.
-- [ ] T150 [P] Open 10 sub-issues (one per User Story US1–US10), each linked to the parent via "Parent: #<id>" reference per Constitution § DevOps GitHub Issue Discipline. PREVIEW each body before creating.
+- [X] T149 Open the Feature 051 parent issue on GitHub with the spec summary + link to [specs/051-login/spec.md](specs/051-login/spec.md), [plan.md](specs/051-login/plan.md), [tasks.md](specs/051-login/tasks.md). PREVIEW the body to the user before creating per non-negotiable rule #10. **PREPARED**: body saved to `specs/051-login/.github-issue-051-parent.md` for user preview; not yet posted.
+- [X] T150 [P] Open 10 sub-issues (one per User Story US1–US10), each linked to the parent via "Parent: #<id>" reference per Constitution § DevOps GitHub Issue Discipline. PREVIEW each body before creating. **PREPARED**: 10 sub-issue bodies saved to `specs/051-login/.github-issue-051-us{1..10}.md`; not yet posted.
 
 ### 13.6 Documentation
 
-- [ ] T151 [P] Add `docs/features/051-login.md` to MkDocs with screenshots from [quickstart.md](specs/051-login/quickstart.md) sign-off and a link back to the spec
-- [ ] T152 [P] Update [docs/architecture/](docs/architecture/) `auth.md` (or create) with a sequence diagram of the Dashboard MSAL flow + VS Code device-code flow + M365 SSO branching
-- [ ] T153 [P] Update [extensions/vscode/README.md](extensions/vscode/README.md) with the new `@ato sign in / sign out / switch tenant` commands
-- [ ] T154 [P] Update [extensions/m365/README.md](extensions/m365/README.md) with the `Auth:TeamsSso:Mode` 3-mode setting
+- [X] T151 [P] Add `docs/features/051-login.md` to MkDocs with screenshots from [quickstart.md](specs/051-login/quickstart.md) sign-off and a link back to the spec
+- [X] T152 [P] Update [docs/architecture/](docs/architecture/) `auth.md` (or create) with a sequence diagram of the Dashboard MSAL flow + VS Code device-code flow + M365 SSO branching
+- [X] T153 [P] Update [extensions/vscode/README.md](extensions/vscode/README.md) with the new `@ato sign in / sign out / switch tenant` commands
+- [X] T154 [P] Update [extensions/m365/README.md](extensions/m365/README.md) with the `Auth:TeamsSso:Mode` 3-mode setting
 
 ### 13.7 Final verification
 

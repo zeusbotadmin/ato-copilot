@@ -58,6 +58,61 @@ ATO_API_URL=http://localhost:3001 npm start
 | GET | `/openapi.json` | OpenAPI 3.0 specification |
 | GET | `/ai-plugin.json` | M365 Copilot plugin descriptor |
 
+## Authentication
+
+Feature 051 (US6) wires Teams SSO + OAuthPrompt fallback into the bot.
+The auth dispatcher decides per-message whether to attempt an SSO
+token-exchange or fall back to the Bot Framework `OAuthPrompt`. Once
+an identity is linked the link is **Teams-tenant-wide** — one
+sign-in satisfies mobile, desktop, and web for the same Teams user.
+
+### `AUTH_TEAMS_SSO_MODE` — three deployment-wide modes
+
+The mode is a **deployment-wide** setting (no per-tenant override) per
+the clarification recorded in
+[`specs/051-login/spec.md`](https://github.com/azurenoops/ato-copilot/blob/051-login/specs/051-login/spec.md)
+Q1. Set it via the env var `AUTH_TEAMS_SSO_MODE` (or its config
+equivalent `Auth:TeamsSso:Mode` on the .NET side).
+
+| Mode | Meaning | Manifest requirement |
+| --- | --- | --- |
+| `Required` | SSO is mandatory. The bot attempts a silent token exchange via Bot Framework SSO on every unlinked message. If exchange fails the user sees a hard error — no OAuthPrompt fallback. | The Teams app manifest **MUST** declare a `webApplicationInfo` block with the SSO app id + resource. The manifest validator (Phase 9.1 / T112–T113) **fails startup** with a clear log line when the entry is missing. |
+| `Optional` (default) | The bot attempts SSO first. If SSO is unavailable (the manifest has no `webApplicationInfo`, the user has not consented to the app, etc.) the bot **falls back** to OAuthPrompt and asks the user to sign in. | Optional — the bot tolerates either manifest shape. |
+| `Disabled` | The bot **always** uses OAuthPrompt; SSO is never attempted. | Not required. |
+
+### Setting the mode
+
+```bash
+# Production — Teams SSO required, manifest must include webApplicationInfo
+AUTH_TEAMS_SSO_MODE=Required npm start
+
+# Default — try SSO, fall back to OAuthPrompt
+AUTH_TEAMS_SSO_MODE=Optional npm start
+
+# Force OAuthPrompt regardless of manifest capability
+AUTH_TEAMS_SSO_MODE=Disabled npm start
+```
+
+### First-mention experience
+
+When an unlinked Teams user `@mentions` the bot for the first time:
+
+- In `Required` / `Optional` mode the bot attempts an SSO token
+  exchange via Bot Framework. On success the link is bound silently.
+- On failure (or in `Disabled` mode) the bot replies with an
+  **Adaptive Card** containing a "Sign in" button — never a
+  free-text "please sign in" message. The button triggers an
+  `OAuthPrompt` flow.
+- After sign-in the bot stores the identity link in `IIdentityLinkStore`
+  keyed by `(teams-tenant-id, oid)` so the same identity covers every
+  Teams client (mobile, desktop, web).
+
+### Tenant disabled error
+
+If the linked user's impersonated tenant is later set to `Disabled`
+(Feature 048), the next message returns the standard "Tenant disabled"
+adaptive card — not a Bot Framework stack trace.
+
 ## Adaptive Card Types
 
 | Intent | Card | Description |

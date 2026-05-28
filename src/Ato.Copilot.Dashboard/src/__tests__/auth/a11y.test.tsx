@@ -2,12 +2,30 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, act, fireEvent, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 // vitest-axe@0.1.0 ships a broken `extend-expect` entry (the dist file
-// is empty). Wire the matcher manually from its `matchers` entry below.
+// is empty) AND mis-declares `toHaveNoViolations` as `export type` in
+// the bundled .d.ts. Pull the matcher via the JS namespace so it stays
+// a value at runtime, declare-augment vitest's `Assertion` so the
+// matcher's TypeScript surface lands, and call `expect.extend` at
+// module load.
 import { axe } from 'vitest-axe';
-import { toHaveNoViolations } from 'vitest-axe/matchers';
+import * as axeMatchers from 'vitest-axe/matchers';
 import type { LoginConfig, MeResponse } from '../../features/auth/types';
 
-expect.extend({ toHaveNoViolations });
+declare module 'vitest' {
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type, @typescript-eslint/no-unused-vars
+  interface Assertion<T = any> {
+    toHaveNoViolations(): void;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+  interface AsymmetricMatchersContaining {
+    toHaveNoViolations(): void;
+  }
+}
+
+expect.extend({
+  toHaveNoViolations: (axeMatchers as { toHaveNoViolations: unknown })
+    .toHaveNoViolations as Parameters<typeof expect.extend>[0]['toHaveNoViolations'],
+});
 
 // ─── Hoisted mocks shared across every component-under-test ─────────────
 

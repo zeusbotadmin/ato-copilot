@@ -325,6 +325,11 @@ public static class AuthEndpoints
         // Debounce the LoginSuccess audit row to one per 5-minute window
         // keyed on oid + effective-tenant per § 2.3 step 6.
         var cacheKey = $"login-success:{oid}:{effectiveTenant.Id:N}";
+        // Feature 051 T145 [FR-038] — redact `oid` in any cache-failure
+        // log line. The key itself contains the user's Entra `oid`; logs
+        // are debug-level only but operator-side log forwarders MUST NOT
+        // see PII even on the diagnostic path.
+        var cacheKeyForLog = $"login-success:<oid-redacted>:{effectiveTenant.Id:N}";
         string? existing = null;
         try
         {
@@ -334,7 +339,7 @@ public static class AuthEndpoints
         {
             logger.LogDebug(ex,
                 "IDistributedCache lookup failed for {CacheKey}; treating as miss",
-                cacheKey);
+                cacheKeyForLog);
         }
         if (existing is null)
         {
@@ -360,7 +365,7 @@ public static class AuthEndpoints
             {
                 logger.LogDebug(ex,
                     "IDistributedCache write failed for {CacheKey}; debounce skipped this round",
-                    cacheKey);
+                    cacheKeyForLog);
             }
         }
 

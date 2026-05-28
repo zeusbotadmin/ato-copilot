@@ -101,42 +101,52 @@ public sealed class LoginThrottleMiddleware
             return;
         }
 
-        var auditCtx = auditCtxAccessor.FromHttpContext(context);
-        var identityKey = ResolveIdentityKey(context);
-
-        // INBOUND peek — refuse early if the prior failures already
-        // saturated the cap. PeekAsync returns Allowed=false when EITHER
-        // the IP or identity counter has reached its configured cap.
-        var peek = await throttle.PeekAsync(
-            auditCtx.SourceIp, identityKey, context.RequestAborted)
-            .ConfigureAwait(false);
-
-        if (!peek.Allowed)
+        // Feature 051 T145 [FR-038] — push a `Surface` scope on every
+        // throttle decision so operator log queries can pivot on it
+        // alongside the other Feature 051 surface logs.
+        using (_logger.BeginScope(new Dictionary<string, object?>
+               {
+                   ["Surface"] = nameof(LoginSurface.Dashboard),
+                   ["Component"] = "LoginThrottleMiddleware",
+               }))
         {
-            await WriteThrottledResponseAsync(
-                context, peek, auditCtx, identityKey, dbFactory, loginAudit)
+            var auditCtx = auditCtxAccessor.FromHttpContext(context);
+            var identityKey = ResolveIdentityKey(context);
+
+            // INBOUND peek — refuse early if the prior failures already
+            // saturated the cap. PeekAsync returns Allowed=false when EITHER
+            // the IP or identity counter has reached its configured cap.
+            var peek = await throttle.PeekAsync(
+                auditCtx.SourceIp, identityKey, context.RequestAborted)
                 .ConfigureAwait(false);
-            return;
-        }
 
-        await _next(context).ConfigureAwait(false);
-
-        // OUTBOUND register — per analysis C17 only 401 / 403-NTA count.
-        if (IsFailedAuthSignal(context))
-        {
-            try
+            if (!peek.Allowed)
             {
-                await throttle.RegisterAttemptAsync(
-                    auditCtx.SourceIp, identityKey, context.RequestAborted)
+                await WriteThrottledResponseAsync(
+                    context, peek, auditCtx, identityKey, dbFactory, loginAudit)
                     .ConfigureAwait(false);
+                return;
             }
-            catch (Exception ex)
+
+            await _next(context).ConfigureAwait(false);
+
+            // OUTBOUND register — per analysis C17 only 401 / 403-NTA count.
+            if (IsFailedAuthSignal(context))
             {
-                // Registration failures MUST NOT bubble up — the response
-                // has already been written. Log so operators can correlate.
-                _logger.LogWarning(ex,
-                    "LoginThrottleMiddleware: failed to register attempt for {Path}",
-                    context.Request.Path);
+                try
+                {
+                    await throttle.RegisterAttemptAsync(
+                        auditCtx.SourceIp, identityKey, context.RequestAborted)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    // Registration failures MUST NOT bubble up — the response
+                    // has already been written. Log so operators can correlate.
+                    _logger.LogWarning(ex,
+                        "LoginThrottleMiddleware: failed to register attempt for {Path}",
+                        context.Request.Path);
+                }
             }
         }
     }

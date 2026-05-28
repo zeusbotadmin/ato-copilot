@@ -499,7 +499,7 @@ Phase 4 — this phase fills the rest.)
 
 ### 13.2 Logging discipline (FR-038)
 
-- [ ] T145 Audit every Serilog `LogXxx` call introduced by this feature (greppable: `grep -rn "LogInformation\|LogWarning\|LogError" src/Ato.Copilot.Core/Services/Auth/ src/Ato.Copilot.Mcp/Endpoints/Auth/ src/Ato.Copilot.Mcp/Middleware/`); confirm no access tokens, refresh tokens, cert thumbprints, or `MetadataJson` raw payloads appear in log message arguments; add `LogContext.PushProperty("Surface", ...)` scopes where missing
+- [X] T145 Audit every Serilog `LogXxx` call introduced by this feature (greppable: `grep -rn "LogInformation\|LogWarning\|LogError" src/Ato.Copilot.Core/Services/Auth/ src/Ato.Copilot.Mcp/Endpoints/Auth/ src/Ato.Copilot.Mcp/Middleware/`); confirm no access tokens, refresh tokens, cert thumbprints, or `MetadataJson` raw payloads appear in log message arguments; add `LogContext.PushProperty("Surface", ...)` scopes where missing
 
 ### 13.3 WCAG 2.1 AA accessibility (FR-039, analysis C7)
 
@@ -507,9 +507,9 @@ Phase 4 — this phase fills the rest.)
 
 ### 13.4 Local type-check parity
 
-- [ ] T146 [P] Run `npm --prefix src/Ato.Copilot.Dashboard run typecheck` and fix any new errors
-- [ ] T147 [P] Run `npm --prefix extensions/vscode run compile` and fix any new errors
-- [ ] T148 [P] Run `npm --prefix extensions/m365 run build` and fix any new errors
+- [X] T146 [P] Run `npm --prefix src/Ato.Copilot.Dashboard run typecheck` and fix any new errors
+- [X] T147 [P] Run `npm --prefix extensions/vscode run compile` and fix any new errors
+- [X] T148 [P] Run `npm --prefix extensions/m365 run build` and fix any new errors
 
 ### 13.5 GitHub issue discipline (Constitution NON-NEGOTIABLE)
 

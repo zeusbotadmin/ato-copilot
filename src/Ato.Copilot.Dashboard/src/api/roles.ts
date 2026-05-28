@@ -1,4 +1,6 @@
 import axios from 'axios';
+import { attachAuthInterceptor } from '../features/auth/interceptors';
+import { getMsalInstance, DEFAULT_API_SCOPES } from '../features/auth/msalInstance';
 import apiClient from './client';
 import type {
   AssignmentResult,
@@ -79,12 +81,11 @@ const rolesClient = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+// Feature 051 T053: MSAL bearer injection (silent renewal + 401 retry).
+attachAuthInterceptor(rolesClient, getMsalInstance, DEFAULT_API_SCOPES);
+
+// Dev-only simulated-role propagation — orthogonal to the bearer.
 rolesClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem('auth_token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  // Dev mode simulated-role propagation (mirrors apiClient).
   if (import.meta.env.DEV) {
     const sim = localStorage.getItem('simulated_role');
     if (sim) {

@@ -9,6 +9,7 @@ import './index.css';
 import { LoginConfigProvider } from './features/auth/LoginConfigContext';
 import { buildMsalConfig } from './features/auth/msalConfig';
 import { attachAuthInterceptor } from './features/auth/interceptors';
+import { setMsalInstance, DEFAULT_API_SCOPES } from './features/auth/msalInstance';
 import type { LoginConfig } from './features/auth/types';
 
 /**
@@ -22,8 +23,9 @@ async function fetchLoginConfig(): Promise<LoginConfig> {
   return response.data;
 }
 
-/** Default API scopes for `acquireTokenSilent`. */
-const DEFAULT_API_SCOPES = ['api://ato-copilot/.default'];
+/** Default API scopes for `acquireTokenSilent` come from the shared
+ * `msalInstance` module so `main.tsx` and feature `api.ts` agree on
+ * the value. */
 
 function renderError(message: string): void {
   const root = document.getElementById('root');
@@ -53,11 +55,15 @@ async function bootstrap(): Promise<void> {
   const msalInstance = new PublicClientApplication(buildMsalConfig(loginConfig));
   await msalInstance.initialize();
 
-  // Wire the global axios default — every existing `axios.create({...})`
-  // and direct `axios.*` call across the dashboard now inherits the
-  // bearer-injection + silent-renewal behaviour. Existing per-feature
-  // `apiClient` instances retain their own request interceptors; the
-  // `localStorage.getItem('auth_token')` snippet is stripped in T053.
+  // Publish the instance so feature `api.ts` files can attach the MSAL
+  // bearer interceptor to their own `axios.create({...})` clients.
+  setMsalInstance(msalInstance);
+
+  // Wire the global axios default — every direct `axios.*` call across
+  // the dashboard now inherits the bearer-injection + silent-renewal
+  // behaviour. Feature folders that build their own `axios.create({...})`
+  // pull the instance from `msalInstance.ts` and attach the same
+  // interceptor (per T053).
   attachAuthInterceptor(axios, msalInstance, DEFAULT_API_SCOPES);
 
   root.render(

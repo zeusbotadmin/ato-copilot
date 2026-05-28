@@ -12,6 +12,8 @@
  */
 
 import axios, { type AxiosError } from 'axios';
+import { attachAuthInterceptor } from '../auth/interceptors';
+import { getMsalInstance, DEFAULT_API_SCOPES } from '../auth/msalInstance';
 import type { AtoUploadResponse } from '../csp-onboarding/api';
 
 // ---------------------------------------------------------------------------
@@ -138,8 +140,6 @@ const cspClient = axios.create({
 });
 
 cspClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem('auth_token');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
   try {
     const raw = localStorage.getItem('ato-dashboard-settings');
     if (raw) {
@@ -151,7 +151,8 @@ cspClient.interceptors.request.use((config) => {
   }
   return config;
 });
-
+// Feature 051 T053: MSAL bearer injection (silent renewal + 401 retry).
+attachAuthInterceptor(cspClient, getMsalInstance, DEFAULT_API_SCOPES);
 function unwrap<T>(envelope: Envelope<T>): T {
   if (envelope.status !== 'success' || envelope.data === undefined) {
     const err = envelope.error;

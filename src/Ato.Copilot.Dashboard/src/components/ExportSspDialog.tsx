@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { requestExport, downloadExportUrl, listTemplates } from '../api/exports';
 import type { ExportSummary, TemplateInfo } from '../api/exports';
 import * as signalR from '@microsoft/signalr';
+import { acquireBearer } from '../features/auth/msalInstance';
 
 interface ExportSspDialogProps {
   systemId: string;
@@ -46,7 +47,7 @@ export default function ExportSspDialog({ systemId, onClose, onExportComplete }:
     const hubUrl = (import.meta.env.VITE_API_BASE_URL || '').replace('/api/dashboard', '') + '/hubs/notifications';
     const connection = new signalR.HubConnectionBuilder()
       .withUrl(hubUrl, {
-        accessTokenFactory: () => localStorage.getItem('auth_token') ?? '',
+        accessTokenFactory: () => acquireBearer(),
       })
       .withAutomaticReconnect()
       .build();

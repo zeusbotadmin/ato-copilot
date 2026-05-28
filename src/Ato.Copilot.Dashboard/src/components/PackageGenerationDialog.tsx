@@ -8,6 +8,7 @@ import {
 } from '../api/package';
 import type { PackageDetail, ValidationFinding } from '../api/package';
 import * as signalR from '@microsoft/signalr';
+import { acquireBearer } from '../features/auth/msalInstance';
 
 interface PackageGenerationDialogProps {
   systemId: string;
@@ -168,7 +169,7 @@ export default function PackageGenerationDialog({
 
       const connection = new signalR.HubConnectionBuilder()
         .withUrl(hubUrl, {
-          accessTokenFactory: () => localStorage.getItem('auth_token') ?? '',
+          accessTokenFactory: () => acquireBearer(),
         })
         .withAutomaticReconnect()
         .build();

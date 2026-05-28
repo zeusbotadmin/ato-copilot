@@ -128,17 +128,17 @@ via the configured method, and reaches their dashboard (deep link preserved).
 
 ### 3.3 Dashboard `LoginPage`
 
-- [ ] T046 [TDD-Test] [P] [US1] [src/Ato.Copilot.Dashboard/src/__tests__/auth/LoginPage.test.tsx](src/Ato.Copilot.Dashboard/src/__tests__/auth/LoginPage.test.tsx) — renders deployment name + logo from `LoginConfig.branding`, renders one button per `enabledMethods` entry, hides simulation panel when `simulation=null`. RED.
-- [ ] T047 [US1] Create [src/Ato.Copilot.Dashboard/src/features/auth/LoginPage.tsx](src/Ato.Copilot.Dashboard/src/features/auth/LoginPage.tsx). GREEN T046.
-- [ ] T048 [P] [US1] Create [src/Ato.Copilot.Dashboard/src/features/auth/errorCopy.ts](src/Ato.Copilot.Dashboard/src/features/auth/errorCopy.ts) — stub map `ErrorClass → { title, message }` (US4 fills the copy)
+- [X] T046 [TDD-Test] [P] [US1] [src/Ato.Copilot.Dashboard/src/__tests__/auth/LoginPage.test.tsx](src/Ato.Copilot.Dashboard/src/__tests__/auth/LoginPage.test.tsx) — renders deployment name + logo from `LoginConfig.branding`, renders one button per `enabledMethods` entry, hides simulation panel when `simulation=null`. RED.
+- [X] T047 [US1] Create [src/Ato.Copilot.Dashboard/src/features/auth/LoginPage.tsx](src/Ato.Copilot.Dashboard/src/features/auth/LoginPage.tsx). GREEN T046.
+- [X] T048 [P] [US1] Create [src/Ato.Copilot.Dashboard/src/features/auth/errorCopy.ts](src/Ato.Copilot.Dashboard/src/features/auth/errorCopy.ts) — stub map `ErrorClass → { title, message }` (US4 fills the copy)
 
 ### 3.4 Dashboard `LoginCallbackPage` + deep-link
 
-- [ ] T049 [TDD-Test] [US1] [src/Ato.Copilot.Dashboard/src/__tests__/auth/LoginCallbackPage.test.tsx](src/Ato.Copilot.Dashboard/src/__tests__/auth/LoginCallbackPage.test.tsx) — awaits `handleRedirectPromise`, navigates to `state` when present (deep link), else to `/dashboard`. RED.
-- [ ] T050 [US1] Create [src/Ato.Copilot.Dashboard/src/features/auth/LoginCallbackPage.tsx](src/Ato.Copilot.Dashboard/src/features/auth/LoginCallbackPage.tsx). GREEN T049.
-- [ ] T051 [P] [US1] Create [src/Ato.Copilot.Dashboard/src/features/auth/RequireAuth.tsx](src/Ato.Copilot.Dashboard/src/features/auth/RequireAuth.tsx) — gate component that calls `loginRedirect({ state: pathname + search })` when `!useIsAuthenticated()`
-- [ ] T052 [US1] Add `/login` and `/login/callback` routes + wrap protected routes in `<RequireAuth>` in [src/Ato.Copilot.Dashboard/src/App.tsx](src/Ato.Copilot.Dashboard/src/App.tsx)
-- [ ] T053 [US1] Replace `localStorage.getItem('auth_token')` with the new MSAL interceptor in every `*/api.ts` (14 files — use `grep -rl "localStorage.getItem.*auth_token" src/Ato.Copilot.Dashboard/src` to enumerate; each file deletes its inline header logic and relies on the global interceptor configured in T038)
+- [X] T049 [TDD-Test] [US1] [src/Ato.Copilot.Dashboard/src/__tests__/auth/LoginCallbackPage.test.tsx](src/Ato.Copilot.Dashboard/src/__tests__/auth/LoginCallbackPage.test.tsx) — awaits `handleRedirectPromise`, navigates to `state` when present (deep link), else to `/dashboard`. RED.
+- [X] T050 [US1] Create [src/Ato.Copilot.Dashboard/src/features/auth/LoginCallbackPage.tsx](src/Ato.Copilot.Dashboard/src/features/auth/LoginCallbackPage.tsx). GREEN T049.
+- [X] T051 [P] [US1] Create [src/Ato.Copilot.Dashboard/src/features/auth/RequireAuth.tsx](src/Ato.Copilot.Dashboard/src/features/auth/RequireAuth.tsx) — gate component that calls `loginRedirect({ state: pathname + search })` when `!useIsAuthenticated()`
+- [X] T052 [US1] Add `/login` and `/login/callback` routes + wrap protected routes in `<RequireAuth>` in [src/Ato.Copilot.Dashboard/src/App.tsx](src/Ato.Copilot.Dashboard/src/App.tsx)
+- [X] T053 [US1] Replace `localStorage.getItem('auth_token')` with the new MSAL interceptor in every `*/api.ts` (14 files — use `grep -rl "localStorage.getItem.*auth_token" src/Ato.Copilot.Dashboard/src` to enumerate; each file deletes its inline header logic and relies on the global interceptor configured in T038)
 
 ### 3.6 Cross-tab login race (relocated from Phase 5 per analysis C3)
 

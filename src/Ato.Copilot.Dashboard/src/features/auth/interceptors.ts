@@ -31,10 +31,24 @@ type FlaggedConfig = InternalAxiosRequestConfig & {
  */
 export function attachAuthInterceptor(
   axiosInstance: AxiosInstance,
-  msal: IPublicClientApplication,
+  msalOrGetter: IPublicClientApplication | (() => IPublicClientApplication),
   scopes: string[],
 ): void {
+  // Resolve the MSAL instance lazily (per-request) so feature `api.ts`
+  // modules can attach this interceptor at import time even when MSAL
+  // has not been initialised yet (Vitest test runners, SSR, etc.). The
+  // resolver throws when truly missing; we treat that as "no account".
+  const resolveMsal = (): IPublicClientApplication | null => {
+    try {
+      return typeof msalOrGetter === 'function' ? msalOrGetter() : msalOrGetter;
+    } catch {
+      return null;
+    }
+  };
+
   axiosInstance.interceptors.request.use(async (config: FlaggedConfig) => {
+    const msal = resolveMsal();
+    if (!msal) return config;
     const accounts = msal.getAllAccounts();
     const account = accounts[0];
     if (!account) {
@@ -69,8 +83,9 @@ export function attachAuthInterceptor(
     async (error: AxiosError) => {
       const cfg = error.config as FlaggedConfig | undefined;
       const status = error.response?.status;
+      const msal = resolveMsal();
 
-      if (status === 401 && cfg && cfg[SILENT_RENEWAL] !== true) {
+      if (status === 401 && cfg && cfg[SILENT_RENEWAL] !== true && msal) {
         // First 401 — try a single silent-renewal retry.
         cfg[SILENT_RENEWAL] = true;
         const accounts = msal.getAllAccounts();
@@ -96,7 +111,7 @@ export function attachAuthInterceptor(
         return Promise.reject(error);
       }
 
-      if (status === 401 && cfg && cfg[SILENT_RENEWAL] === true) {
+      if (status === 401 && cfg && cfg[SILENT_RENEWAL] === true && msal) {
         // Second 401 — silent renewal cannot rescue us; redirect.
         const deepLink = window.location.pathname + window.location.search + window.location.hash;
         await msal.loginRedirect({ scopes, state: deepLink });

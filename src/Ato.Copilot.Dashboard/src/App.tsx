@@ -36,6 +36,9 @@ import CspWizard from './features/csp-onboarding/CspWizard';
 import CspOnboardingGuard from './features/csp-onboarding/CspOnboardingGuard';
 import CspInheritedComponentsPage from './features/csp-inherited-components/CspInheritedComponentsPage';
 import ImportedDocumentsView from './features/admin/imported-documents/ImportedDocumentsView';
+import LoginPage from './features/auth/LoginPage';
+import LoginCallbackPage from './features/auth/LoginCallbackPage';
+import RequireAuth from './features/auth/RequireAuth';
 
 function AppContent() {
   const { panelState, togglePanel, closePanel, setWidth } = useChatPanel();
@@ -57,9 +60,14 @@ function AppContent() {
       <CspOnboardingGuard>
         <TenantOnboardingGuard>
           <Routes>
-          <Route path="/" element={<PortfolioRoute />} />
-          <Route path="/systems" element={<SystemsRoute />} />
-          <Route path="/systems/:id" element={<SystemLayout />}>
+          {/* Feature 051 [US1]: public login routes — MUST NOT be wrapped in RequireAuth. */}
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/login/callback" element={<LoginCallbackPage />} />
+          {/* All other routes require authentication; RequireAuth triggers
+              loginRedirect with the deep-link as `state` when unauthenticated. */}
+          <Route path="/" element={<RequireAuth><PortfolioRoute /></RequireAuth>} />
+          <Route path="/systems" element={<RequireAuth><SystemsRoute /></RequireAuth>} />
+          <Route path="/systems/:id" element={<RequireAuth><SystemLayout /></RequireAuth>}>
             <Route index element={<SystemDetail />} />
             <Route path="roadmap" element={<Roadmap />} />
             <Route path="boundaries" element={<BoundaryManagement />} />
@@ -78,17 +86,17 @@ function AppContent() {
             <Route path="baseline" element={<BaselineManagement />} />
             <Route path="profile/:sectionType" element={<SystemProfile />} />
           </Route>
-          <Route path="/capabilities" element={<CapabilitiesRoute />} />
-          <Route path="/components" element={<ComponentsRoute />} />
-          <Route path="/onboarding" element={<OnboardingShell />} />
-          <Route path="/onboarding/tenant" element={<TenantWizard />} />
-          <Route path="/onboarding/csp" element={<CspWizard />} />
+          <Route path="/capabilities" element={<RequireAuth><CapabilitiesRoute /></RequireAuth>} />
+          <Route path="/components" element={<RequireAuth><ComponentsRoute /></RequireAuth>} />
+          <Route path="/onboarding" element={<RequireAuth><OnboardingShell /></RequireAuth>} />
+          <Route path="/onboarding/tenant" element={<RequireAuth><TenantWizard /></RequireAuth>} />
+          <Route path="/onboarding/csp" element={<RequireAuth><CspWizard /></RequireAuth>} />
           {/* Feature 048 follow-up: the cross-tenant CSP dashboard now
               resolves at `/` via PortfolioRoute for CSP-Admins. The standalone
               `/csp-dashboard` route has been retired. */}
-          <Route path="/csp/inherited-components" element={<CspInheritedComponentsPage />} />
-          <Route path="/admin/imported-documents" element={<ImportedDocumentsView />} />
-          <Route path="/controls" element={<ControlsRoute />} />
+          <Route path="/csp/inherited-components" element={<RequireAuth><CspInheritedComponentsPage /></RequireAuth>} />
+          <Route path="/admin/imported-documents" element={<RequireAuth><ImportedDocumentsView /></RequireAuth>} />
+          <Route path="/controls" element={<RequireAuth><ControlsRoute /></RequireAuth>} />
         </Routes>
         </TenantOnboardingGuard>
       </CspOnboardingGuard>

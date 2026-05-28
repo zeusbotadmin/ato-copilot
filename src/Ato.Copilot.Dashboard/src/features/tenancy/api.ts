@@ -14,6 +14,8 @@
  */
 
 import axios, { type AxiosError } from 'axios';
+import { attachAuthInterceptor } from '../auth/interceptors';
+import { getMsalInstance, DEFAULT_API_SCOPES } from '../auth/msalInstance';
 
 // ---------------------------------------------------------------------------
 // Wire types (mirror specs/048-tenant-isolation/contracts/tenants.openapi.yaml)
@@ -123,8 +125,6 @@ const tenancyClient = axios.create({
 });
 
 tenancyClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem('auth_token');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
   try {
     const raw = localStorage.getItem('ato-dashboard-settings');
     if (raw) {
@@ -136,6 +136,9 @@ tenancyClient.interceptors.request.use((config) => {
   }
   return config;
 });
+
+// Feature 051 T053: MSAL bearer injection (silent renewal + 401 retry).
+attachAuthInterceptor(tenancyClient, getMsalInstance, DEFAULT_API_SCOPES);
 
 function unwrap<T>(envelope: Envelope<T>): T {
   if (envelope.status !== 'success' || envelope.data === undefined) {

@@ -400,8 +400,8 @@ non-Development.
 
 ### 10.1 Server: extend simulated-identity config
 
-- [ ] T120 [P] [US7] Create [src/Ato.Copilot.Core/Configuration/Auth/SimulatedIdentityDescriptor.cs](src/Ato.Copilot.Core/Configuration/Auth/SimulatedIdentityDescriptor.cs) — record per [data-model.md § 4](specs/051-login/data-model.md)
-- [ ] T121 [US7] Extend the existing Feature 027 `CacAuthOptions` to expose `SimulatedIdentities: SimulatedIdentityDescriptor[]` (replacing the single-identity shape); preserve backward-compat by treating a missing list as `[]`
+- [X] T120 [P] [US7] Create [src/Ato.Copilot.Core/Configuration/Auth/SimulatedIdentityDescriptor.cs](src/Ato.Copilot.Core/Configuration/Auth/SimulatedIdentityDescriptor.cs) — record per [data-model.md § 4](specs/051-login/data-model.md)
+- [X] T121 [US7] Extend the existing Feature 027 `CacAuthOptions` to expose `SimulatedIdentities: SimulatedIdentityDescriptor[]` (replacing the single-identity shape); preserve backward-compat by treating a missing list as `[]`
 
 ### 10.2 Endpoint: POST /api/auth/simulate
 

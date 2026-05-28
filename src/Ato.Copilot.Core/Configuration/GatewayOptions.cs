@@ -1,3 +1,5 @@
+using Ato.Copilot.Core.Configuration.Auth;
+
 namespace Ato.Copilot.Core.Configuration;
 
 /// <summary>
@@ -246,6 +248,24 @@ public class CacAuthOptions
     /// Provides UPN, display name, optional thumbprint, and role assignments.
     /// </summary>
     public SimulatedIdentityOptions? SimulatedIdentity { get; set; }
+
+    /// <summary>
+    /// Feature 051 T121 [US7] — list of simulated identities available to the
+    /// dashboard <c>SimulationPanel</c> in Development. Each entry is keyed by
+    /// <see cref="SimulatedIdentityDescriptor.IdentityId"/> which is passed to
+    /// <c>POST /api/auth/simulate?identityId=&lt;key&gt;</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>This is a SUPERSET of the legacy single-identity <see cref="SimulatedIdentity"/>
+    /// field, which is preserved for backward compatibility with Feature 027's
+    /// <c>CacAuthenticationMiddleware</c> + <c>CacSessionService</c>. The two
+    /// fields are independent — middleware still reads <see cref="SimulatedIdentity"/>,
+    /// and the new <c>/api/auth/simulate</c> endpoint reads <see cref="SimulatedIdentities"/>.</para>
+    /// <para>An empty list (or null bind) collapses to "no simulation identities
+    /// configured", which causes the three-layer gate to omit the descriptor
+    /// from <c>/login-config</c> even when <see cref="SimulationMode"/> is true.</para>
+    /// </remarks>
+    public List<SimulatedIdentityDescriptor> SimulatedIdentities { get; set; } = new();
 }
 
 /// <summary>

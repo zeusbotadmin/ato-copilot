@@ -84,6 +84,14 @@ export interface MeResponse {
   pimRoles: PimRoleAssignment[];
   isCspAdmin: boolean;
   isSocAnalyst: boolean;
+  /**
+   * Tenants the user can pick in the picker (Feature 051 / US3).
+   * For non-CSP-Admin users this is exactly `[homeTenant]`. For
+   * CSP-Admins this is every provisioned tenant; the SPA hides
+   * `Disabled` rows for non-CSP-Admin and grays them out for
+   * CSP-Admin per FR-010.
+   */
+  tenantMemberships: TenantSummary[];
 }
 
 export interface SelectTenantRequest {

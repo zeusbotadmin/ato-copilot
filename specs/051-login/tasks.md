@@ -234,9 +234,9 @@ requirement entirely. Tasks below close the gap.
 
 ### 5.4 Dashboard `TenantPickerPage`
 
-- [ ] T071 [TDD-Test] [P] [US3] [src/Ato.Copilot.Dashboard/src/__tests__/auth/TenantPickerPage.test.tsx](src/Ato.Copilot.Dashboard/src/__tests__/auth/TenantPickerPage.test.tsx) — renders one row per tenant with status badge; `Disabled` rows are hidden for non-CSP-Admin AND rendered grayed-out (disabled) for CSP-Admin per FR-010; "Remember on this device" checkbox below list; `POST /api/auth/select-tenant` body matches selection + remember flag. **Per FR-011 (analysis C4): when `me.isCspAdmin === true`, an extra row labeled "All Tenants (CSP view)" MUST render AND clicking it MUST navigate to `/csp/dashboard` (Feature 048 root) without calling `/select-tenant`.** RED.
-- [ ] T072 [US3] Create [src/Ato.Copilot.Dashboard/src/features/auth/TenantPickerPage.tsx](src/Ato.Copilot.Dashboard/src/features/auth/TenantPickerPage.tsx). GREEN T071.
-- [ ] T073 [US3] Add `/login/select-tenant` route (wrapped in `<RequireAuth>`) in [src/Ato.Copilot.Dashboard/src/App.tsx](src/Ato.Copilot.Dashboard/src/App.tsx); auto-redirect to it from `LoginCallbackPage` when `me.homeTenant === null` and the user has > 1 tenant membership
+- [X] T071 [TDD-Test] [P] [US3] [src/Ato.Copilot.Dashboard/src/__tests__/auth/TenantPickerPage.test.tsx](src/Ato.Copilot.Dashboard/src/__tests__/auth/TenantPickerPage.test.tsx) — renders one row per tenant with status badge; `Disabled` rows are hidden for non-CSP-Admin AND rendered grayed-out (disabled) for CSP-Admin per FR-010; "Remember on this device" checkbox below list; `POST /api/auth/select-tenant` body matches selection + remember flag. **Per FR-011 (analysis C4): when `me.isCspAdmin === true`, an extra row labeled "All Tenants (CSP view)" MUST render AND clicking it MUST navigate to `/csp/dashboard` (Feature 048 root) without calling `/select-tenant`.** RED.
+- [X] T072 [US3] Create [src/Ato.Copilot.Dashboard/src/features/auth/TenantPickerPage.tsx](src/Ato.Copilot.Dashboard/src/features/auth/TenantPickerPage.tsx). GREEN T071.
+- [X] T073 [US3] Add `/login/select-tenant` route (wrapped in `<RequireAuth>`) in [src/Ato.Copilot.Dashboard/src/App.tsx](src/Ato.Copilot.Dashboard/src/App.tsx); auto-redirect to it from `LoginCallbackPage` when `me.homeTenant === null` and the user has > 1 tenant membership
 
 ### 5.5 (Retired) `useLoginRaceListener` hook — moved to Phase 3 (US1)
 
@@ -247,7 +247,7 @@ Phase 3 § 3.6. **Do NOT re-introduce work under T074–T076.**
 
 ### 5.6 Manual sign-off
 
-- [ ] T077 [US3] Execute [quickstart.md § 3, § 7](specs/051-login/quickstart.md)
+- [ ] T077 [US3] Execute [quickstart.md § 3, § 7](specs/051-login/quickstart.md) — Pending live verification (deferred like T054 / T063; requires a real tenant with > 1 membership and a real disabled tenant in the deployment).
 
 **Checkpoint US3**: Picker shows tenants, remember cookie round-trips, cross-tab race resolves.
 

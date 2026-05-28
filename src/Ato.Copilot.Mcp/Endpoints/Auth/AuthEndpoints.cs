@@ -364,6 +364,26 @@ public static class AuthEndpoints
         var isSocAnalyst = http.User.IsInRole("Auth.SocAnalyst")
                            || http.User.IsInRole("SOC.Analyst");
 
+        // Feature 051 T072 / US3 — list of tenants the SPA's picker may show.
+        // The data model has no separate user→tenant membership table; the
+        // only authoritative signal today is `Tenant.EntraTenantId == tid`.
+        // So for non-CSP-Admin callers the picker list is exactly the home
+        // tenant. CSP-Admin callers see every provisioned tenant (including
+        // Disabled rows — the SPA grays those out per FR-010).
+        List<Tenant> membershipTenants;
+        if (isCspAdmin)
+        {
+            membershipTenants = await db.Tenants
+                .IgnoreQueryFilters()
+                .OrderBy(t => t.DisplayName)
+                .ToListAsync(ct);
+        }
+        else
+        {
+            membershipTenants = new List<Tenant> { homeTenant };
+        }
+        var tenantMemberships = membershipTenants.Select(ProjectTenant).ToArray();
+
         var data = new
         {
             oid,
@@ -383,6 +403,7 @@ public static class AuthEndpoints
             pimRoles,
             isCspAdmin,
             isSocAnalyst,
+            tenantMemberships,
         };
 
         return Success(sw, data);

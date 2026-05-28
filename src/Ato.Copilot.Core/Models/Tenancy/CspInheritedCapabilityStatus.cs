@@ -18,4 +18,17 @@ public enum CspInheritedCapabilityStatus
     /// review via <c>PATCH /csp/inherited-components/{id}/capabilities/{capabilityId}/review</c>.
     /// </summary>
     NeedsReview = 1,
+
+    /// <summary>
+    /// CSP-Admin soft-deleted the capability via
+    /// <c>DELETE /csp/inherited-components/{id}/capabilities/{capabilityId}</c>.
+    /// Hidden from non-CSP-Admin callers (parallels the
+    /// <see cref="CspInheritedComponentStatus.Archived"/> read filter on
+    /// the parent component). Excluded from the
+    /// <see cref="CspInheritedComponent.CapabilityMappedCount"/> /
+    /// <see cref="CspInheritedComponent.CapabilityNeedsReviewCount"/>
+    /// derived counts (those compare on positive equality of
+    /// <see cref="Mapped"/> / <see cref="NeedsReview"/>).
+    /// </summary>
+    Archived = 2,
 }

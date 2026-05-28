@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Security.Claims;
+using System.Text.Json;
 using Ato.Copilot.Core.Configuration.Tenancy;
 using Ato.Copilot.Core.Data.Context;
 using Ato.Copilot.Core.Interfaces.Tenancy;
@@ -69,6 +70,23 @@ public static class CspInheritedComponentEndpoints
             .WithName("AddCspInheritedCapability");
         group.MapPatch("/{componentId:guid}/capabilities/{capabilityId:guid}/review", ReviewAsync)
             .WithName("ReviewCspInheritedCapability");
+        group.MapPatch("/{componentId:guid}/capabilities/{capabilityId:guid}", PatchCapabilityAsync)
+            .WithName("PatchCspInheritedCapability");
+        group.MapDelete("/{componentId:guid}/capabilities/{capabilityId:guid}", DeleteCapabilityAsync)
+            .WithName("DeleteCspInheritedCapability");
+
+        // Feature 050 / US2 — POST .../capabilities/{id}/move. Reparents a
+        // capability to a different non-archived component in the caller's
+        // tenant. Requires If-Match (optimistic concurrency) — see
+        // contracts/http-api.md § 2.
+        group.MapPost("/{componentId:guid}/capabilities/{capabilityId:guid}/move", MoveCapabilityAsync)
+            .WithName("MoveCspInheritedCapability");
+
+        // Feature 050 / US3 — GET .../capabilities/{id}/history. Paginated
+        // audit-trail feed for one capability, scoped to caller's tenant —
+        // see contracts/http-api.md § 3.
+        group.MapGet("/{componentId:guid}/capabilities/{capabilityId:guid}/history", ListCapabilityHistoryAsync)
+            .WithName("ListCspInheritedCapabilityHistory");
 
         // Post-onboarding import endpoint — same pipeline as the wizard
         // upload but gated on CspProfile.OnboardingState = Active.
@@ -421,7 +439,12 @@ public static class CspInheritedComponentEndpoints
             return NotFound(sw);
         }
 
-        var capabilities = component.Capabilities
+        // Non-CSP-Admin readers don't see soft-deleted (Archived) capabilities;
+        // CSP-Admin sees everything so the detail drawer can surface them.
+        var visibleCaps = tenantCtx.IsCspAdmin
+            ? component.Capabilities
+            : component.Capabilities.Where(c => c.Status != CspInheritedCapabilityStatus.Archived);
+        var capabilities = visibleCaps
             .Select(BuildCapabilityDto)
             .ToArray();
         return Success(sw, capabilities);
@@ -463,6 +486,7 @@ public static class CspInheritedComponentEndpoints
                 body.Description,
                 body.MappedNistControlIds,
                 actor,
+                markMappedImmediately: body.MarkMappedImmediately ?? false,
                 ct).ConfigureAwait(false);
             return Success(sw, BuildCapabilityDto(capability));
         }
@@ -517,6 +541,282 @@ public static class CspInheritedComponentEndpoints
         catch (InvalidOperationException ex)
         {
             return Conflict(sw, "INVALID_TRANSITION", ex.Message);
+        }
+    }
+
+    // ─── PATCH /{id}/capabilities/{capId} (CSP-Admin) ───────────────────
+
+    private static async Task<IResult> PatchCapabilityAsync(
+        Guid componentId,
+        Guid capabilityId,
+        [FromBody] PatchCapabilityRequest? body,
+        HttpContext http,
+        ITenantContext tenantCtx,
+        ICspInheritedComponentService service,
+        IOptions<DeploymentOptions> deployment,
+        CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        if (ShouldShortCircuitSingleTenant(deployment, out var singleTenantResult))
+            return singleTenantResult;
+        if (!tenantCtx.IsCspAdmin) return ForbiddenNotCspAdmin(sw);
+
+        if (body is null
+            || string.IsNullOrWhiteSpace(body.Name)
+            || string.IsNullOrWhiteSpace(body.Description))
+        {
+            return ValidationError(sw, "name and description are required.");
+        }
+        if (body.MappedNistControlIds is null || body.MappedNistControlIds.Length == 0)
+        {
+            return ValidationError(sw, "mappedNistControlIds must be a non-empty array.");
+        }
+
+        // Optimistic concurrency — caller pins a row version via If-Match.
+        // Mirrors PatchAsync on the component itself; if the header is absent
+        // we fall through to last-write-wins (which is safe — the audit row
+        // captures the actor identity).
+        byte[]? rowVersion = null;
+        if (http.Request.Headers.TryGetValue("If-Match", out var ifMatchValues)
+            && !string.IsNullOrWhiteSpace(ifMatchValues.ToString()))
+        {
+            try
+            {
+                rowVersion = Convert.FromBase64String(ifMatchValues.ToString());
+            }
+            catch (FormatException)
+            {
+                return ValidationError(sw, "If-Match header must be a base64-encoded row version.");
+            }
+        }
+
+        try
+        {
+            var actor = ResolveActor(http);
+            var capability = await service.UpdateCapabilityAsync(
+                componentId,
+                capabilityId,
+                body.Name,
+                body.Description,
+                body.MappedNistControlIds,
+                rowVersion,
+                actor,
+                ct).ConfigureAwait(false);
+            return Success(sw, BuildCapabilityDto(capability));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(sw);
+        }
+        catch (ArgumentException ex)
+        {
+            return ValidationError(sw, ex.Message);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return Error(StatusCodes.Status412PreconditionFailed,
+                "ROW_VERSION_MISMATCH",
+                "Capability was modified by another user; reload and retry.");
+        }
+    }
+
+    // ─── DELETE /{id}/capabilities/{capId} (CSP-Admin) — archive ────────
+
+    private static async Task<IResult> DeleteCapabilityAsync(
+        Guid componentId,
+        Guid capabilityId,
+        HttpContext http,
+        ITenantContext tenantCtx,
+        ICspInheritedComponentService service,
+        IOptions<DeploymentOptions> deployment,
+        CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        if (ShouldShortCircuitSingleTenant(deployment, out var singleTenantResult))
+            return singleTenantResult;
+        if (!tenantCtx.IsCspAdmin) return ForbiddenNotCspAdmin(sw);
+
+        try
+        {
+            var actor = ResolveActor(http);
+            await service.ArchiveCapabilityAsync(
+                componentId,
+                capabilityId,
+                actor,
+                ct).ConfigureAwait(false);
+            return Results.NoContent();
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(sw);
+        }
+    }
+
+    // ─── POST /{id}/capabilities/{capId}/move (CSP-Admin) ───────────────
+    //
+    // Feature 050 FR-002 / FR-012 — reparent a capability to a different
+    // non-archived component in the caller's tenant. Stricter than
+    // PatchCapabilityAsync: If-Match is REQUIRED (reparent is too
+    // destructive to allow last-write-wins per contract § 2.2.2). Writes
+    // exactly one `Moved` history row in the same transaction.
+
+    private static async Task<IResult> MoveCapabilityAsync(
+        Guid componentId,
+        Guid capabilityId,
+        [FromBody] MoveCapabilityRequest? body,
+        HttpContext http,
+        ITenantContext tenantCtx,
+        ICspInheritedComponentService service,
+        IOptions<DeploymentOptions> deployment,
+        CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        if (ShouldShortCircuitSingleTenant(deployment, out var singleTenantResult))
+            return singleTenantResult;
+        if (!tenantCtx.IsCspAdmin) return ForbiddenNotCspAdmin(sw);
+
+        if (body is null || body.TargetComponentId == Guid.Empty)
+        {
+            return ValidationError(sw, "targetComponentId is required.");
+        }
+
+        // If-Match is REQUIRED for this endpoint (contract § 2.2.2). Missing
+        // or unparsable → VALIDATION_ERROR — never falls through to
+        // last-write-wins like PatchCapabilityAsync does.
+        if (!http.Request.Headers.TryGetValue("If-Match", out var ifMatchValues)
+            || string.IsNullOrWhiteSpace(ifMatchValues.ToString()))
+        {
+            return ValidationError(sw,
+                "If-Match header is required for reparent (base64-encoded row version).");
+        }
+
+        byte[] rowVersion;
+        try
+        {
+            rowVersion = Convert.FromBase64String(ifMatchValues.ToString());
+        }
+        catch (FormatException)
+        {
+            return ValidationError(sw,
+                "If-Match header must be a base64-encoded row version.");
+        }
+
+        try
+        {
+            var actor = ResolveActor(http);
+            var capability = await service.ReparentCapabilityAsync(
+                componentId,
+                capabilityId,
+                body.TargetComponentId,
+                rowVersion,
+                actor,
+                ct).ConfigureAwait(false);
+            return Success(sw, BuildCapabilityDto(capability));
+        }
+        catch (KeyNotFoundException)
+        {
+            // Tenant-scoped or archived target — surface as 404 to avoid
+            // existence-leak across tenants per contract § 2.3 step 4.
+            return NotFound(sw);
+        }
+        catch (ArgumentException ex)
+        {
+            return ValidationError(sw, ex.Message);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return Error(StatusCodes.Status412PreconditionFailed,
+                "ROW_VERSION_MISMATCH",
+                "Capability was modified by another user; reload and retry.");
+        }
+    }
+
+    // ─── GET /{id}/capabilities/{capId}/history (CSP-Admin) ─────────────
+    //
+    // Feature 050 FR-004 / FR-005 / FR-014 — paginated audit-trail feed
+    // for one capability. `pageSize` clamps to [1, 200] server-side per
+    // contract § 3.2.1. Empty history is 200 with `items: []`, NOT 404
+    // (contract § 3.5). Response carries Cache-Control: no-store so the
+    // dashboard's History tab refetches on each open (contract § 3.6).
+
+    private static async Task<IResult> ListCapabilityHistoryAsync(
+        Guid componentId,
+        Guid capabilityId,
+        int? page,
+        int? pageSize,
+        HttpContext http,
+        ITenantContext tenantCtx,
+        ICspInheritedComponentService componentService,
+        ICapabilityHistoryService historyService,
+        IOptions<DeploymentOptions> deployment,
+        CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        if (ShouldShortCircuitSingleTenant(deployment, out var singleTenantResult))
+            return singleTenantResult;
+        if (!tenantCtx.IsCspAdmin) return ForbiddenNotCspAdmin(sw);
+
+        // Existence-leak guard — the capability must live under the supplied
+        // source component. We piggy-back on `GetAsync` (which already loads
+        // capabilities) rather than introducing a dedicated fetch.
+        var component = await componentService.GetAsync(componentId, ct).ConfigureAwait(false);
+        if (component is null) return NotFound(sw);
+        if (component.Capabilities.All(c => c.Id != capabilityId))
+        {
+            return NotFound(sw);
+        }
+
+        var tenantId = tenantCtx.EffectiveTenantId;
+        var pageResult = await historyService.ListAsync(
+            capabilityId, tenantId,
+            page ?? 1, pageSize ?? 50, ct).ConfigureAwait(false);
+
+        // Pre-parse MetadataJson into JsonElement so the wire envelope
+        // emits a JSON object — never the raw stringified JSON value
+        // (contract § 3.4.1). Null metadata stays null.
+        var items = pageResult.Items
+            .Select(e => new
+            {
+                id = e.Id,
+                eventType = e.EventType.ToString(),
+                actorOid = e.ActorOid,
+                occurredAt = e.OccurredAt,
+                summary = e.Summary,
+                metadata = ParseMetadataOrNull(e.MetadataJson),
+            })
+            .ToArray();
+
+        http.Response.Headers.CacheControl = "no-store";
+        return Success(sw, new
+        {
+            items,
+            page = pageResult.Page,
+            pageSize = pageResult.PageSize,
+            total = pageResult.Total,
+        });
+    }
+
+    /// <summary>
+    /// Parse a stored <c>MetadataJson</c> column into a structured
+    /// <see cref="JsonElement"/> so the response envelope nests an object,
+    /// not a stringified JSON value. Returns <c>null</c> when the column
+    /// itself is null or empty.
+    /// </summary>
+    private static JsonElement? ParseMetadataOrNull(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            // Clone() detaches the element from the JsonDocument lifecycle
+            // so the using-disposal does not invalidate the returned value.
+            return doc.RootElement.Clone();
+        }
+        catch (JsonException)
+        {
+            // Malformed metadata is a server bug — surface as null rather
+            // than failing the request; an admin will see it in the logs.
+            return null;
         }
     }
 
@@ -728,6 +1028,12 @@ public static class CspInheritedComponentEndpoints
         reviewedAt = cap.ReviewedAt,
         reviewedBy = cap.ReviewedBy,
         reviewerNote = cap.ReviewerNote,
+        // Base64-encoded RowVersion for the dashboard If-Match header on
+        // PATCH /{id}/capabilities/{capId} (parallels PatchAsync on the
+        // component itself).
+        rowVersion = cap.RowVersion is { Length: > 0 }
+            ? Convert.ToBase64String(cap.RowVersion)
+            : null,
     };
 
     private static object BuildUploadDto(CspAtoUploadHelpers.UploadResult result) => new
@@ -821,8 +1127,22 @@ public static class CspInheritedComponentEndpoints
     // ─── request DTOs ──────────────────────────────────────────────────
 
     public sealed record CreateComponentRequest(string? Name, string? Description, string? ComponentType);
-    public sealed record AddCapabilityRequest(string? Name, string? Description, string[]? MappedNistControlIds);
+    public sealed record AddCapabilityRequest(
+        string? Name,
+        string? Description,
+        string[]? MappedNistControlIds,
+        // Feature 050 FR-001: when true, capability is created with
+        // Status = Mapped and a second "Reviewed" history row is written
+        // alongside the "Created" row, all in the same transaction.
+        // Default behavior (false / absent) leaves the row in NeedsReview.
+        bool? MarkMappedImmediately = null);
     public sealed record PatchComponentRequest(string? Name, string? Description, string? ComponentType);
+    public sealed record PatchCapabilityRequest(string? Name, string? Description, string[]? MappedNistControlIds);
     public sealed record RemapRequest(bool ReplaceMapped);
     public sealed record ReviewCapabilityRequest(string[] MappedNistControlIds, string? ReviewerNote);
+
+    /// <summary>
+    /// Feature 050 / US2 — body for <c>POST .../capabilities/{capId}/move</c>.
+    /// </summary>
+    public sealed record MoveCapabilityRequest(Guid TargetComponentId);
 }

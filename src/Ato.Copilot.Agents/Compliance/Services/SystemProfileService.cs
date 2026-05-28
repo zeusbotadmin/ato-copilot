@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Ato.Copilot.Core.Data.Context;
 using Ato.Copilot.Core.Interfaces.Compliance;
 using Ato.Copilot.Core.Models.Compliance;
+using Ato.Copilot.Core.Services.Roles;
 
 namespace Ato.Copilot.Agents.Compliance.Services;
 
@@ -78,11 +79,55 @@ public class SystemProfileService : ISystemProfileService
             };
         }).ToList();
 
-        // Mission Owner info
-        var moAssignment = await db.RmfRoleAssignments
-            .FirstOrDefaultAsync(r => r.RegisteredSystemId == systemId
-                && r.RmfRole == RmfRole.MissionOwner
-                && r.IsActive, cancellationToken);
+        // Mission Owner info — Feature 049 T028: read through IUnifiedRoleReader so
+        // the banner respects the override → inherited → org-fallback → legacy
+        // precedence chain. Falls back to the direct legacy read when the unified
+        // reader returns a Legacy-source row (preserves the existing string UserId
+        // for dashboards that haven't migrated yet).
+        //
+        // The reader is resolved optionally: in test DI containers that pre-date
+        // Feature 049 (e.g. SystemProfileServiceTests' minimal ServiceCollection),
+        // the reader is not registered, in which case we fall through to the
+        // legacy-only path. Production MCP DI (T030) always registers it.
+        var unifiedReader = scope.ServiceProvider.GetService<IUnifiedRoleReader>();
+        var resolvedMo = unifiedReader is null
+            ? (ResolvedRoleAssignment?)null
+            : await unifiedReader.GetMissionOwnerAsync(
+                system.TenantId, systemId, cancellationToken);
+
+        MissionOwnerInfo? moInfo = null;
+        if (resolvedMo.HasValue
+            && resolvedMo.Value.Source != RoleAssignmentSource.Legacy
+            && resolvedMo.Value.PersonId is Guid personId)
+        {
+            var person = await db.Persons
+                .AsNoTracking()
+                .FirstOrDefaultAsync(p => p.Id == personId, cancellationToken);
+            moInfo = new MissionOwnerInfo
+            {
+                UserId = person?.Email ?? personId.ToString(),
+                DisplayName = resolvedMo.Value.PersonDisplayName
+                              ?? person?.DisplayName
+                              ?? string.Empty,
+            };
+        }
+        else
+        {
+            // Legacy fallback (or NotAssigned). Preserves the original behavior
+            // and the string UserId the dashboard banner has always rendered.
+            var moAssignment = await db.RmfRoleAssignments
+                .FirstOrDefaultAsync(r => r.RegisteredSystemId == systemId
+                    && r.RmfRole == RmfRole.MissionOwner
+                    && r.IsActive, cancellationToken);
+            if (moAssignment != null)
+            {
+                moInfo = new MissionOwnerInfo
+                {
+                    UserId = moAssignment.UserId,
+                    DisplayName = moAssignment.UserDisplayName ?? moAssignment.UserId,
+                };
+            }
+        }
 
         var approvedCount = summaries.Count(s => MandatorySections.Contains(s.SectionType)
             && s.GovernanceStatus == SspSectionStatus.Approved);
@@ -91,13 +136,7 @@ public class SystemProfileService : ISystemProfileService
         {
             SystemId = systemId,
             SystemName = system.Name,
-            MissionOwner = moAssignment != null
-                ? new MissionOwnerInfo
-                {
-                    UserId = moAssignment.UserId,
-                    DisplayName = moAssignment.UserDisplayName ?? moAssignment.UserId
-                }
-                : null,
+            MissionOwner = moInfo,
             OverallCompleteness = new OverallCompleteness
             {
                 CompletedCount = summaries.Count(s => s.GovernanceStatus != SspSectionStatus.NotStarted),

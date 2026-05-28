@@ -39,10 +39,21 @@ using OpenTelemetry.Trace;
 
 var mode = DetermineRunMode(args);
 
+// Build a minimal IConfiguration for Serilog bootstrap so the `Serilog`
+// appsettings section drives sinks, levels, output templates, and retention.
+// Programmatic .Enrich.WithProperty calls below augment whatever the JSON
+// configures — they are NOT replaced by ReadFrom.Configuration.
+var bootstrapConfig = new ConfigurationBuilder()
+    .SetBasePath(AppContext.BaseDirectory)
+    .AddJsonFile("appsettings.json", optional: true)
+    .AddJsonFile(
+        $"appsettings.{Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production"}.json",
+        optional: true)
+    .AddEnvironmentVariables("ATO_")
+    .Build();
+
 Log.Logger = new LoggerConfiguration()
-    .MinimumLevel.Information()
-    .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
-    .MinimumLevel.Override("System", LogEventLevel.Warning)
+    .ReadFrom.Configuration(bootstrapConfig)
     .Enrich.FromLogContext()
     .Enrich.WithProperty("Application", "ATO Copilot")
     // Feature 048 tenant log-context properties (populated per request via
@@ -53,18 +64,14 @@ Log.Logger = new LoggerConfiguration()
     .Enrich.WithProperty("ImpersonatedTenantId", (string?)null)
     .Enrich.WithProperty("ActorTenantId", (string?)null)
     .Destructure.With<SensitiveDataDestructuringPolicy>()
-    .WriteTo.File(
-        path: "logs/ato-copilot-.log",
-        rollingInterval: RollingInterval.Day,
-        retainedFileCountLimit: 14,
-        outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}")
     .CreateLogger();
 
 if (mode != "stdio")
 {
+    // HTTP mode adds Console sink on top of whatever the JSON configures.
+    // (stdio mode must NEVER write to Console — that channel is the MCP transport.)
     Log.Logger = new LoggerConfiguration()
-        .MinimumLevel.Information()
-        .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
+        .ReadFrom.Configuration(bootstrapConfig)
         .Enrich.FromLogContext()
         .Enrich.WithProperty("Application", "ATO Copilot")
         // Feature 048 tenant log-context properties (see comment in stdio config above).
@@ -74,10 +81,6 @@ if (mode != "stdio")
         .Enrich.WithProperty("ActorTenantId", (string?)null)
         .Destructure.With<SensitiveDataDestructuringPolicy>()
         .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
-        .WriteTo.File(
-            path: "logs/ato-copilot-.log",
-            rollingInterval: RollingInterval.Day,
-            retainedFileCountLimit: 14)
         .CreateLogger();
 }
 
@@ -521,6 +524,10 @@ async Task RunHttpModeAsync(string[] args)
     app.MapOrganizationContextEndpoints();
     app.MapPersonEndpoints();
     app.MapRoleAssignmentEndpoints();
+    // Feature 049 (T040a): unified per-system 7-role surface
+    // (POST/GET /api/roles/system/{systemId}, POST/GET /api/roles/organization,
+    // GET /api/roles/effective-role) per FR-008..FR-027.
+    app.MapSystemRolesEndpoints();
     app.MapEmassImportEndpoints();
     app.MapSspPdfImportEndpoints();
     app.MapAzureSubscriptionEndpoints();
@@ -1053,6 +1060,12 @@ async Task EnsureSchemaAdditionsAsync(AtoCopilotContext db, Microsoft.Extensions
         .ApplyAsync(db, logger, ct);
     // Feature 048 (T134): Adds GlobalBaselines table for cross-tenant sharing.
     await Ato.Copilot.Core.Data.Migrations.EnsureSchemaAdditions.GlobalBaselineSchemaAdditions
+        .ApplyAsync(db, logger, ct);
+    // Feature 050 (FR-004 / FR-014 / FR-015): Adds the CapabilityHistoryEvents
+    // table for CSP-inherited capability lifecycle auditing. Tenant-scoped
+    // (Cascade FK to Tenants); intentionally no DB-level FK to capabilities
+    // so history outlives a hard-deleted capability per FR-015.
+    await Ato.Copilot.Core.Data.Migrations.EnsureSchemaAdditions.CapabilityHistoryEventsSchemaAdditions
         .ApplyAsync(db, logger, ct);
     await Ato.Copilot.Core.Services.Tenancy.TenantBootstrapService.EnsureSystemTenantAsync(db, logger, ct);
     // T060: Backfill OrganizationContext rows whose TenantId still holds the

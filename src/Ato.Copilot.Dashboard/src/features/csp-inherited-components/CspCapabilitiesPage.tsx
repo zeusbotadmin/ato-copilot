@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactElement } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactElement } from 'react';
 import { Link } from 'react-router-dom';
 import PageLayout from '../../components/layout/PageLayout';
 import PageHero from '../../components/layout/PageHero';
-import MetricCard from '../../components/cards/MetricCard';
+import { useCspDashboardAvailable } from '../../components/layout/useCspDashboardAvailable';
 import {
   addCspInheritedCapability,
+  archiveCspInheritedCapability,
   isUnavailable,
   listCspInheritedCapabilities,
   listCspInheritedComponents,
@@ -14,6 +15,7 @@ import {
   type CspInheritedComponentsPage,
   type UnavailableState,
 } from './api';
+import CapabilityDetailDrawer from './CapabilityDetailDrawer';
 
 /**
  * CSP-level Capabilities surface mounted at `/capabilities` for CSP-Admins
@@ -36,6 +38,7 @@ const STATUS_FILTERS: { value: '' | CspInheritedCapabilityStatus; label: string 
   { value: '', label: 'All statuses' },
   { value: 'Mapped', label: 'Mapped' },
   { value: 'NeedsReview', label: 'Needs review' },
+  { value: 'Archived', label: 'Archived' },
 ];
 
 const PAGE_SIZE_COMPONENTS = 200; // Pull all components in one shot; CSP catalogs are small.
@@ -54,6 +57,7 @@ type LoadState =
 const STATUS_BADGE: Record<CspInheritedCapabilityStatus, string> = {
   Mapped: 'bg-emerald-100 text-emerald-800',
   NeedsReview: 'bg-amber-100 text-amber-800',
+  Archived: 'bg-gray-200 text-gray-700',
 };
 
 export default function CspCapabilitiesPage(): ReactElement {
@@ -61,12 +65,28 @@ export default function CspCapabilitiesPage(): ReactElement {
   const [statusFilter, setStatusFilter] = useState<'' | CspInheritedCapabilityStatus>('');
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [sort, setSort] = useState<'name' | 'componentName' | 'status'>('name');
-  const [order, setOrder] = useState<'asc' | 'desc'>('asc');
+  /**
+   * Currently-expanded capability card id (null = all collapsed). Mirrors the
+   * org `CapabilityLibrary` accordion pattern — one row open at a time so
+   * Control Mappings panels never stack.
+   */
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // CSP-Admin gating mirrors the components page — true only for the
+  // CSP-Admin role in an active multi-tenant deployment.
+  const canManage = useCspDashboardAvailable() === true;
 
   // Modal visibility — the actual form state lives inside the modal
   // component (mirrors CreateComponentModal in CspInheritedComponentsPage).
   const [createOpen, setCreateOpen] = useState(false);
+
+  // Detail-drawer selection — row click sets this; the drawer mutates
+  // it back to null on close. We store both ids so the drawer can render
+  // the parent component header without an extra fetch.
+  const [selectedCap, setSelectedCap] = useState<{
+    componentId: string;
+    capabilityId: string;
+  } | null>(null);
 
   // Splice the newly-created capability into the loaded set so it appears
   // without re-running the per-component fan-out.
@@ -75,6 +95,7 @@ export default function CspCapabilitiesPage(): ReactElement {
       if (prev.kind !== 'ready') return prev;
       const newRow: FlatCapabilityRow = {
         ...created,
+        componentId: parent.id,
         componentName: parent.name,
         componentType: parent.componentType,
       };
@@ -92,59 +113,69 @@ export default function CspCapabilitiesPage(): ReactElement {
     return () => window.clearTimeout(t);
   }, [search]);
 
-  // Initial fetch: components + parallel capability fan-out.
-  useEffect(() => {
-    let cancelled = false;
-    setState({ kind: 'loading' });
-
-    (async () => {
-      try {
-        const componentsResult = await listCspInheritedComponents({
-          page: 1,
-          pageSize: PAGE_SIZE_COMPONENTS,
-          status: 'Published',
-        });
-        if (cancelled) return;
-        if (isUnavailable(componentsResult)) {
-          setState({ kind: 'unavailable', reason: componentsResult.reason });
-          return;
-        }
-        const page: CspInheritedComponentsPage = componentsResult;
-        const components = page.items;
-
-        // Fan out — bounded by typical CSP catalog size.
-        const capabilityArrays = await Promise.all(
-          components.map((c) =>
-            listCspInheritedCapabilities(c.id).catch(() => [] as CspInheritedCapability[]),
-          ),
-        );
-        if (cancelled) return;
-
-        const rows: FlatCapabilityRow[] = [];
-        for (let i = 0; i < components.length; i += 1) {
-          const c = components[i];
-          const caps = capabilityArrays[i];
-          if (!c || !caps) continue;
-          for (const cap of caps) {
-            rows.push({
-              ...cap,
-              componentName: c.name,
-              componentType: c.componentType,
-            });
-          }
-        }
-        setState({ kind: 'ready', rows, components });
-      } catch (err: unknown) {
-        if (cancelled) return;
-        const message = err instanceof Error ? err.message : 'Failed to load CSP capabilities.';
-        setState({ kind: 'error', message });
+  // Initial fetch + reload (post-mutation refresh) — components page +
+  // parallel capability fan-out. CSP-Admins additionally see Draft /
+  // Archived components so the catalog stays auditable.
+  const cancelTokenRef = useRef(0);
+  const reload = useCallback(async () => {
+    const token = ++cancelTokenRef.current;
+    setState((prev) => (prev.kind === 'ready' ? prev : { kind: 'loading' }));
+    try {
+      const componentsResult = await listCspInheritedComponents({
+        page: 1,
+        pageSize: PAGE_SIZE_COMPONENTS,
+        // CSP-Admins should see Draft / Archived components too so the
+        // capability list stays auditable; mission owners only see
+        // Published.
+        ...(canManage ? {} : { status: 'Published' as const }),
+      });
+      if (token !== cancelTokenRef.current) return;
+      if (isUnavailable(componentsResult)) {
+        setState({ kind: 'unavailable', reason: componentsResult.reason });
+        return;
       }
-    })();
+      const page: CspInheritedComponentsPage = componentsResult;
+      const components = page.items;
 
+      const capabilityArrays = await Promise.all(
+        components.map((c) =>
+          listCspInheritedCapabilities(c.id).catch(() => [] as CspInheritedCapability[]),
+        ),
+      );
+      if (token !== cancelTokenRef.current) return;
+
+      const rows: FlatCapabilityRow[] = [];
+      for (let i = 0; i < components.length; i += 1) {
+        const c = components[i];
+        const caps = capabilityArrays[i];
+        if (!c || !caps) continue;
+        for (const cap of caps) {
+          rows.push({
+            ...cap,
+            // The wire DTO key is `cspInheritedComponentId`, not
+            // `componentId` — pin the parent id explicitly so the
+            // drawer row-click handler has it.
+            componentId: c.id,
+            componentName: c.name,
+            componentType: c.componentType,
+          });
+        }
+      }
+      setState({ kind: 'ready', rows, components });
+    } catch (err: unknown) {
+      if (token !== cancelTokenRef.current) return;
+      const message = err instanceof Error ? err.message : 'Failed to load CSP capabilities.';
+      setState({ kind: 'error', message });
+    }
+  }, [canManage]);
+
+  useEffect(() => {
+    void reload();
     return () => {
-      cancelled = true;
+      // Bump the cancel token so an in-flight fetch can detect unmount.
+      cancelTokenRef.current += 1;
     };
-  }, []);
+  }, [reload]);
 
   // Pre-select the first component when the form opens, but never overwrite
   // a deliberate user choice. Handled inside CreateCapabilityModal now —
@@ -163,58 +194,25 @@ export default function CspCapabilitiesPage(): ReactElement {
           r.mappedNistControlIds.some((id) => id.toLowerCase().includes(debouncedSearch)),
       );
     }
-    const dir = order === 'asc' ? 1 : -1;
-    return [...rows].sort((a, b) => {
-      const av = a[sort];
-      const bv = b[sort];
-      if (typeof av === 'string' && typeof bv === 'string') {
-        return av.localeCompare(bv) * dir;
-      }
-      return 0;
-    });
-  }, [state, statusFilter, debouncedSearch, sort, order]);
+    // Default sort: capability name ascending. The org `CapabilityLibrary`
+    // does not expose sort controls in the toolbar — visual parity wins over
+    // power-user sort affordances, which CSP-Admins can still apply via the
+    // search/filter combo.
+    return [...rows].sort((a, b) => a.name.localeCompare(b.name));
+  }, [state, statusFilter, debouncedSearch]);
 
   const hasNoComponents =
     state.kind === 'ready' && state.components.length === 0;
 
   return (
-    <PageLayout title="Capabilities · CSP">
+    <PageLayout title="Security Capabilities">
       <div data-testid="csp-capabilities-page">
         <PageHero
-          eyebrow="CSP Catalog"
-          title="CSP Capabilities"
-          description="Canonical capabilities sourced from CSP-imported ATO documents (SSPs, OSCAL, eMASS). Every mission-owner organization inherits this list and can map their systems against it. Only CSP administrators see NeedsReview rows here; mission owners see Mapped only."
-          actions={
-            state.kind === 'ready' && !hasNoComponents ? (
-              <button
-                type="button"
-                onClick={() => setCreateOpen(true)}
-                className="inline-flex items-center rounded-md border border-white bg-white px-4 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-50"
-                data-testid="csp-capabilities-create-toggle"
-              >
-                + Create capability
-              </button>
-            ) : undefined
-          }
+          eyebrow="Capabilities"
+          title="Security Capabilities"
+          description="CSP-wide capabilities sourced from CSP-imported ATO documents (SSPs, OSCAL, eMASS). Every mission-owner organization inherits this list and can map their systems against it. Only CSP administrators see NeedsReview rows here; mission owners see Mapped only."
+          showOrgName={false}
         />
-
-        {/* Summary metrics — mirrors org `CapabilityLibrary`'s CoverageCards
-            strip so the CSP catalog page reads at-a-glance the same way as
-            the org capabilities page. */}
-        {state.kind === 'ready' && (
-          <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
-            <MetricCard title="Total capabilities" value={state.rows.length} />
-            <MetricCard
-              title="Mapped"
-              value={state.rows.filter((r) => r.status === 'Mapped').length}
-            />
-            <MetricCard
-              title="Needs review"
-              value={state.rows.filter((r) => r.status === 'NeedsReview').length}
-            />
-            <MetricCard title="Source components" value={state.components.length} />
-          </div>
-        )}
 
         {/* If the catalog has no components yet, the create form has nothing
             to parent against. Surface the path to author one. */}
@@ -269,10 +267,9 @@ export default function CspCapabilitiesPage(): ReactElement {
 
         {(state.kind === 'loading' || state.kind === 'ready') && (
           <>
-            {/* Toolbar — search + status filter on the left, sort controls
-                on the right. Matches the org `CapabilityLibrary` toolbar
-                pattern (flex-wrap row above the content card, plain bordered
-                inputs, primary action in the PageHero). */}
+            {/* Toolbar — visual parity with org `CapabilityLibrary`: search +
+                status filter on the left, count text, primary action
+                right-aligned. */}
             <div className="mb-4 flex flex-wrap items-center gap-3">
               <input
                 type="search"
@@ -296,134 +293,75 @@ export default function CspCapabilitiesPage(): ReactElement {
                   </option>
                 ))}
               </select>
-              <select
-                value={sort}
-                onChange={(e) =>
-                  setSort(e.target.value as 'name' | 'componentName' | 'status')
-                }
-                className="rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                data-testid="csp-capabilities-sort-field"
-                aria-label="Sort by"
-              >
-                <option value="name">Sort: Capability</option>
-                <option value="componentName">Sort: Component</option>
-                <option value="status">Sort: Status</option>
-              </select>
-              <button
-                type="button"
-                onClick={() => setOrder((o) => (o === 'asc' ? 'desc' : 'asc'))}
-                className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
-                data-testid="csp-capabilities-sort-order"
-              >
-                {order === 'asc' ? '↑ Asc' : '↓ Desc'}
-              </button>
+              {state.kind === 'ready' && (
+                <span className="text-sm text-gray-500" data-testid="csp-capabilities-count">
+                  {filteredSortedRows.length.toLocaleString()} of{' '}
+                  {state.rows.length.toLocaleString()} capabilities
+                </span>
+              )}
+              {canManage && state.kind === 'ready' && !hasNoComponents && (
+                <div className="ml-auto flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCreateOpen(true)}
+                    className="inline-flex items-center rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
+                    data-testid="csp-capabilities-create-toggle"
+                  >
+                    + New Capability
+                  </button>
+                </div>
+              )}
             </div>
 
-            <div
-              className="rounded-lg border border-gray-200 bg-white shadow-sm"
-              data-testid="csp-capabilities-table"
-            >
-              <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200 text-sm">
-                <thead className="bg-gray-50 text-xs font-medium uppercase tracking-wide text-gray-600">
-                  <tr>
-                    <th className="px-3 py-2 text-left">Capability</th>
-                    <th className="px-3 py-2 text-left">Component</th>
-                    <th className="px-3 py-2 text-left">NIST controls</th>
-                    <th className="px-3 py-2 text-left">Status</th>
-                    <th className="px-3 py-2 text-left">Mapped by</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {state.kind === 'loading' && (
-                    <tr>
-                      <td
-                        colSpan={5}
-                        className="px-3 py-6 text-center text-sm text-gray-500"
-                        data-testid="csp-capabilities-loading"
-                      >
-                        Loading CSP capabilities…
-                      </td>
-                    </tr>
-                  )}
-                  {state.kind === 'ready' && filteredSortedRows.length === 0 && (
-                    <tr>
-                      <td
-                        colSpan={5}
-                        className="px-3 py-6 text-center text-sm text-gray-500"
-                        data-testid="csp-capabilities-empty"
-                      >
-                        No capabilities match the current filter.
-                      </td>
-                    </tr>
-                  )}
-                  {state.kind === 'ready' &&
-                    filteredSortedRows.map((r) => (
-                      <tr key={r.id} data-testid={`csp-capability-row-${r.id}`}>
-                        <td className="whitespace-nowrap px-3 py-2 font-medium text-gray-900">
-                          {r.name}
-                          {r.description && (
-                            <div className="max-w-md truncate text-xs font-normal text-gray-500">
-                              {r.description}
-                            </div>
-                          )}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2 text-xs text-gray-700">
-                          {r.componentName}
-                          <div className="text-xs text-gray-400">{r.componentType}</div>
-                        </td>
-                        <td className="px-3 py-2 text-xs text-gray-700">
-                          {r.mappedNistControlIds.length === 0 ? (
-                            <span className="text-gray-400">—</span>
-                          ) : (
-                            <div className="flex flex-wrap gap-1">
-                              {r.mappedNistControlIds.map((id) => (
-                                <span
-                                  key={id}
-                                  className="inline-flex items-center rounded bg-indigo-50 px-1.5 py-0.5 text-[11px] font-medium text-indigo-700"
-                                >
-                                  {id}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2">
-                          <span
-                            className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${STATUS_BADGE[r.status]}`}
-                          >
-                            {r.status === 'NeedsReview' ? 'Needs review' : 'Mapped'}
-                          </span>
-                          {r.status === 'NeedsReview' && r.mappingFailureReason && (
-                            <div className="mt-0.5 max-w-xs truncate text-[11px] text-amber-700">
-                              {r.mappingFailureReason}
-                            </div>
-                          )}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2 text-xs text-gray-600">
-                          {r.mappedBy}
-                          {r.reviewedBy && (
-                            <div className="text-[11px] text-gray-400">
-                              by {r.reviewedBy}
-                            </div>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-            </div>
+            {state.kind === 'loading' && (
+              <p className="text-sm text-gray-500" data-testid="csp-capabilities-loading">
+                Loading CSP capabilities…
+              </p>
+            )}
 
-            {state.kind === 'ready' && (
-              <div
-                className="border-t border-gray-100 px-4 py-2 text-xs text-gray-600"
-                data-testid="csp-capabilities-summary"
+            {state.kind === 'ready' && filteredSortedRows.length === 0 && !hasNoComponents && (
+              <p
+                className="rounded-md border border-gray-200 bg-white px-3 py-6 text-center text-sm text-gray-500"
+                data-testid="csp-capabilities-empty"
               >
-                {filteredSortedRows.length.toLocaleString()} of{' '}
-                {state.rows.length.toLocaleString()} CSP capabilities
+                No capabilities match the current filter.
+              </p>
+            )}
+
+            {state.kind === 'ready' && filteredSortedRows.length > 0 && (
+              <div className="space-y-3" data-testid="csp-capabilities-list">
+                {filteredSortedRows.map((r) => (
+                  <CspCapabilityCard
+                    key={r.id}
+                    row={r}
+                    isExpanded={expandedId === r.id}
+                    canManage={canManage}
+                    onToggle={() =>
+                      setExpandedId((prev) => (prev === r.id ? null : r.id))
+                    }
+                    onOpenDrawer={() =>
+                      setSelectedCap({ componentId: r.componentId, capabilityId: r.id })
+                    }
+                    onArchive={async () => {
+                      if (
+                        !window.confirm(
+                          `Archive "${r.name}"? Mission owners will no longer see it. CSP-Admins can still view it via the Archived filter.`,
+                        )
+                      ) {
+                        return;
+                      }
+                      try {
+                        await archiveCspInheritedCapability(r.componentId, r.id);
+                        void reload();
+                      } catch (err) {
+                        const ex = err as { message?: string };
+                        window.alert(ex?.message ?? 'Archive failed.');
+                      }
+                    }}
+                  />
+                ))}
               </div>
             )}
-            </div>
           </>
         )}
       </div>
@@ -438,7 +376,229 @@ export default function CspCapabilitiesPage(): ReactElement {
           onCreated={handleCreated}
         />
       )}
+
+      {/* Capability detail drawer — opened by clicking a row in the table.
+          Read-only for non-CSP-Admin viewers; CSP-Admins get edit /
+          archive / review / parent-component remap actions. */}
+      {selectedCap && state.kind === 'ready' && (() => {
+        const parent = state.components.find((c) => c.id === selectedCap.componentId);
+        if (!parent) {
+          // Stale selection (e.g., the parent component was archived in
+          // another tab). Render nothing — the next reload will repopulate
+          // and the user can close the empty drawer click. We avoid
+          // setState-in-render here.
+          return null;
+        }
+        return (
+          <CapabilityDetailDrawer
+            componentId={selectedCap.componentId}
+            capabilityId={selectedCap.capabilityId}
+            componentName={parent.name}
+            componentType={parent.componentType}
+            canManage={canManage}
+            onClose={() => setSelectedCap(null)}
+            onMutated={() => {
+              void reload();
+            }}
+          />
+        );
+      })()}
     </PageLayout>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CspCapabilityCard — collapsible row visual matching the org
+// `CapabilityCard`. Header always visible (name, parent component, category
+// chip, status chip, control count, caret); when expanded reveals the
+// description, owner, linked component chip, action buttons, and the nested
+// Control Mappings list. Category is derived from the first NIST family in
+// `mappedNistControlIds` (e.g. `CP-9` → `CP / Contingency Planning`).
+// ---------------------------------------------------------------------------
+
+function CspCapabilityCard({
+  row,
+  isExpanded,
+  canManage,
+  onToggle,
+  onOpenDrawer,
+  onArchive,
+}: {
+  row: FlatCapabilityRow;
+  isExpanded: boolean;
+  canManage: boolean;
+  onToggle: () => void;
+  onOpenDrawer: () => void;
+  onArchive: () => void;
+}): ReactElement {
+  // Derive the "category" chip from the first NIST family prefix in the
+  // capability's mapped controls. Mirrors the org `CapabilityCard` category
+  // chip, which is sourced from the catalog category lookup. CSP capabilities
+  // don't carry a category field, so the NIST family stand-in keeps the chip
+  // populated for visual parity.
+  const familyCode = row.mappedNistControlIds[0]?.split('-')[0]?.toUpperCase() ?? '';
+  const familyLabel = familyCode ? (CSP_NIST_FAMILIES[familyCode] ?? familyCode) : null;
+
+  return (
+    <div
+      className="rounded-lg border border-violet-200 bg-white shadow-sm transition-shadow hover:shadow-md"
+      data-testid={`csp-capability-card-${row.id}`}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full rounded-lg p-4 text-left focus:outline-none focus:ring-2 focus:ring-indigo-300"
+        aria-expanded={isExpanded}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <h3 className="truncate text-sm font-semibold text-gray-900">{row.name}</h3>
+              <span className="inline-flex shrink-0 items-center rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700">
+                CSP
+              </span>
+            </div>
+            <p className="text-xs text-gray-500">
+              {row.componentName}
+              <span className="ml-1 text-gray-400">· {row.componentType}</span>
+            </p>
+          </div>
+          <div className="ml-4 flex shrink-0 items-center gap-3">
+            {familyLabel && (
+              <span className="hidden items-center rounded bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 sm:inline-flex">
+                {familyLabel}
+              </span>
+            )}
+            <span
+              className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${STATUS_BADGE[row.status]}`}
+            >
+              {row.status === 'NeedsReview' ? 'Needs review' : row.status}
+            </span>
+            <span className="text-xs text-gray-400">
+              {row.mappedNistControlIds.length} control{row.mappedNistControlIds.length === 1 ? '' : 's'}
+            </span>
+            <svg
+              className={`h-4 w-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </div>
+        </div>
+      </button>
+
+      {isExpanded && (
+        <div className="space-y-3 border-t border-violet-100 px-4 pb-4 pt-3">
+          {row.description && (
+            <p className="line-clamp-3 text-sm text-gray-600">{row.description}</p>
+          )}
+          {row.status === 'NeedsReview' && row.mappingFailureReason && (
+            <p className="text-xs text-amber-700">
+              <span className="font-medium">Review note:</span> {row.mappingFailureReason}
+            </p>
+          )}
+          <div className="flex items-center justify-between text-xs text-gray-500">
+            <span>
+              Owner: <span className="text-gray-700">{row.createdBy ?? 'CSP'}</span>
+              {row.reviewedBy && (
+                <span className="ml-2 text-gray-400">reviewed by {row.reviewedBy}</span>
+              )}
+            </span>
+            <span>Mapped by {row.mappedBy}</span>
+          </div>
+          <div>
+            <div className="text-[11px] font-medium uppercase tracking-wide text-gray-500">
+              Linked Component
+            </div>
+            <div className="mt-1 flex flex-wrap gap-1">
+              <span className="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">
+                {row.componentName}
+              </span>
+            </div>
+          </div>
+
+          {canManage && (
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenDrawer();
+                }}
+                className="rounded bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"
+                data-testid={`csp-capability-card-edit-${row.id}`}
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenDrawer();
+                }}
+                className="rounded border border-indigo-600 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-50"
+                data-testid={`csp-capability-card-remap-${row.id}`}
+              >
+                Remap parent
+              </button>
+              {row.status !== 'Archived' && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onArchive();
+                  }}
+                  className="rounded bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100"
+                  data-testid={`csp-capability-card-archive-${row.id}`}
+                >
+                  Archive
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Control Mappings panel — mirrors the org expanded card pattern
+              (indented list under the card body). CSP capabilities carry
+              just a flat list of NIST control ids, so each row renders the
+              control id chip plus the resolved family name and a "Global
+              (All Systems)" scope chip matching the org screenshot's
+              per-mapping scope chip. */}
+          <div className="ml-2 mt-2 border-l-2 border-indigo-200 pl-3">
+            <div className="flex items-center justify-between">
+              <div className="text-[11px] font-medium uppercase tracking-wide text-gray-500">
+                Control Mappings ({row.mappedNistControlIds.length})
+              </div>
+            </div>
+            {row.mappedNistControlIds.length === 0 ? (
+              <p className="mt-1 text-xs text-gray-400">No NIST controls mapped.</p>
+            ) : (
+              <ul className="mt-1 space-y-1">
+                {row.mappedNistControlIds.map((id) => {
+                  const fam = id.split('-')[0]?.toUpperCase() ?? '';
+                  const famName = CSP_NIST_FAMILIES[fam];
+                  return (
+                    <li
+                      key={id}
+                      className="flex flex-wrap items-center gap-2 rounded border border-gray-100 bg-gray-50/50 px-2 py-1 text-xs"
+                    >
+                      <span className="inline-flex items-center rounded bg-indigo-50 px-1.5 py-0.5 font-medium text-indigo-700">
+                        {id}
+                      </span>
+                      {famName && <span className="text-gray-700">{famName}</span>}
+                      <span className="ml-auto inline-flex items-center rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">
+                        Global (All Systems)
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

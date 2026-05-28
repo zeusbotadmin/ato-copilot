@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSettings, type DashboardSettings } from '../../hooks/useSettings';
+import { useCspDashboardAvailable } from '../layout/useCspDashboardAvailable';
+import { useImpersonationActive } from '../../hooks/useImpersonationActive';
 import apiClient from '../../api/client';
 
 interface SettingsPanelProps {
@@ -309,26 +311,39 @@ function DocumentSourcesSection({ settings, update }: { settings: DashboardSetti
 
 function AdminSection({ settings, update, onClose }: { settings: DashboardSettings; update: (p: Partial<DashboardSettings>) => void; onClose: () => void }) {
   const navigate = useNavigate();
+  // Scope-aware wizard target — mirrors the `/components` and `/` route
+  // resolvers (see `ComponentsRoute`, `PortfolioRoute`):
+  //   CSP-Admin + not impersonating  → CSP wizard (`/onboarding/csp`)
+  //   else                           → per-org wizard (`/onboarding`)
+  // The CSP wizard owns CSP-scope concerns (legal entity, ATO documents,
+  // branding); the per-org wizard owns org-scope concerns (org context,
+  // RMF roles, Azure scope). Routing the button to the wrong one — as
+  // happened before — drops a CSP-Admin into the Feature 047 modal even
+  // though they have nothing to fill in at org scope on the CSP portfolio.
+  const cspAvailable = useCspDashboardAvailable();
+  const impersonating = useImpersonationActive();
+  const cspScope = cspAvailable === true && !impersonating;
+  const wizardPath = cspScope ? '/onboarding/csp?reentry=admin' : '/onboarding?stepNav=admin';
+  const wizardLabel = cspScope
+    ? 'Re-open the CSP onboarding wizard to update legal-entity profile, hosting CSP branding, ATO document templates, or service-catalog scope.'
+    : 'Re-open the tenant onboarding wizard to update organization context, RMF role assignments, Azure subscription scope, document templates, eMASS package, SSP PDF ingestion, or narrative seeds.';
   return (
     <div className="space-y-1">
       <SectionDivider title="Onboarding" />
       <div className="py-2">
-        <p className="text-sm text-gray-700">
-          Re-open the tenant onboarding wizard to update organization context, RMF role assignments,
-          Azure subscription scope, document templates, eMASS package, SSP PDF ingestion, or narrative seeds.
-        </p>
+        <p className="text-sm text-gray-700">{wizardLabel}</p>
         <button
           type="button"
           onClick={() => {
             onClose();
-            navigate('/onboarding?stepNav=admin');
+            navigate(wizardPath);
           }}
           className="mt-3 inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
         >
           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M3 7V5a2 2 0 012-2h4l2 2h7a2 2 0 012 2v3M3 7h18M3 7v10a2 2 0 002 2h14a2 2 0 002-2V10" />
           </svg>
-          Open onboarding wizard
+          {cspScope ? 'Open CSP onboarding wizard' : 'Open onboarding wizard'}
         </button>
       </div>
       <SectionDivider title="Session" />

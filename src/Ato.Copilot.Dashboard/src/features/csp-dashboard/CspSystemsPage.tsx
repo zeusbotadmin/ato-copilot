@@ -166,6 +166,7 @@ export default function CspSystemsPage({
           eyebrow="Portfolio"
           title="Systems across all organizations"
           description="Cross-organizational view of every registered system. Click a row to impersonate the system's owning organization and open its detail page. Disabled-organization systems and the CSP's system-reference organization are excluded."
+          showOrgName={false}
           actions={
             data ? (
               <span className="inline-flex items-center rounded-full bg-white/15 px-3 py-1 text-xs font-medium text-white ring-1 ring-white/30 backdrop-blur">

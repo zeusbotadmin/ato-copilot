@@ -4,7 +4,9 @@ using Microsoft.Extensions.Logging;
 using Ato.Copilot.Core.Data.Context;
 using Ato.Copilot.Core.Interfaces.Onboarding;
 using Ato.Copilot.Core.Models.Onboarding;
+using Ato.Copilot.Core.Observability;
 using Ato.Copilot.Core.Onboarding;
+using Ato.Copilot.Core.Services.Roles;
 
 namespace Ato.Copilot.Agents.Compliance.Services.Onboarding;
 
@@ -16,15 +18,24 @@ public class OrganizationRoleAssignmentService : IOrganizationRoleAssignmentServ
     private readonly IDbContextFactory<AtoCopilotContext> _contextFactory;
     private readonly IWizardAuditService _audit;
     private readonly ILogger<OrganizationRoleAssignmentService> _logger;
+    private readonly ISoDConflictDetector? _sodDetector;
+    private readonly IOrganizationRoleFanoutQueue? _fanoutQueue;
+    private readonly RoleMetrics? _metrics;
 
     public OrganizationRoleAssignmentService(
         IDbContextFactory<AtoCopilotContext> contextFactory,
         IWizardAuditService audit,
-        ILogger<OrganizationRoleAssignmentService> logger)
+        ILogger<OrganizationRoleAssignmentService> logger,
+        ISoDConflictDetector? sodDetector = null,
+        IOrganizationRoleFanoutQueue? fanoutQueue = null,
+        RoleMetrics? metrics = null)
     {
         _contextFactory = contextFactory;
         _audit = audit;
         _logger = logger;
+        _sodDetector = sodDetector;
+        _fanoutQueue = fanoutQueue;
+        _metrics = metrics;
     }
 
     /// <inheritdoc />
@@ -79,6 +90,20 @@ public class OrganizationRoleAssignmentService : IOrganizationRoleAssignmentServ
                 $"Multiple {role} holders are unusual — confirm this is the intended structure.");
         }
 
+        // FR-026: DoDI 8510.01 separation-of-duties detection (non-blocking).
+        // Warnings are surfaced to the caller; the write proceeds.
+        var rmfEquivalent = OrganizationRoleToRmfRoleMap.TryMap(role);
+        if (_sodDetector is not null && rmfEquivalent is not null)
+        {
+            var sodWarnings = await _sodDetector.DetectAsync(
+                tenantId, personId, rmfEquivalent.Value, ct);
+            foreach (var w in sodWarnings)
+            {
+                warnings.Add(w.Message);
+                _metrics?.RecordSodWarning(tenantId, w.RoleConflict.Existing, w.RoleConflict.Target);
+            }
+        }
+
         var now = DateTimeOffset.UtcNow;
         var assignment = new OrganizationRoleAssignment
         {
@@ -103,6 +128,22 @@ public class OrganizationRoleAssignmentService : IOrganizationRoleAssignmentServ
             effectsJson: warnings.Count == 0 ? null : JsonSerializer.Serialize(new { warnings }),
             correlationId: correlationId,
             ct: ct);
+
+        // FR-028: enqueue propagation intent so the fan-out worker materializes
+        // inherited rows on every active RegisteredSystem in this tenant.
+        // Administrator has no RmfRole image (FR-020), so we skip the enqueue
+        // for that role only.
+        if (_fanoutQueue is not null && rmfEquivalent is not null)
+        {
+            await _fanoutQueue.EnqueueAsync(
+                new PropagationIntent(
+                    tenantId,
+                    assignment.Id,
+                    rmfEquivalent.Value,
+                    personId,
+                    DateTimeOffset.UtcNow),
+                ct);
+        }
 
         return new RoleAssignmentResult(assignment, warnings);
     }
@@ -140,9 +181,29 @@ public class OrganizationRoleAssignmentService : IOrganizationRoleAssignmentServ
         }
 
         var beforeJson = JsonSerializer.Serialize(Project(assignment, null));
-        assignment.RemovedAt = DateTimeOffset.UtcNow;
-        assignment.UpdatedAt = DateTimeOffset.UtcNow;
+        var nowRemoved = DateTimeOffset.UtcNow;
+        assignment.RemovedAt = nowRemoved;
+        assignment.UpdatedAt = nowRemoved;
         assignment.UpdatedBy = actorUserId;
+
+        // FR-007 T029 cascade: every inherited SystemRoleAssignment pointing at
+        // this Org row must be soft-removed in the SAME SaveChangesAsync so
+        // there is a single shared RemovedAt timestamp. Per-system override rows
+        // (IsInherited=false) are preserved because their existence is what
+        // makes them overrides.
+        var inheritedRows = await db.SystemRoleAssignments
+            .Where(s => s.TenantId == tenantId
+                     && s.SourceOrganizationRoleAssignmentId == assignmentId
+                     && s.IsInherited
+                     && s.RemovedAt == null)
+            .ToListAsync(ct);
+        foreach (var row in inheritedRows)
+        {
+            row.RemovedAt = nowRemoved;
+            row.UpdatedAt = nowRemoved;
+            row.UpdatedBy = actorUserId;
+        }
+
         await db.SaveChangesAsync(ct);
 
         await _audit.RecordAsync(
@@ -150,7 +211,9 @@ public class OrganizationRoleAssignmentService : IOrganizationRoleAssignmentServ
             nameof(OrganizationRoleAssignment), assignment.Id,
             beforeJson: beforeJson,
             afterJson: null,
-            effectsJson: null,
+            effectsJson: inheritedRows.Count == 0
+                ? null
+                : JsonSerializer.Serialize(new { cascadedInheritedRows = inheritedRows.Count }),
             correlationId: correlationId,
             ct: ct);
     }

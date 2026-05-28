@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import RmfPhaseProgressComponent from '../components/charts/RmfPhaseProgress';
 import PhaseReadinessPanel from '../components/cards/PhaseReadinessPanel';
@@ -11,11 +11,16 @@ import AtoCountdown from '../components/cards/AtoCountdown';
 import ActivityFeed from '../components/cards/ActivityFeed';
 import TodoPanel from '../components/cards/TodoPanel';
 import HelpTooltip from '../components/help/HelpTooltip';
+import RoleAssignmentPanel from '../components/cards/RoleAssignmentPanel';
+import AssignRoleDialog from '../components/roles/AssignRoleDialog';
 import { useSettings } from '../hooks/useSettings';
 import { usePolling } from '../hooks/usePolling';
 import { getHeatmap } from '../api/systemDetail';
 import { getProfileCompleteness } from '../api/systemProfile';
 import { useSystemContext } from '../components/layout/SystemLayout';
+import { rolesApi } from '../api/roles';
+import type { RmfRole } from '../types/roles';
+import { RBAC_ASSIGNABLE_BY } from '../types/roles';
 import type { HeatmapResponse, ProfileCompletenessResponse } from '../types/dashboard';
 
 export default function SystemDetail() {
@@ -23,6 +28,34 @@ export default function SystemDetail() {
   const { settings } = useSettings();
   const [heatmapData, setHeatmapData] = useState<HeatmapResponse | null>(null);
   const [profileCompleteness, setProfileCompleteness] = useState<ProfileCompletenessResponse | null>(null);
+  // Feature 049 (T040 / T040a) — caller's effective RMF role (used to gate CTAs).
+  const [callerEffectiveRole, setCallerEffectiveRole] = useState<RmfRole | null>(null);
+  // Mission Owner banner CTA → AssignRoleDialog open state.
+  const [moDialogOpen, setMoDialogOpen] = useState(false);
+
+  // One-shot fetch on mount: caller's effective role. We swallow failures and
+  // fall back to `null`, which causes RoleAssignmentPanel to hide every write
+  // affordance. The server is still the sole RBAC enforcement point.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await rolesApi.getEffectiveRole();
+        if (!cancelled) {
+          setCallerEffectiveRole(resp.effectiveRole);
+        }
+      } catch {
+        if (!cancelled) {
+          setCallerEffectiveRole(null);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const canAssignMissionOwner = callerEffectiveRole
+    ? RBAC_ASSIGNABLE_BY[callerEffectiveRole].includes('MissionOwner')
+    : false;
 
   const fetchExtra = useCallback(async () => {
     const [h, pc] = await Promise.allSettled([
@@ -113,7 +146,7 @@ export default function SystemDetail() {
         </div>
       )}
 
-      {/* Missing Mission Owner Banner (T044) */}
+      {/* Missing Mission Owner Banner (T044 → T040 Feature 049 — actionable CTA) */}
       {profileCompleteness && !profileCompleteness.missionOwnerAssigned && profileCompleteness.daysSinceRegistration >= 30 && (
         <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 flex items-center justify-between">
           <div>
@@ -122,12 +155,35 @@ export default function SystemDetail() {
               This system was registered {profileCompleteness.daysSinceRegistration} days ago.
             </p>
           </div>
-          {settings.role === 'ISSM' && (
-            <span className="text-xs font-medium text-red-700 bg-red-100 px-2.5 py-1 rounded">
-              Assign via MCP tool
-            </span>
+          {canAssignMissionOwner && (
+            <button
+              type="button"
+              data-action="assign-mission-owner"
+              onClick={() => setMoDialogOpen(true)}
+              className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
+            >
+              Assign Mission Owner
+            </button>
           )}
         </div>
+      )}
+
+      {/* Feature 049 / T040 — Mission Owner assign dialog (Org-scope). */}
+      {moDialogOpen && (
+        <AssignRoleDialog
+          open
+          onClose={() => setMoDialogOpen(false)}
+          scope={{ kind: 'organization' }}
+          initialRole="MissionOwner"
+          lockRole
+          callerEffectiveRole={callerEffectiveRole}
+          onAssigned={() => {
+            setMoDialogOpen(false);
+            // Re-fetch profile completeness so the banner disappears once the
+            // server confirms the assignment.
+            void fetchExtra();
+          }}
+        />
       )}
 
       {/* RMF Phase Progress */}
@@ -227,6 +283,14 @@ export default function SystemDetail() {
           <HelpTooltip helpKey="complianceTrends" />
         </div>
         <TrendChart systemId={detail.systemId} />
+      </div>
+
+      {/* Feature 049 / T040a — Unified per-system RoleAssignmentPanel (7 rows). */}
+      <div className="mb-6">
+        <RoleAssignmentPanel
+          registeredSystemId={detail.systemId}
+          callerEffectiveRole={callerEffectiveRole}
+        />
       </div>
 
       {/* Activity Feed */}

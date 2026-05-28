@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Ato.Copilot.Core.Data.Context;
 using Ato.Copilot.Core.Interfaces.Onboarding;
 using Ato.Copilot.Core.Models.Onboarding;
+using Ato.Copilot.Core.Services.Roles;
 
 namespace Ato.Copilot.Agents.Compliance.Services.Onboarding;
 
@@ -58,8 +59,20 @@ public class RegisteredSystemRoleSnapshotter : IRegisteredSystemRoleSnapshotter
             .ToListAsync(ct);
 
         var now = DateTimeOffset.UtcNow;
+        var snapshotted = 0;
+        var skipped = 0;
         foreach (var src in orgAssignments)
         {
+            // Feature 049 T029a: Administrator is an Org-scope-only role with
+            // no RmfRole image (DoDI 8510.01 has no "Administrator" party); the
+            // map returns null and we skip the row. All six other Org roles map
+            // identity-to-identity (or, for Assessor, to Sca) and ARE copied.
+            if (OrganizationRoleToRmfRoleMap.TryMap(src.Role) is null)
+            {
+                skipped++;
+                continue;
+            }
+
             db.SystemRoleAssignments.Add(new SystemRoleAssignment
             {
                 Id = Guid.NewGuid(),
@@ -74,14 +87,15 @@ public class RegisteredSystemRoleSnapshotter : IRegisteredSystemRoleSnapshotter
                 UpdatedAt = now,
                 UpdatedBy = actorUserId,
             });
+            snapshotted++;
         }
         await db.SaveChangesAsync(ct);
 
         _logger.LogInformation(
-            "Snapshotted {Count} org-level role assignments to system {SystemId} (tenant {TenantId}, correlation {CorrelationId}).",
-            orgAssignments.Count, registeredSystemId, tenantId, correlationId);
+            "Snapshotted {Count} org-level role assignments to system {SystemId} (tenant {TenantId}, correlation {CorrelationId}). Skipped {Skipped} non-RMF rows (e.g., Administrator).",
+            snapshotted, registeredSystemId, tenantId, correlationId, skipped);
 
-        return orgAssignments.Count;
+        return snapshotted;
     }
 
     /// <inheritdoc />

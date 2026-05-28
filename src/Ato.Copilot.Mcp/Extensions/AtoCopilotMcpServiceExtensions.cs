@@ -168,6 +168,12 @@ public static class AtoCopilotMcpServiceExtensions
         services.AddScoped<Ato.Copilot.Core.Interfaces.Tenancy.ICspInheritedComponentService,
             Ato.Copilot.Core.Services.Tenancy.CspInheritedComponentService>();
 
+        // Feature 050 — CSP-inherited capability lifecycle: append-only
+        // audit-trail writer/reader. Scoped (uses IDbContextFactory; safe at
+        // any lifetime, but matches the surrounding registrations).
+        services.AddScoped<Ato.Copilot.Core.Interfaces.Tenancy.ICapabilityHistoryService,
+            Ato.Copilot.Core.Services.Tenancy.CapabilityHistoryService>();
+
         // Feature 041: Authorization Package generation pipeline
         services.AddSingleton(System.Threading.Channels.Channel.CreateBounded<Ato.Copilot.Core.Dtos.Dashboard.PackageExportJob>(
             new System.Threading.Channels.BoundedChannelOptions(20) { FullMode = System.Threading.Channels.BoundedChannelFullMode.Wait }));
@@ -192,6 +198,27 @@ public static class AtoCopilotMcpServiceExtensions
         services.AddScoped<Ato.Copilot.Core.Services.TicketingService>();
         services.AddScoped<Ato.Copilot.Core.Services.Ticketing.ITicketingProvider, Ato.Copilot.Core.Services.Ticketing.JiraProvider>();
         services.AddScoped<Ato.Copilot.Core.Services.Ticketing.ITicketingProvider, Ato.Copilot.Core.Services.Ticketing.ServiceNowProvider>();
+
+        // Feature 049: Unified RMF Role Assignments — DI per
+        // specs/049-unified-rmf-role-assignments/contracts/internal-services.md § DI Registration.
+        // The fanout queue is a Singleton (one channel per process), the worker is hosted, and
+        // the read-side services are Singletons that resolve a DbContext from the factory per
+        // call (matches the IDbContextFactory pattern used by every other Feature 049 service).
+        services.AddSingleton<Ato.Copilot.Core.Observability.RoleMetrics>();
+        services.AddSingleton<Ato.Copilot.Core.Services.Roles.IOrganizationRoleFanoutQueue,
+            Ato.Copilot.Core.Services.Roles.OrganizationRoleFanoutQueue>();
+        services.AddSingleton<Ato.Copilot.Core.Services.Roles.IRoleAuthorizationService,
+            Ato.Copilot.Core.Services.Roles.RoleAuthorizationService>();
+        services.AddSingleton<Ato.Copilot.Core.Services.Roles.IUnifiedRoleReader,
+            Ato.Copilot.Core.Services.Roles.UnifiedRoleReader>();
+        services.AddSingleton<Ato.Copilot.Core.Services.Roles.ICallerEffectiveRoleResolver,
+            Ato.Copilot.Core.Services.Roles.CallerEffectiveRoleResolver>();
+        services.AddSingleton<Ato.Copilot.Core.Services.Roles.ISoDConflictDetector,
+            Ato.Copilot.Core.Services.Roles.SoDConflictDetector>();
+        if (includeHostedServices)
+        {
+            services.AddHostedService<Ato.Copilot.Mcp.Workers.OrganizationRoleFanoutWorker>();
+        }
 
         return services;
     }

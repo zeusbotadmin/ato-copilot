@@ -4,6 +4,7 @@ using Ato.Copilot.Core.Interfaces.Tenancy;
 using Ato.Copilot.Core.Models.Compliance;
 using Ato.Copilot.Core.Models.Tenancy;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 
 namespace Ato.Copilot.Core.Services.Tenancy;
@@ -47,13 +48,16 @@ public sealed class TenantOnboardingService : ITenantOnboardingService
     };
 
     private readonly IDbContextFactory<AtoCopilotContext> _contextFactory;
+    private readonly IMemoryCache _cache;
     private readonly ILogger<TenantOnboardingService> _logger;
 
     public TenantOnboardingService(
         IDbContextFactory<AtoCopilotContext> contextFactory,
+        IMemoryCache cache,
         ILogger<TenantOnboardingService> logger)
     {
         _contextFactory = contextFactory;
+        _cache = cache;
         _logger = logger;
     }
 
@@ -228,6 +232,18 @@ public sealed class TenantOnboardingService : ITenantOnboardingService
 
         AppendAudit(db, tenantId, actorUserId, StepNames.Submitted, new { tenantId, firstOrgId = firstOrg.Id });
         await db.SaveChangesAsync(ct);
+
+        // FR-054 / FR-058: the MCP host's TenantResolutionMiddleware caches
+        // per-tenant TenantStatus and OnboardingState for ~30 s. We just
+        // flipped OnboardingState to Active, so the cached value (likely
+        // Pending or InWizard) is now stale and the middleware would 403
+        // every non-onboarding request with TENANT_ONBOARDING_INCOMPLETE
+        // for up to the TTL. Drop both keys so the next request re-reads
+        // the row and observes the Active state immediately. tenant-status
+        // is invalidated defensively in case a lifecycle change is layered
+        // onto activation in the future.
+        _cache.Remove(TenantResolutionCacheKeys.TenantOnboarding(tenantId));
+        _cache.Remove(TenantResolutionCacheKeys.TenantStatus(tenantId));
 
         if (!wasActive)
         {

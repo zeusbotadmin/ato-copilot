@@ -171,8 +171,8 @@ and emit audit rows. Silent token renewal does NOT reset the idle counter.
 
 ### 4.1 Endpoint: POST /api/auth/signout
 
-- [ ] T055 [TDD-Test] [US2] [tests/Ato.Copilot.Tests.Integration/Auth/SignOutEndpointTests.cs](tests/Ato.Copilot.Tests.Integration/Auth/SignOutEndpointTests.cs) — `POST /api/auth/signout` returns 204, writes `SignOut` row (default reason); writes `IdleSignOut` row when body is `{"reason":"idle_timeout"}`; deletes `X-Impersonated-Tenant` cookie when present; 401 without bearer. RED.
-- [ ] T056 [US2] Implement `POST /api/auth/signout` per [contracts/http-api.md § 3](specs/051-login/contracts/http-api.md). GREEN T055.
+- [X] T055 [TDD-Test] [US2] [tests/Ato.Copilot.Tests.Integration/Auth/SignOutEndpointTests.cs](tests/Ato.Copilot.Tests.Integration/Auth/SignOutEndpointTests.cs) — `POST /api/auth/signout` returns 204, writes `SignOut` row (default reason); writes `IdleSignOut` row when body is `{"reason":"idle_timeout"}`; deletes `X-Impersonated-Tenant` cookie when present; 401 without bearer. RED.
+- [X] T056 [US2] Implement `POST /api/auth/signout` per [contracts/http-api.md § 3](specs/051-login/contracts/http-api.md). GREEN T055.
 
 ### 4.2 `useIdleTimer` hook
 

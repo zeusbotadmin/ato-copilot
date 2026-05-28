@@ -46,6 +46,7 @@ public static class AuthEndpoints
 
         group.MapGet("/login-config", GetLoginConfig).WithName("GetLoginConfig");
         group.MapGet("/me", GetMeAsync).WithName("GetMe");
+        group.MapPost("/signout", PostSignOutAsync).WithName("PostSignOut");
 
         return app;
     }
@@ -345,6 +346,147 @@ public static class AuthEndpoints
 
         return Success(sw, data);
     }
+
+    // ─── POST /signout ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Revokes the session and writes a <see cref="LoginAuditEventType.SignOut"/>
+    /// row (or <see cref="LoginAuditEventType.IdleSignOut"/> when body
+    /// is <c>{"reason":"idle_timeout"}</c>), deletes the impersonation
+    /// cookie if present, and returns 204. Per
+    /// <c>contracts/http-api.md § 3</c>.
+    /// </summary>
+    /// <remarks>
+    /// Sign-out MUST NOT fail for an authenticated user with no tenant
+    /// assignment — we still write the audit row stamped with
+    /// <c>SYSTEM_TENANT_ID</c> (<see cref="Guid.Empty"/>) so SOC analysts
+    /// can correlate the event.
+    /// </remarks>
+    private static async Task<IResult> PostSignOutAsync(
+        HttpContext http,
+        IDbContextFactory<AtoCopilotContext> dbFactory,
+        ILoginAuditService audit,
+        LoginAuditContextAccessor auditCtxAccessor,
+        ITenantImpersonationService impersonation,
+        CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+
+        if (!(http.User.Identity?.IsAuthenticated ?? false))
+        {
+            return Unauthorized(sw);
+        }
+
+        var oid = http.User.FindFirst("oid")?.Value
+                  ?? http.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        var tid = http.User.FindFirst("tid")?.Value;
+
+        if (string.IsNullOrEmpty(oid))
+        {
+            return Unauthorized(sw);
+        }
+
+        // Parse optional body { "reason": "manual" | "idle_timeout" }.
+        // Empty body ⇒ default "manual". Unknown values ⇒ 400.
+        var eventType = LoginAuditEventType.SignOut;
+        if (http.Request.ContentLength is > 0)
+        {
+            SignOutRequestBody? body;
+            try
+            {
+                body = await http.Request.ReadFromJsonAsync<SignOutRequestBody>(ct);
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                return ErrorEnvelope(sw,
+                    StatusCodes.Status400BadRequest,
+                    "VALIDATION_FAILED",
+                    "Request body is not valid JSON.",
+                    "Send { \"reason\": \"manual\" } or { \"reason\": \"idle_timeout\" } — or omit the body.");
+            }
+
+            if (body is not null && !string.IsNullOrWhiteSpace(body.Reason))
+            {
+                switch (body.Reason)
+                {
+                    case "manual":
+                        eventType = LoginAuditEventType.SignOut;
+                        break;
+                    case "idle_timeout":
+                        eventType = LoginAuditEventType.IdleSignOut;
+                        break;
+                    default:
+                        return ErrorEnvelope(sw,
+                            StatusCodes.Status400BadRequest,
+                            "VALIDATION_FAILED",
+                            $"Unknown sign-out reason '{body.Reason}'.",
+                            "Only \"manual\" and \"idle_timeout\" are accepted.");
+                }
+            }
+        }
+
+        // Resolve the effective tenant for the audit row. Sign-out MUST
+        // succeed even when no tenant row exists for the user's tid —
+        // stamp SYSTEM_TENANT_ID (Guid.Empty) in that case so the row
+        // is still queryable by SOC analysts.
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var auditCtx = auditCtxAccessor.FromHttpContext(http);
+
+        Guid effectiveTenantId = Guid.Empty;
+        if (Guid.TryParse(tid, out var tidGuid))
+        {
+            var homeTenant = await db.Tenants
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(t => t.EntraTenantId == tidGuid, ct);
+            if (homeTenant is not null)
+            {
+                effectiveTenantId = homeTenant.Id;
+
+                // Promote to the impersonated tenant when the cookie is
+                // present + valid, matching /me's resolution path.
+                if (http.Request.Cookies.TryGetValue(impersonation.CookieName, out var cookieValue) &&
+                    impersonation.Validate(cookieValue) is { } payload)
+                {
+                    var target = await db.Tenants
+                        .IgnoreQueryFilters()
+                        .FirstOrDefaultAsync(t => t.Id == payload.ImpersonatedTenantId, ct);
+                    if (target is not null)
+                    {
+                        effectiveTenantId = target.Id;
+                    }
+                }
+            }
+        }
+
+        await audit.AppendAsync(db, new LoginAuditEventDraft(
+            EventType: eventType,
+            Oid: oid,
+            Tid: tid,
+            EffectiveTenantId: effectiveTenantId,
+            CorrelationId: auditCtx.CorrelationId,
+            SourceIp: auditCtx.SourceIp,
+            UserAgent: auditCtx.UserAgent,
+            Surface: LoginSurface.Dashboard), ct);
+        await db.SaveChangesAsync(ct);
+
+        // Delete the impersonation cookie if present (FR-006 / § 3.3
+        // step 3). The matching attributes are required so the browser
+        // recognises the directive as a delete of the original cookie.
+        if (http.Request.Cookies.ContainsKey(impersonation.CookieName))
+        {
+            http.Response.Cookies.Delete(impersonation.CookieName, new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = true,
+                SameSite = SameSiteMode.Strict,
+                Path = "/",
+            });
+        }
+
+        return Results.NoContent();
+    }
+
+    private sealed record SignOutRequestBody(string? Reason);
 
     // ─── Helpers ────────────────────────────────────────────────────────
 

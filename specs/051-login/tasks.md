@@ -334,9 +334,9 @@ immutable cold storage. (Write-side already wired in Phase 2.)
 
 ### 8.1 MSAL Node configuration
 
-- [ ] T101 [P] [US5] Create [extensions/vscode/src/auth/msalNode.ts](extensions/vscode/src/auth/msalNode.ts) — `buildMsalNodeConfig` + `VsCodeLoginConfig` per [contracts/vscode-extension.md § 2](specs/051-login/contracts/vscode-extension.md). **Per FR-017 (analysis C14): include the `cloud` field on `VsCodeLoginConfig` and implement the validator described in [contracts/vscode-extension.md § 2.1](specs/051-login/contracts/vscode-extension.md) that maps `AzurePublic` → `https://microsoft.com/devicelogin` and `AzureUSGovernment` → `https://microsoft.us/devicelogin`.**
-- [ ] T102 [P] [US5] Create [extensions/vscode/src/auth/secretStorage.ts](extensions/vscode/src/auth/secretStorage.ts) — per-tenant token + account persistence using the `ato.auth.token.{tenantId}` / `ato.auth.account.{tenantId}` key naming per [contracts/vscode-extension.md § 5](specs/051-login/contracts/vscode-extension.md)
-- [ ] T103 [TDD-Test] [P] [US5] [extensions/vscode/test/auth/secretStorage.test.ts](extensions/vscode/test/auth/secretStorage.test.ts) — mocha + `vscode-test`: persist + read + delete per tenant key, signing out one tenant leaves another intact. RED then GREEN.
+- [X] T101 [P] [US5] Create [extensions/vscode/src/auth/msalNode.ts](extensions/vscode/src/auth/msalNode.ts) — `buildMsalNodeConfig` + `VsCodeLoginConfig` per [contracts/vscode-extension.md § 2](specs/051-login/contracts/vscode-extension.md). **Per FR-017 (analysis C14): include the `cloud` field on `VsCodeLoginConfig` and implement the validator described in [contracts/vscode-extension.md § 2.1](specs/051-login/contracts/vscode-extension.md) that maps `AzurePublic` → `https://microsoft.com/devicelogin` and `AzureUSGovernment` → `https://microsoft.us/devicelogin`.**
+- [X] T102 [P] [US5] Create [extensions/vscode/src/auth/secretStorage.ts](extensions/vscode/src/auth/secretStorage.ts) — per-tenant token + account persistence using the `ato.auth.token.{tenantId}` / `ato.auth.account.{tenantId}` key naming per [contracts/vscode-extension.md § 5](specs/051-login/contracts/vscode-extension.md)
+- [X] T103 [TDD-Test] [P] [US5] [extensions/vscode/test/auth/secretStorage.test.ts](extensions/vscode/test/auth/secretStorage.test.ts) — mocha + `vscode-test`: persist + read + delete per tenant key, signing out one tenant leaves another intact. RED then GREEN.
 
 ### 8.2 Sign-in / out / switch commands
 

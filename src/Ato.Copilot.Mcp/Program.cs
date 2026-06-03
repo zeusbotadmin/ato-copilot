@@ -21,6 +21,7 @@ using Ato.Copilot.Mcp.Endpoints;
 using Ato.Copilot.Mcp.Endpoints.Onboarding;
 using Ato.Copilot.Mcp.Endpoints.Csp;
 using Ato.Copilot.Mcp.Endpoints.Tenancy;
+using Ato.Copilot.Mcp.Endpoints.Auth;
 using Ato.Copilot.Mcp.Middleware;
 using Ato.Copilot.Mcp.Logging;
 using Ato.Copilot.Mcp.Server;
@@ -323,6 +324,25 @@ async Task RunHttpModeAsync(string[] args)
     // Register a default authentication scheme that surfaces the principal already
     // populated by CacAuthenticationMiddleware. Required so AuthorizationMiddleware
     // can issue ChallengeAsync/ForbidAsync for endpoints with RequireAuthorization().
+    //
+    // Feature 051 T080 [US4] — Entra/JWT failure classification map:
+    //
+    //   | LoginErrorClass       | Where it's wired today                              |
+    //   |-----------------------|-----------------------------------------------------|
+    //   | NoTenantAssignment    | AuthEndpoints.GetMeAsync (writes audit + 403)        |
+    //   | MfaFailure            | CacAuthenticationMiddleware amr branch (T079)        |
+    //   | NoCardInserted        | CLIENT-SIDE — browser surfaces cert prompt           |
+    //   | CertExpired           | TODO(Phase 13) — needs cert-auth handler             |
+    //   | CertNotYetValid       | TODO(Phase 13) — needs cert-auth handler             |
+    //   | CertRevoked           | TODO(Phase 13) — needs OCSP/CRL fetcher              |
+    //   | ClockSkew             | TODO(Phase 13) — needs nbf/iat skew detector         |
+    //   | AccountDisabled       | TODO(Phase 13) — needs JwtBearerEvents.OnAuthFailed  |
+    //   | ConditionalAccessBlock| TODO(Phase 13) — needs MSAL claims-challenge handler |
+    //   | NetworkFailure        | CLIENT-SIDE — MSAL surfaces network errors           |
+    //
+    // The classifier (LoginErrorClassifier) supports all 10 classes via pure inputs;
+    // wiring the cert-auth / Conditional-Access paths is deferred until Phase 13
+    // installs a real X509 client-cert authentication handler on the gateway.
     builder.Services
         .AddAuthentication(Ato.Copilot.Mcp.Authentication.CacPassthroughAuthHandler.SchemeName)
         .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions,
@@ -405,6 +425,82 @@ async Task RunHttpModeAsync(string[] args)
         builder.Configuration.GetSection(Ato.Copilot.Mcp.Configuration.DeploymentOptions.SectionName));
     builder.Services.Configure<Ato.Copilot.Mcp.Configuration.RoleClaimMappingsOptions>(
         builder.Configuration.GetSection(Ato.Copilot.Mcp.Configuration.RoleClaimMappingsOptions.SectionName));
+
+    // Feature 051 (T021–T024 / FR-001..FR-036a): bind AuthOptions + register the
+    // startup validator. Per contracts/internal-services.md § 5.2 the validator
+    // requires IHostEnvironment so it can flip the cookie-key gate on/off based
+    // on ASPNETCORE_ENVIRONMENT. ValidateOnStart fails fast in Staging/Production
+    // if Auth:Cookie:SigningKey is missing.
+    builder.Services.AddOptions<Ato.Copilot.Core.Configuration.Auth.AuthOptions>()
+        .Bind(builder.Configuration.GetSection(Ato.Copilot.Core.Configuration.Auth.AuthOptions.SectionName))
+        .ValidateOnStart();
+    builder.Services.AddSingleton<
+        Microsoft.Extensions.Options.IValidateOptions<Ato.Copilot.Core.Configuration.Auth.AuthOptions>,
+        Ato.Copilot.Core.Configuration.Auth.AuthOptionsValidator>();
+
+    // Feature 051 (T028): the audit-write service. Scoped because it uses
+    // IDbContextFactory<AtoCopilotContext> and follows the F050
+    // CapabilityHistoryService SRP — AppendAsync does not call
+    // SaveChangesAsync (caller owns the transaction).
+    builder.Services.AddScoped<Ato.Copilot.Core.Interfaces.Auth.ILoginAuditService,
+        Ato.Copilot.Core.Services.Auth.LoginAuditService>();
+
+    // Feature 051 (T039): forensic context extractor used by Auth endpoints
+    // to populate SourceIp / UserAgent / CorrelationId on every audit row.
+    // Scoped to match request lifetime (it operates on HttpContext).
+    builder.Services.AddScoped<Ato.Copilot.Mcp.Middleware.LoginAuditContextAccessor>();
+
+    // Feature 051 (T067 / US3 / FR-012): HMAC-SHA256 issuer + validator for
+    // the device-only `ato-remembered-tenant` cookie. Singleton because the
+    // signing key is bound once at construction from AuthOptions.
+    builder.Services.AddSingleton<Ato.Copilot.Core.Interfaces.Auth.IRememberedTenantCookieService,
+        Ato.Copilot.Core.Services.Auth.RememberedTenantCookieService>();
+
+    // Feature 051 (T099 / FR-036a): cold-archive sink + daily hosted
+    // service. Sink is selected by Auth:Archive:Sink (FileSystem in
+    // dev / CI, AzureBlobAppend in prod against the AzureUSGovernment
+    // storage account configured in Auth:Archive:AzureBlobAccountUrl).
+    // The hosted service wakes at Auth:Archive:RunHourUtc and migrates
+    // LoginAuditEvent rows older than 13 months in 1,000-row batches.
+    var auth051ArchiveOptions = builder.Configuration
+        .GetSection(Ato.Copilot.Core.Configuration.Auth.AuthOptions.SectionName)
+        .Get<Ato.Copilot.Core.Configuration.Auth.AuthOptions>()
+        ?.Archive
+        ?? new Ato.Copilot.Core.Configuration.Auth.AuthArchiveOptions();
+    if (auth051ArchiveOptions.Sink == Ato.Copilot.Core.Configuration.Auth.ArchiveSinkKind.AzureBlobAppend)
+    {
+        builder.Services.AddSingleton<Ato.Copilot.Core.Interfaces.Auth.ILoginAuditArchiveSink,
+            Ato.Copilot.Core.Services.Auth.AzureBlobAppendArchiveSink>();
+    }
+    else
+    {
+        builder.Services.AddSingleton<Ato.Copilot.Core.Interfaces.Auth.ILoginAuditArchiveSink,
+            Ato.Copilot.Core.Services.Auth.FileSystemArchiveSink>();
+    }
+    builder.Services.AddHostedService<Ato.Copilot.Core.Services.Auth.LoginAuditArchiveService>();
+
+    // Feature 051 (T032 / FR-034 / FR-035): throttle service + the
+    // IDistributedCache backing store. Dev/Test use the in-process
+    // distributed memory cache so unit tests need no Redis; non-Development
+    // wires Redis per contracts/internal-services.md § 6 + research § R7.
+    // Per analysis C11 any non-Development environment uses the Production
+    // throttle block + Redis cache.
+    builder.Services.AddSingleton<Ato.Copilot.Core.Interfaces.Auth.ILoginThrottleService,
+        Ato.Copilot.Core.Services.Auth.LoginThrottleService>();
+    if (builder.Environment.IsDevelopment() || builder.Environment.IsEnvironment("Testing"))
+    {
+        builder.Services.AddDistributedMemoryCache();
+    }
+    else
+    {
+        builder.Services.AddStackExchangeRedisCache(o =>
+        {
+            o.Configuration = builder.Configuration.GetConnectionString("Redis")
+                ?? "localhost:6379";
+            o.InstanceName = "ato-throttle:";
+        });
+    }
+
     builder.Services.AddSingleton<Ato.Copilot.Core.Interfaces.Tenancy.ITenantContextAccessor,
         Ato.Copilot.Core.Services.Tenancy.TenantContextAccessor>();
     builder.Services.AddScoped<Ato.Copilot.Core.Interfaces.Tenancy.ITenantContext,
@@ -490,6 +586,13 @@ async Task RunHttpModeAsync(string[] args)
     app.UseRateLimiter();
     app.UseMiddleware<RequestSizeLimitMiddleware>();
     app.UseMiddleware<CacAuthenticationMiddleware>();
+    // Feature 051 T144 [Phase 13.1]: per-IP + per-identity throttle
+    // (FR-034 / FR-035) wraps the auth-gated /api/auth/* endpoints.
+    // Placed AFTER CacAuthenticationMiddleware so the throttle can read
+    // the resolved principal's `oid` for the identity key when present
+    // (the inbound peek + outbound register paths both honor the
+    // analysis-C17 signal selector).
+    app.UseMiddleware<LoginThrottleMiddleware>();
     // T069 (Feature 048): tenant scope MUST be resolved BEFORE authorization
     // checks so role gates can read ITenantContext.IsCspAdmin and the global
     // EF query filter sees the resolved EffectiveTenantId.
@@ -511,6 +614,11 @@ async Task RunHttpModeAsync(string[] args)
 
     // Map Dashboard REST API endpoints (Feature 030)
     app.MapDashboardEndpoints();
+
+    // Feature 051 [US1]: dashboard login surface — login-config + me.
+    // The endpoint group lives under /api/auth and is anonymous-by-default
+    // (the GET /me handler enforces its own authentication check).
+    app.MapAuthEndpoints();
 
     // Map Authorization Package & SAR endpoints (Feature 041)
     app.MapPackageEndpoints();
@@ -869,6 +977,26 @@ async Task EnsureSchemaAdditionsAsync(AtoCopilotContext db, Microsoft.Extensions
 
         IF COL_LENGTH('SystemComponents', 'RmfRoleName') IS NULL
             ALTER TABLE SystemComponents ADD RmfRoleName NVARCHAR(50) NULL;
+
+        -- Feature 044: widen FrameworkControls string columns from the original
+        -- 800-53-sized widths (Family=10, ControlId/Parent/WithdrawnTo=20) to
+        -- nvarchar(50). NIST 800-171 Rev 3 family ids ("SP_800_171_03.01", 16
+        -- chars) and normalized control ids ("SP_800_171_03(01.01", ~19 chars)
+        -- overflow the narrow columns, raising "String or binary data would be
+        -- truncated in column 'Family'" and aborting the 800-171 import.
+        -- EnsureCreated never alters existing columns, so widen them here.
+        -- max_length is in BYTES for nvarchar (2 per char), so 50 chars = 100.
+        IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('FrameworkControls') AND name = 'Family' AND max_length < 100)
+            ALTER TABLE FrameworkControls ALTER COLUMN Family NVARCHAR(50) NOT NULL;
+
+        IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('FrameworkControls') AND name = 'ControlId' AND max_length < 100)
+            ALTER TABLE FrameworkControls ALTER COLUMN ControlId NVARCHAR(50) NOT NULL;
+
+        IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('FrameworkControls') AND name = 'ParentControlId' AND max_length < 100)
+            ALTER TABLE FrameworkControls ALTER COLUMN ParentControlId NVARCHAR(50) NULL;
+
+        IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('FrameworkControls') AND name = 'WithdrawnTo' AND max_length < 100)
+            ALTER TABLE FrameworkControls ALTER COLUMN WithdrawnTo NVARCHAR(50) NULL;
         """;
 
     try
@@ -1066,6 +1194,15 @@ async Task EnsureSchemaAdditionsAsync(AtoCopilotContext db, Microsoft.Extensions
     // (Cascade FK to Tenants); intentionally no DB-level FK to capabilities
     // so history outlives a hard-deleted capability per FR-015.
     await Ato.Copilot.Core.Data.Migrations.EnsureSchemaAdditions.CapabilityHistoryEventsSchemaAdditions
+        .ApplyAsync(db, logger, ct);
+    // Feature 051 (FR-032 / FR-033 / FR-034 / FR-036a): Adds the LoginAuditEvents
+    // table for authentication-event auditing across all four surfaces
+    // (Dashboard, VS Code, M365, Chat). Tenant-scoped on EffectiveTenantId
+    // (Cascade FK to Tenants); pre-session and NoTenantAssignment rows use
+    // SYSTEM_TENANT_ID per clarification Q2. Three indexes ship: per-tenant
+    // read (Tenant, OccurredAt DESC), daily archive scan (OccurredAt), and
+    // forensic per-Oid lookup (Oid, OccurredAt DESC, filtered Oid IS NOT NULL).
+    await Ato.Copilot.Core.Data.Migrations.EnsureSchemaAdditions.LoginAuditEventsSchemaAdditions
         .ApplyAsync(db, logger, ct);
     await Ato.Copilot.Core.Services.Tenancy.TenantBootstrapService.EnsureSystemTenantAsync(db, logger, ct);
     // T060: Backfill OrganizationContext rows whose TenantId still holds the

@@ -51,6 +51,21 @@
         "category": "ATO Copilot"
       },
       {
+        "command": "ato.signIn",
+        "title": "ATO Copilot: Sign In",
+        "category": "ATO Copilot"
+      },
+      {
+        "command": "ato.signOut",
+        "title": "ATO Copilot: Sign Out",
+        "category": "ATO Copilot"
+      },
+      {
+        "command": "ato.switchTenant",
+        "title": "ATO Copilot: Switch Tenant",
+        "category": "ATO Copilot"
+      },
+      {
         "command": "ato.analyzeCurrentFile",
         "title": "ATO Copilot: Analyze Current File for Compliance",
         "category": "ATO Copilot"
@@ -139,6 +154,7 @@
     "typescript": "^5.3.3"
   },
   "dependencies": {
+    "@azure/msal-node": "^2.16.3",
     "axios": "^1.6.5"
   }
 }

@@ -249,7 +249,9 @@ public class CspAtoUploadFlowTests
     {
         await using var scope = _factory.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AtoCopilotContext>();
-        await db.Database.ExecuteSqlRawAsync(
+        // ExecuteSqlAsync parameterizes the interpolated value (EF1002-safe);
+        // the column/table names are static literals.
+        await db.Database.ExecuteSqlAsync(
             $"UPDATE \"CspProfiles\" SET \"OnboardingState\" = {(int)target};");
     }
 

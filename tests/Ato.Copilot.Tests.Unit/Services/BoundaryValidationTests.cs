@@ -422,7 +422,7 @@ public class BoundaryValidationTests : IDisposable
     // ─── Edge cases ─────────────────────────────────────────────────────
 
     [Fact]
-    public async Task DefineBoundary_FlagOn_ResourceWithWhitespaceId_SkipsValidation()
+    public Task DefineBoundary_FlagOn_ResourceWithWhitespaceId_SkipsValidation()
     {
         // Resources with blank IDs are filtered out before validation
         _validatorMock
@@ -458,5 +458,6 @@ public class BoundaryValidationTests : IDisposable
                 It.Is<IEnumerable<string>>(ids => ids.All(id => !string.IsNullOrWhiteSpace(id))),
                 It.IsAny<CancellationToken>()),
             Times.AtMostOnce);
+        return Task.CompletedTask;
     }
 }

@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { Routes, Route } from 'react-router-dom';
+import { useIsAuthenticated, useMsal } from '@azure/msal-react';
 import PortfolioRoute from './pages/PortfolioRoute';
 import SystemsRoute from './pages/SystemsRoute';
 import ComponentsRoute from './pages/ComponentsRoute';
@@ -36,6 +37,16 @@ import CspWizard from './features/csp-onboarding/CspWizard';
 import CspOnboardingGuard from './features/csp-onboarding/CspOnboardingGuard';
 import CspInheritedComponentsPage from './features/csp-inherited-components/CspInheritedComponentsPage';
 import ImportedDocumentsView from './features/admin/imported-documents/ImportedDocumentsView';
+import LoginPage from './features/auth/LoginPage';
+import LoginCallbackPage from './features/auth/LoginCallbackPage';
+import TenantPickerPage from './features/auth/TenantPickerPage';
+import LoginErrorPage from './features/auth/LoginErrorPage';
+import RequireAuth from './features/auth/RequireAuth';
+import IdleWarningModal from './features/auth/IdleWarningModal';
+import RestoreUnsavedChangesPrompt from './features/auth/RestoreUnsavedChangesPrompt';
+import ImpersonationBanner from './features/auth/ImpersonationBanner';
+import { useIdleTimer } from './features/auth/useIdleTimer';
+import { useLoginConfig } from './features/auth/LoginConfigContext';
 
 function AppContent() {
   const { panelState, togglePanel, closePanel, setWidth } = useChatPanel();
@@ -54,12 +65,23 @@ function AppContent() {
 
   return (
     <SystemDataProvider>
+      <AuthenticatedSessionGuards />
       <CspOnboardingGuard>
         <TenantOnboardingGuard>
           <Routes>
-          <Route path="/" element={<PortfolioRoute />} />
-          <Route path="/systems" element={<SystemsRoute />} />
-          <Route path="/systems/:id" element={<SystemLayout />}>
+          {/* Feature 051 [US1]: public login routes — MUST NOT be wrapped in RequireAuth. */}
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/login/callback" element={<LoginCallbackPage />} />
+          {/* Feature 051 T083 [US4]: error page is public — RequireAuth would
+              loop a failed-auth user back through MSAL forever. */}
+          <Route path="/login/error" element={<LoginErrorPage />} />
+          {/* Feature 051 T073 [US3]: tenant picker is authenticated. */}
+          <Route path="/login/select-tenant" element={<RequireAuth><TenantPickerPage /></RequireAuth>} />
+          {/* All other routes require authentication; RequireAuth triggers
+              loginRedirect with the deep-link as `state` when unauthenticated. */}
+          <Route path="/" element={<RequireAuth><PortfolioRoute /></RequireAuth>} />
+          <Route path="/systems" element={<RequireAuth><SystemsRoute /></RequireAuth>} />
+          <Route path="/systems/:id" element={<RequireAuth><SystemLayout /></RequireAuth>}>
             <Route index element={<SystemDetail />} />
             <Route path="roadmap" element={<Roadmap />} />
             <Route path="boundaries" element={<BoundaryManagement />} />
@@ -78,17 +100,17 @@ function AppContent() {
             <Route path="baseline" element={<BaselineManagement />} />
             <Route path="profile/:sectionType" element={<SystemProfile />} />
           </Route>
-          <Route path="/capabilities" element={<CapabilitiesRoute />} />
-          <Route path="/components" element={<ComponentsRoute />} />
-          <Route path="/onboarding" element={<OnboardingShell />} />
-          <Route path="/onboarding/tenant" element={<TenantWizard />} />
-          <Route path="/onboarding/csp" element={<CspWizard />} />
+          <Route path="/capabilities" element={<RequireAuth><CapabilitiesRoute /></RequireAuth>} />
+          <Route path="/components" element={<RequireAuth><ComponentsRoute /></RequireAuth>} />
+          <Route path="/onboarding" element={<RequireAuth><OnboardingShell /></RequireAuth>} />
+          <Route path="/onboarding/tenant" element={<RequireAuth><TenantWizard /></RequireAuth>} />
+          <Route path="/onboarding/csp" element={<RequireAuth><CspWizard /></RequireAuth>} />
           {/* Feature 048 follow-up: the cross-tenant CSP dashboard now
               resolves at `/` via PortfolioRoute for CSP-Admins. The standalone
               `/csp-dashboard` route has been retired. */}
-          <Route path="/csp/inherited-components" element={<CspInheritedComponentsPage />} />
-          <Route path="/admin/imported-documents" element={<ImportedDocumentsView />} />
-          <Route path="/controls" element={<ControlsRoute />} />
+          <Route path="/csp/inherited-components" element={<RequireAuth><CspInheritedComponentsPage /></RequireAuth>} />
+          <Route path="/admin/imported-documents" element={<RequireAuth><ImportedDocumentsView /></RequireAuth>} />
+          <Route path="/controls" element={<RequireAuth><ControlsRoute /></RequireAuth>} />
         </Routes>
         </TenantOnboardingGuard>
       </CspOnboardingGuard>
@@ -114,5 +136,41 @@ export default function App() {
         </OrganizationContextProvider>
       </ChatPanelProvider>
     </SettingsContext.Provider>
+  );
+}
+
+/**
+ * Feature 051 T061 [US2] — mounts the idle-sign-out timer + warning
+ * modal inside the SPA shell. Only active when MSAL reports an
+ * authenticated user, so the public /login and /login/callback routes
+ * do NOT arm the timer. Renders nothing visible until the warning
+ * fires (the modal self-hides). Reads idleTimeoutMinutes from the
+ * bootstrap LoginConfig (FR-007).
+ */
+function AuthenticatedSessionGuards() {
+  const isAuthenticated = useIsAuthenticated();
+  if (!isAuthenticated) return null;
+  return <AuthenticatedSessionGuardsActive />;
+}
+
+function AuthenticatedSessionGuardsActive() {
+  const { idleTimeoutMinutes } = useLoginConfig();
+  const { accounts } = useMsal();
+  // MSAL's `localAccountId` is the Entra `oid` claim — the same value
+  // the backend writes into LoginAuditEvent.Oid (see AuthEndpoints
+  // GetMeAsync). Use it directly so FR-008's localStorage keys are
+  // scoped consistently with the server-side audit identity.
+  const oid = accounts[0]?.localAccountId ?? '';
+  useIdleTimer(idleTimeoutMinutes);
+  return (
+    <>
+      {/* Feature 051 T135 [US8] — sticky impersonation banner driven by
+          the server-side /me state. Mounted at the authenticated app
+          shell so every route inherits it without per-page wiring.
+          Self-hides when me.isImpersonating === false. */}
+      <ImpersonationBanner />
+      <IdleWarningModal />
+      {oid && <RestoreUnsavedChangesPrompt oid={oid} />}
+    </>
   );
 }

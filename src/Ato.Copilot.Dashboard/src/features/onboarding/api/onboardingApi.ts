@@ -1,4 +1,6 @@
 import axios, { AxiosError } from 'axios';
+import { attachAuthInterceptor } from '../../auth/interceptors';
+import { getMsalInstance, DEFAULT_API_SCOPES } from '../../auth/msalInstance';
 
 /**
  * Foundational onboarding-wizard API client (Feature 047).
@@ -12,10 +14,6 @@ const onboardingApi = axios.create({
 });
 
 onboardingApi.interceptors.request.use((config) => {
-  const token = localStorage.getItem('auth_token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
   // Dev-only role spoofing for the dashboard (FR-048 parity).
   try {
     const raw = localStorage.getItem('ato-dashboard-settings');
@@ -30,6 +28,9 @@ onboardingApi.interceptors.request.use((config) => {
   }
   return config;
 });
+
+// Feature 051 T053: MSAL bearer injection (silent renewal + 401 retry).
+attachAuthInterceptor(onboardingApi, getMsalInstance, DEFAULT_API_SCOPES);
 
 /**
  * Response interceptor — when the backend returns a non-2xx HTTP status with an

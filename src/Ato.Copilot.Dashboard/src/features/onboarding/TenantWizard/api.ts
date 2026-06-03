@@ -1,4 +1,6 @@
 import axios from 'axios';
+import { attachAuthInterceptor } from '../../auth/interceptors';
+import { getMsalInstance, DEFAULT_API_SCOPES } from '../../auth/msalInstance';
 
 /**
  * Feature 048 / US4 — Tenant onboarding wizard API client.
@@ -15,13 +17,8 @@ const tenantApi = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
-tenantApi.interceptors.request.use((config) => {
-  const token = localStorage.getItem('auth_token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
+// Feature 051 T053: MSAL bearer injection (silent renewal + 401 retry).
+attachAuthInterceptor(tenantApi, getMsalInstance, DEFAULT_API_SCOPES);
 
 export type TenantWizardStep =
   | 'Tenant.LegalEntity'

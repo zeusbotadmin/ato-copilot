@@ -4,6 +4,7 @@ import type {
   SseResultEvent,
   SseErrorEvent,
 } from '../types/chat';
+import { acquireBearer } from '../features/auth/msalInstance';
 
 /** Parsed SSE event (ported from extensions/vscode/src/services/sseClient.ts). */
 export interface SseEvent {
@@ -95,7 +96,8 @@ export async function sendMessage(
       Accept: 'text/event-stream',
     };
 
-    const token = localStorage.getItem('auth_token');
+    // Feature 051 T053: MSAL-backed bearer; empty string when no account.
+    const token = await acquireBearer();
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }

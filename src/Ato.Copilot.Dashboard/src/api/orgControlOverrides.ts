@@ -1,21 +1,21 @@
 import axios from 'axios';
+import { attachAuthInterceptor } from '../features/auth/interceptors';
+import { getMsalInstance, DEFAULT_API_SCOPES } from '../features/auth/msalInstance';
 
 /**
  * Dedicated axios client for the per-org tenancy API surface
  * (Feature 048 follow-up — user ask #2). Wraps `/api/orgs/*` endpoints
- * with the same Bearer + simulated-role interceptors used by the main
- * dashboard client.
+ * with the MSAL Bearer interceptor + simulated-role propagation.
  */
 const orgsClient = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL_ORGS || '/api/orgs',
   headers: { 'Content-Type': 'application/json' },
 });
 
+// Feature 051 T053: MSAL bearer injection (silent renewal + 401 retry).
+attachAuthInterceptor(orgsClient, getMsalInstance, DEFAULT_API_SCOPES);
+
 orgsClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem('auth_token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
   // Mirror apiClient's dev-only role spoofing so write endpoints reach
   // the OnboardingAdministratorRequirement policy in dev mode.
   try {

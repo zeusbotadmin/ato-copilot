@@ -1,4 +1,6 @@
 import axios from 'axios';
+import { attachAuthInterceptor } from '../features/auth/interceptors';
+import { getMsalInstance, DEFAULT_API_SCOPES } from '../features/auth/msalInstance';
 
 // ─── V1 API Client ──────────────────────────────────────────────────────────
 
@@ -7,13 +9,8 @@ const v1Client = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
-v1Client.interceptors.request.use((config) => {
-  const token = localStorage.getItem('auth_token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
+// Feature 051 T053: MSAL bearer injection (silent renewal + 401 retry).
+attachAuthInterceptor(v1Client, getMsalInstance, DEFAULT_API_SCOPES);
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

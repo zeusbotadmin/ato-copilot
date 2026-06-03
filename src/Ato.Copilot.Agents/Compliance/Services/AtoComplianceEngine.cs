@@ -911,7 +911,7 @@ public class AtoComplianceEngine : IAtoComplianceEngine
                 };
 
                 var familyStopwatch = Stopwatch.StartNew();
-                int totalControls = 0, passedControls = 0, failedControls = 0;
+                int totalControls = 0, failedControls = 0;
                 var allFindings = new List<ComplianceFinding>();
 
                 foreach (var subId in subList)

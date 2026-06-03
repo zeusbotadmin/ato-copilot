@@ -62,8 +62,6 @@ public class CorrelationIdMiddlewareTests
         var context = new DefaultHttpContext();
         context.Request.Headers[CorrelationIdMiddleware.HeaderName] = expectedId;
 
-        // Capture the OnStarting callback by tracking response writes
-        string? capturedResponseId = null;
         var middleware = new CorrelationIdMiddleware(
             next: ctx =>
             {

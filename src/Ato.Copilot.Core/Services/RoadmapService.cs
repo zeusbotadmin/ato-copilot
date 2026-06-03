@@ -332,7 +332,7 @@ public class RoadmapService : IRoadmapService
             ?? throw new InvalidOperationException($"No active roadmap found for system {systemId}");
 
         if (request.MoveItem is not null)
-            await MoveItemBetweenPhasesAsync(roadmap, request.MoveItem, cancellationToken);
+            MoveItemBetweenPhases(roadmap, request.MoveItem);
 
         if (request.UpdateEffort is not null)
             UpdateItemEffort(roadmap, request.UpdateEffort);
@@ -834,10 +834,9 @@ public class RoadmapService : IRoadmapService
         return points;
     }
 
-    private async Task MoveItemBetweenPhasesAsync(
+    private void MoveItemBetweenPhases(
         ImplementationRoadmap roadmap,
-        MoveItemRequest request,
-        CancellationToken cancellationToken)
+        MoveItemRequest request)
     {
         var item = roadmap.Phases.SelectMany(p => p.Items)
             .FirstOrDefault(i => i.ControlId.Equals(request.ControlId, StringComparison.OrdinalIgnoreCase))

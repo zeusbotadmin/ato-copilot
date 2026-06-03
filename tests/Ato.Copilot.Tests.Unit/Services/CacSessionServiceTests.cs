@@ -48,12 +48,13 @@ public class CacSessionServiceTests
     }
 
     [Fact]
-    public async Task CreateSessionAsync_ShouldHashTokenAsSHA256()
+    public Task CreateSessionAsync_ShouldHashTokenAsSHA256()
     {
         var hash = CacSessionService.ComputeTokenHash("test-token");
 
         hash.Should().HaveLength(64, because: "SHA-256 produces 64 hex characters");
         hash.Should().MatchRegex("^[0-9a-f]{64}$");
+        return Task.CompletedTask;
     }
 
     [Fact]

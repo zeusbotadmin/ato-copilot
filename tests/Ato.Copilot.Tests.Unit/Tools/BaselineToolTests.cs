@@ -1215,7 +1215,7 @@ public class ShowStigMappingToolTests
     }
 
     [Fact]
-    public async Task ShowStigMapping_ToolMetadata_IncludesCorrectInfo()
+    public Task ShowStigMapping_ToolMetadata_IncludesCorrectInfo()
     {
         _stigMock
             .Setup(s => s.GetStigsByCciChainAsync("AC-1", null, It.IsAny<CancellationToken>()))
@@ -1234,6 +1234,7 @@ public class ShowStigMappingToolTests
         tool.Parameters.Should().ContainKey("max_results");
         tool.Parameters["control_id"].Required.Should().BeTrue();
         tool.Parameters["severity"].Required.Should().BeFalse();
+        return Task.CompletedTask;
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────

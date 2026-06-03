@@ -62,7 +62,7 @@ public class GetFedRampTemplateGuidanceTool : BaseTool
 
     /// <inheritdoc />
     public override async Task<string> ExecuteCoreAsync(
-        Dictionary<string, object> args,
+        Dictionary<string, object?> args,
         CancellationToken cancellationToken = default)
     {
         var templateType = GetArg<string>(args, "template_type");

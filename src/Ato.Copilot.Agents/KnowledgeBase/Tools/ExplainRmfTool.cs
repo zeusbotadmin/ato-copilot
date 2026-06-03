@@ -82,7 +82,7 @@ public class ExplainRmfTool : BaseTool
 
     /// <inheritdoc />
     public override async Task<string> ExecuteCoreAsync(
-        Dictionary<string, object> args,
+        Dictionary<string, object?> args,
         CancellationToken cancellationToken = default)
     {
         var topic = GetArg<string>(args, "topic") ?? "overview";
@@ -146,7 +146,7 @@ public class ExplainRmfTool : BaseTool
     }
 
     private async Task<string> ExplainStepAsync(
-        Dictionary<string, object> args,
+        Dictionary<string, object?> args,
         CancellationToken cancellationToken)
     {
         var stepNumberRaw = GetArg<object>(args, "step_number");
@@ -189,7 +189,7 @@ public class ExplainRmfTool : BaseTool
     }
 
     private async Task<string> ExplainServiceGuidanceAsync(
-        Dictionary<string, object> args,
+        Dictionary<string, object?> args,
         CancellationToken cancellationToken)
     {
         var organization = GetArg<string>(args, "organization");
@@ -260,7 +260,7 @@ public class ExplainRmfTool : BaseTool
     }
 
     private async Task<string> ExplainInstructionAsync(
-        Dictionary<string, object> args,
+        Dictionary<string, object?> args,
         CancellationToken cancellationToken)
     {
         var instructionId = GetArg<string>(args, "instruction_id");
@@ -303,7 +303,7 @@ public class ExplainRmfTool : BaseTool
     }
 
     private async Task<string> ExplainWorkflowAsync(
-        Dictionary<string, object> args,
+        Dictionary<string, object?> args,
         CancellationToken cancellationToken)
     {
         var organization = GetArg<string>(args, "organization");
@@ -342,7 +342,7 @@ public class ExplainRmfTool : BaseTool
         return sb.ToString();
     }
 
-    private static string BuildCacheKey(string topic, Dictionary<string, object> args)
+    private static string BuildCacheKey(string topic, Dictionary<string, object?> args)
     {
         var key = $"kb:rmf:explain:{topic}";
 

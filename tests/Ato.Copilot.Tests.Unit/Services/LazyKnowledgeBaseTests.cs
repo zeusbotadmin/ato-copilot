@@ -16,7 +16,7 @@ namespace Ato.Copilot.Tests.Unit.Services;
 public class LazyKnowledgeBaseTests
 {
     [Fact]
-    public async Task StigKnowledgeService_DoesNotLoadDataUntilAccessed()
+    public Task StigKnowledgeService_DoesNotLoadDataUntilAccessed()
     {
         // Arrange — constructing the service should NOT trigger data loading
         var cache = new MemoryCache(new MemoryCacheOptions());
@@ -29,10 +29,11 @@ public class LazyKnowledgeBaseTests
         // Assert — cache should be empty (no eager loading)
         cache.TryGetValue("kb:stig:all_controls", out _).Should().BeFalse(
             "STIG data should not be loaded at construction time");
+        return Task.CompletedTask;
     }
 
     [Fact]
-    public async Task RmfKnowledgeService_DoesNotLoadDataUntilAccessed()
+    public Task RmfKnowledgeService_DoesNotLoadDataUntilAccessed()
     {
         // Arrange
         var cache = new MemoryCache(new MemoryCacheOptions());
@@ -44,10 +45,11 @@ public class LazyKnowledgeBaseTests
         // Assert
         cache.TryGetValue("kb:rmf:process_data", out _).Should().BeFalse(
             "RMF data should not be loaded at construction time");
+        return Task.CompletedTask;
     }
 
     [Fact]
-    public async Task DoDInstructionService_DoesNotLoadDataUntilAccessed()
+    public Task DoDInstructionService_DoesNotLoadDataUntilAccessed()
     {
         // Arrange
         var cache = new MemoryCache(new MemoryCacheOptions());
@@ -59,10 +61,11 @@ public class LazyKnowledgeBaseTests
         // Assert
         cache.TryGetValue("kb:dod:all_instructions", out _).Should().BeFalse(
             "DoD instruction data should not be loaded at construction time");
+        return Task.CompletedTask;
     }
 
     [Fact]
-    public async Task DoDWorkflowService_DoesNotLoadDataUntilAccessed()
+    public Task DoDWorkflowService_DoesNotLoadDataUntilAccessed()
     {
         // Arrange
         var cache = new MemoryCache(new MemoryCacheOptions());
@@ -74,6 +77,7 @@ public class LazyKnowledgeBaseTests
         // Assert
         cache.TryGetValue("kb:dod:all_workflows", out _).Should().BeFalse(
             "DoD workflow data should not be loaded at construction time");
+        return Task.CompletedTask;
     }
 
     [Fact]

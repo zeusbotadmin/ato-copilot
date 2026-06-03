@@ -354,6 +354,7 @@ public class CacAuthSimulationTests
 
         // Should NOT have simulated identity — simulation is ignored in Production
         context.User.Identity?.AuthenticationType.Should().NotBe("Simulated");
+        nextCalled.Should().BeTrue("the request must fall through to next when simulation is ignored");
     }
 
     [Fact]
@@ -378,6 +379,7 @@ public class CacAuthSimulationTests
         }
 
         context.User.Identity?.AuthenticationType.Should().NotBe("Simulated");
+        nextCalled.Should().BeTrue("the request must fall through to next when simulation is ignored");
     }
 
     [Fact]

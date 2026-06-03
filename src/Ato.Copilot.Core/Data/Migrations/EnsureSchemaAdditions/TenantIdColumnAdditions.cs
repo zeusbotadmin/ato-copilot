@@ -88,15 +88,19 @@ public static class TenantIdColumnAdditions
                 else // SQLite — split ALTER and CREATE INDEX so a duplicate-column
                      // error doesn't prevent the index from being verified.
                 {
+                    // Table name is an EF model identifier (not user input) and
+                    // SQL identifiers cannot be parameterized; build the DDL as a
+                    // plain string (mirrors the SqlServer branch) so EF1002 does
+                    // not flag a non-existent injection vector.
                     if (!await SqliteColumnExistsAsync(db, t.Table, "TenantId", cancellationToken))
                     {
-                        await db.Database.ExecuteSqlRawAsync(
-                            $"ALTER TABLE \"{t.Table}\" ADD COLUMN \"TenantId\" TEXT NULL;",
-                            cancellationToken);
+                        var addColumnSql = $"ALTER TABLE \"{t.Table}\" ADD COLUMN \"TenantId\" TEXT NULL;";
+                        await db.Database.ExecuteSqlRawAsync(addColumnSql, cancellationToken);
                     }
-                    await db.Database.ExecuteSqlRawAsync(
-                        $"CREATE INDEX IF NOT EXISTS \"IX_{t.Table}_TenantId\" ON \"{t.Table}\" (\"TenantId\");",
-                        cancellationToken);
+
+                    var createIndexSql =
+                        $"CREATE INDEX IF NOT EXISTS \"IX_{t.Table}_TenantId\" ON \"{t.Table}\" (\"TenantId\");";
+                    await db.Database.ExecuteSqlRawAsync(createIndexSql, cancellationToken);
                     altered++;
                 }
             }

@@ -49,7 +49,9 @@ public class ExportEmassTool : BaseTool
         CancellationToken cancellationToken = default)
     {
         var systemId = GetArg<string>(arguments, "system_id");
-        var exportType = GetArg<string>(arguments, "export_type").ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(systemId))
+            return JsonSerializer.Serialize(new { status = "error", error = "system_id is required" });
+        var exportType = (GetArg<string>(arguments, "export_type") ?? string.Empty).ToLowerInvariant();
         var sw = Stopwatch.StartNew();
 
         byte[] controlBytes = [];
@@ -158,6 +160,10 @@ public class ImportEmassTool : BaseTool
     {
         var systemId = GetArg<string>(arguments, "system_id");
         var fileBase64 = GetArg<string>(arguments, "file_base64");
+        if (string.IsNullOrWhiteSpace(systemId))
+            return JsonSerializer.Serialize(new { status = "error", error = "system_id is required" });
+        if (string.IsNullOrWhiteSpace(fileBase64))
+            return JsonSerializer.Serialize(new { status = "error", error = "file_base64 is required" });
         var strategy = arguments.TryGetValue("conflict_strategy", out var s) && s is string str
             ? str.ToLowerInvariant() : "skip";
         var dryRunStr = arguments.TryGetValue("dry_run", out var d) && d is string ds
@@ -256,7 +262,9 @@ public class ExportOscalTool : BaseTool
         CancellationToken cancellationToken = default)
     {
         var systemId = GetArg<string>(arguments, "system_id");
-        var modelStr = GetArg<string>(arguments, "model").ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(systemId))
+            return JsonSerializer.Serialize(new { status = "error", error = "system_id is required" });
+        var modelStr = (GetArg<string>(arguments, "model") ?? string.Empty).ToLowerInvariant();
         var sw = Stopwatch.StartNew();
 
         var model = modelStr switch

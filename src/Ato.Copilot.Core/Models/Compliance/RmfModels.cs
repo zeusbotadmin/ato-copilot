@@ -2,6 +2,7 @@ namespace Ato.Copilot.Core.Models.Compliance;
 
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using Ato.Copilot.Core.Models.Tenancy.Attributes;
 
 // ───────────────────────────── RMF Entities (Feature 010) ─────────────────────────────
 
@@ -69,8 +70,15 @@ public record DeliverableInfo(
 /// Anchor entity for all RMF data. Every persona-driven workflow tool
 /// operates within the context of a registered system.
 /// </summary>
+[TenantScoped]
 public class RegisteredSystem
 {
+    /// <summary>
+    /// FK to <see cref="Ato.Copilot.Core.Models.Tenancy.Tenant"/> — populated by
+    /// <c>TenantStampingSaveChangesInterceptor</c> (Feature 048 FR-021).
+    /// </summary>
+    public Guid TenantId { get; set; }
+
     /// <summary>Unique identifier (GUID).</summary>
     [Key]
     [MaxLength(36)]
@@ -164,6 +172,36 @@ public class RegisteredSystem
     /// Certifies the system has no external interconnections (satisfies Gate 4 without interconnection records).
     /// </summary>
     public bool HasNoExternalInterconnections { get; set; }
+
+    // ─── Feature 033: Boundary-Scoped Model ──────────────────────────────────
+
+    /// <summary>Named authorization boundary definitions for this system.</summary>
+    public ICollection<AuthorizationBoundaryDefinition> AuthorizationBoundaryDefinitions { get; set; } = new List<AuthorizationBoundaryDefinition>();
+
+    // ─── SSP & System Identifier Fields (Feature 022) ────────────────────────
+
+    /// <summary>DoD IT Portfolio Repository identifier.</summary>
+    [MaxLength(50)]
+    public string? DitprId { get; set; }
+
+    /// <summary>eMASS system identifier.</summary>
+    [MaxLength(50)]
+    public string? EmassId { get; set; }
+
+    /// <summary>System operational lifecycle status per NIST 800-18 §4.</summary>
+    public OperationalStatus? OperationalStatus { get; set; }
+
+    /// <summary>When the system became operational (UTC).</summary>
+    public DateTime? OperationalDate { get; set; }
+
+    /// <summary>Planned or actual disposal date (UTC).</summary>
+    public DateTime? DisposalDate { get; set; }
+
+    /// <summary>SSP sections for this system.</summary>
+    public ICollection<SspSection> SspSections { get; set; } = new List<SspSection>();
+
+    /// <summary>Contingency plan reference (zero or one per system).</summary>
+    public ContingencyPlanReference? ContingencyPlanReference { get; set; }
 }
 
 /// <summary>
@@ -206,8 +244,15 @@ public class AzureEnvironmentProfile
 /// FIPS 199 security categorization for a registered system.
 /// Contains information types whose C/I/A impacts drive the overall categorization.
 /// </summary>
+[TenantScoped]
 public class SecurityCategorization
 {
+    /// <summary>
+    /// FK to <see cref="Ato.Copilot.Core.Models.Tenancy.Tenant"/> — populated by
+    /// <c>TenantStampingSaveChangesInterceptor</c> (Feature 048 FR-021).
+    /// </summary>
+    public Guid TenantId { get; set; }
+
     /// <summary>Unique identifier (GUID).</summary>
     [Key]
     [MaxLength(36)]
@@ -292,6 +337,7 @@ public class SecurityCategorization
 /// <summary>
 /// SP 800-60 information type with provisional or adjusted C/I/A impact levels.
 /// </summary>
+[GlobalReference]
 public class InformationType
 {
     /// <summary>Unique identifier (GUID).</summary>
@@ -345,9 +391,20 @@ public class InformationType
 
 /// <summary>
 /// Azure resource within the authorization boundary of a registered system.
+/// <para><b>DEPRECATED (Feature 040)</b>: No new rows should be written. Use
+/// <see cref="BoundaryComponentAssignment"/> for new boundary-component scope tracking.
+/// Retained read-only for backward compatibility and migration.</para>
 /// </summary>
+[Obsolete("Use BoundaryComponentAssignment for new boundary-component scope tracking (Feature 040).")]
+[TenantScoped]
 public class AuthorizationBoundary
 {
+    /// <summary>
+    /// FK to <see cref="Ato.Copilot.Core.Models.Tenancy.Tenant"/> — populated by
+    /// <c>TenantStampingSaveChangesInterceptor</c> (Feature 048 FR-021).
+    /// </summary>
+    public Guid TenantId { get; set; }
+
     /// <summary>Unique identifier (GUID).</summary>
     [Key]
     [MaxLength(36)]
@@ -396,13 +453,29 @@ public class AuthorizationBoundary
 
     /// <summary>Parent system.</summary>
     public RegisteredSystem RegisteredSystem { get; set; } = null!;
+
+    // ─── Feature 033: Boundary-Scoped Model ──────────────────────────────────
+
+    /// <summary>FK to AuthorizationBoundaryDefinition (nullable — assigned during migration).</summary>
+    [MaxLength(36)]
+    public string? AuthorizationBoundaryDefinitionId { get; set; }
+
+    /// <summary>Parent boundary definition.</summary>
+    public AuthorizationBoundaryDefinition? AuthorizationBoundaryDefinition { get; set; }
 }
 
 /// <summary>
 /// RMF role assignment for a registered system per DoDI 8510.01.
 /// </summary>
+[TenantScoped]
 public class RmfRoleAssignment
 {
+    /// <summary>
+    /// FK to <see cref="Ato.Copilot.Core.Models.Tenancy.Tenant"/> — populated by
+    /// <c>TenantStampingSaveChangesInterceptor</c> (Feature 048 FR-021).
+    /// </summary>
+    public Guid TenantId { get; set; }
+
     /// <summary>Unique identifier (GUID).</summary>
     [Key]
     [MaxLength(36)]
@@ -447,8 +520,15 @@ public class RmfRoleAssignment
 /// Control baseline for a registered system. Contains the selected NIST controls
 /// after baseline selection, overlay application, and tailoring.
 /// </summary>
+[TenantScoped]
 public class ControlBaseline
 {
+    /// <summary>
+    /// FK to <see cref="Ato.Copilot.Core.Models.Tenancy.Tenant"/> — populated by
+    /// <c>TenantStampingSaveChangesInterceptor</c> (Feature 048 FR-021).
+    /// </summary>
+    public Guid TenantId { get; set; }
+
     /// <summary>Unique identifier (GUID).</summary>
     [Key]
     [MaxLength(36)]
@@ -515,8 +595,15 @@ public class ControlBaseline
 /// <summary>
 /// Control tailoring action applied to a baseline (added or removed control).
 /// </summary>
+[TenantScoped]
 public class ControlTailoring
 {
+    /// <summary>
+    /// FK to <see cref="Ato.Copilot.Core.Models.Tenancy.Tenant"/> — populated by
+    /// <c>TenantStampingSaveChangesInterceptor</c> (Feature 048 FR-021).
+    /// </summary>
+    public Guid TenantId { get; set; }
+
     /// <summary>Unique identifier (GUID).</summary>
     [Key]
     [MaxLength(36)]
@@ -561,8 +648,15 @@ public class ControlTailoring
 /// <summary>
 /// Control inheritance designation for FedRAMP/DoD shared responsibility.
 /// </summary>
+[TenantScoped]
 public class ControlInheritance
 {
+    /// <summary>
+    /// FK to <see cref="Ato.Copilot.Core.Models.Tenancy.Tenant"/> — populated by
+    /// <c>TenantStampingSaveChangesInterceptor</c> (Feature 048 FR-021).
+    /// </summary>
+    public Guid TenantId { get; set; }
+
     /// <summary>Unique identifier (GUID).</summary>
     [Key]
     [MaxLength(36)]
@@ -598,8 +692,524 @@ public class ControlInheritance
     /// <summary>Timestamp (UTC).</summary>
     public DateTime SetAt { get; set; } = DateTime.UtcNow;
 
+    /// <summary>How this designation was set (OrgDerived, Manual, ProfileApply, CrmImport, BulkUpdate).</summary>
+    [MaxLength(20)]
+    public string? DesignationSource { get; set; }
+
+    /// <summary>FK to the org-level default this designation was derived from (nullable).</summary>
+    [MaxLength(36)]
+    public string? OrgInheritanceDefaultId { get; set; }
+
     // ─── Navigation ──────────────────────────────────────────────────────────
 
     /// <summary>Parent baseline.</summary>
     public ControlBaseline ControlBaseline { get; set; } = null!;
+
+    /// <summary>Org-level default this designation links to (if org-derived or diverged-from).</summary>
+    public OrgInheritanceDefault? OrgInheritanceDefault { get; set; }
 }
+
+// ──────────────────────── Org-Level Inheritance Defaults (Feature 044) ────────────────────────
+
+/// <summary>
+/// Org-level default inheritance designation for a specific NIST control,
+/// derived automatically from org-wide capabilities and their control mappings.
+/// </summary>
+[TenantScoped]
+public class OrgInheritanceDefault
+{
+    /// <summary>
+    /// FK to <see cref="Ato.Copilot.Core.Models.Tenancy.Tenant"/> — populated by
+    /// <c>TenantStampingSaveChangesInterceptor</c> (Feature 048 FR-021).
+    /// </summary>
+    public Guid TenantId { get; set; }
+
+    /// <summary>Unique identifier (GUID).</summary>
+    [Key]
+    [MaxLength(36)]
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>NIST control ID (e.g., "AC-2"). Unique — one org default per control.</summary>
+    [Required]
+    [MaxLength(20)]
+    public string ControlId { get; set; } = string.Empty;
+
+    /// <summary>Derived inheritance type: "Inherited" or "Shared".</summary>
+    [Required]
+    public InheritanceType InheritanceType { get; set; }
+
+    /// <summary>Comma-separated component names providing this control.</summary>
+    [Required]
+    [MaxLength(500)]
+    public string Provider { get; set; } = string.Empty;
+
+    /// <summary>Comma-separated capability IDs that contributed to this default.</summary>
+    [Required]
+    [MaxLength(2000)]
+    public string SourceCapabilityIds { get; set; } = string.Empty;
+
+    /// <summary>Comma-separated capability names for display.</summary>
+    [Required]
+    [MaxLength(2000)]
+    public string SourceCapabilityNames { get; set; } = string.Empty;
+
+    /// <summary>Winning mapping role: Primary, Supporting, or Shared.</summary>
+    [Required]
+    public CapabilityMappingRole MappingRole { get; set; }
+
+    /// <summary>UTC timestamp of last derivation.</summary>
+    [Required]
+    public DateTime DerivedAt { get; set; } = DateTime.UtcNow;
+}
+
+// ──────────────────────── Inheritance Audit (Feature 043) ────────────────────────
+
+/// <summary>How an inheritance designation change was made.</summary>
+public enum InheritanceChangeSource
+{
+    /// <summary>Single control edit via dashboard UI.</summary>
+    Manual,
+    /// <summary>Multi-select bulk update.</summary>
+    BulkUpdate,
+    /// <summary>CSP profile application.</summary>
+    ProfileApply,
+    /// <summary>CRM spreadsheet import.</summary>
+    CrmImport,
+    /// <summary>Set during org-default propagation to a system on baseline selection (Feature 044).</summary>
+    OrgDerived,
+    /// <summary>Set when org defaults change and cascade to systems (Feature 044).</summary>
+    OrgPropagation
+}
+
+/// <summary>
+/// Immutable, append-only audit log entry for every change to a
+/// <see cref="ControlInheritance"/> record.
+/// </summary>
+[TenantScoped]
+public class InheritanceAuditEntry
+{
+    /// <summary>
+    /// FK to <see cref="Ato.Copilot.Core.Models.Tenancy.Tenant"/> — populated by
+    /// <c>TenantStampingSaveChangesInterceptor</c> (Feature 048 FR-021).
+    /// </summary>
+    public Guid TenantId { get; set; }
+
+    /// <summary>Unique identifier (GUID).</summary>
+    [Key]
+    [MaxLength(36)]
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Logical FK to the ControlInheritance record (no cascade).</summary>
+    [Required]
+    [MaxLength(36)]
+    public string ControlInheritanceId { get; set; } = string.Empty;
+
+    /// <summary>Denormalized control ID for query convenience.</summary>
+    [Required]
+    [MaxLength(20)]
+    public string ControlId { get; set; } = string.Empty;
+
+    /// <summary>Denormalized baseline ID for system-wide audit queries.</summary>
+    [Required]
+    [MaxLength(36)]
+    public string ControlBaselineId { get; set; } = string.Empty;
+
+    /// <summary>User or service that made the change.</summary>
+    [Required]
+    [MaxLength(200)]
+    public string Actor { get; set; } = string.Empty;
+
+    /// <summary>Previous inheritance type (null if first designation).</summary>
+    [MaxLength(20)]
+    public string? PreviousInheritanceType { get; set; }
+
+    /// <summary>New inheritance type after the change.</summary>
+    [Required]
+    [MaxLength(20)]
+    public string NewInheritanceType { get; set; } = string.Empty;
+
+    /// <summary>Previous provider value.</summary>
+    [MaxLength(200)]
+    public string? PreviousProvider { get; set; }
+
+    /// <summary>New provider value.</summary>
+    [MaxLength(200)]
+    public string? NewProvider { get; set; }
+
+    /// <summary>Previous customer responsibility description.</summary>
+    [MaxLength(2000)]
+    public string? PreviousCustomerResponsibility { get; set; }
+
+    /// <summary>New customer responsibility description.</summary>
+    [MaxLength(2000)]
+    public string? NewCustomerResponsibility { get; set; }
+
+    /// <summary>How the change was made.</summary>
+    [Required]
+    public InheritanceChangeSource ChangeSource { get; set; }
+
+    /// <summary>UTC timestamp of the change.</summary>
+    [Required]
+    public DateTime Timestamp { get; set; } = DateTime.UtcNow;
+}
+
+// ───────────────────────────── SSP Section Entities (Feature 022) ─────────────────────────────
+
+/// <summary>SSP section lifecycle status.</summary>
+public enum SspSectionStatus
+{
+    /// <summary>Section not yet written.</summary>
+    NotStarted,
+    /// <summary>Content exists, pending review.</summary>
+    Draft,
+    /// <summary>Submitted for review.</summary>
+    UnderReview,
+    /// <summary>Approved by reviewer.</summary>
+    Approved,
+    /// <summary>Reviewer requested revision — needs rework before resubmission.</summary>
+    NeedsRevision
+}
+
+/// <summary>System operational lifecycle status per NIST SP 800-18 §4.</summary>
+public enum OperationalStatus
+{
+    /// <summary>System is in active operation.</summary>
+    Operational,
+    /// <summary>System is being developed or acquired.</summary>
+    UnderDevelopment,
+    /// <summary>System has been decommissioned.</summary>
+    Disposed,
+    /// <summary>System is undergoing significant change.</summary>
+    MajorModification
+}
+
+/// <summary>Individual NIST SP 800-18 SSP section with lifecycle tracking.</summary>
+[TenantScoped]
+public class SspSection
+{
+    /// <summary>
+    /// FK to <see cref="Ato.Copilot.Core.Models.Tenancy.Tenant"/> — populated by
+    /// <c>TenantStampingSaveChangesInterceptor</c> (Feature 048 FR-021).
+    /// </summary>
+    public Guid TenantId { get; set; }
+
+    /// <summary>Unique identifier (GUID).</summary>
+    [Key]
+    [MaxLength(36)]
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>System this section belongs to.</summary>
+    [Required]
+    [MaxLength(36)]
+    public string RegisteredSystemId { get; set; } = string.Empty;
+
+    /// <summary>NIST 800-18 section number (1–13).</summary>
+    [Required]
+    [Range(1, 13)]
+    public int SectionNumber { get; set; }
+
+    /// <summary>Section title (e.g., "System Identification").</summary>
+    [Required]
+    [MaxLength(200)]
+    public string SectionTitle { get; set; } = string.Empty;
+
+    /// <summary>Section content (markdown format).</summary>
+    [MaxLength(32000)]
+    public string? Content { get; set; }
+
+    /// <summary>Section lifecycle status.</summary>
+    [Required]
+    public SspSectionStatus Status { get; set; } = SspSectionStatus.NotStarted;
+
+    /// <summary>Whether this section is auto-generated from entity data.</summary>
+    public bool IsAutoGenerated { get; set; }
+
+    /// <summary>Whether an auto-generated section has been manually overridden.</summary>
+    public bool HasManualOverride { get; set; }
+
+    /// <summary>User who authored or last modified the section.</summary>
+    [Required]
+    [MaxLength(200)]
+    public string AuthoredBy { get; set; } = string.Empty;
+
+    /// <summary>When the section was last authored/modified (UTC).</summary>
+    public DateTime AuthoredAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>Reviewer who approved or rejected the section.</summary>
+    [MaxLength(200)]
+    public string? ReviewedBy { get; set; }
+
+    /// <summary>When the section was reviewed (UTC).</summary>
+    public DateTime? ReviewedAt { get; set; }
+
+    /// <summary>Reviewer comments (populated on rejection).</summary>
+    [MaxLength(4000)]
+    public string? ReviewerComments { get; set; }
+
+    /// <summary>Optimistic concurrency version (auto-incremented on update).</summary>
+    [ConcurrencyCheck]
+    public int Version { get; set; } = 1;
+
+    // ─── Navigation property ─────────────────────────────────────────────────
+
+    /// <summary>Parent system.</summary>
+    public RegisteredSystem? RegisteredSystem { get; set; }
+}
+
+/// <summary>Reference to an external contingency plan document for SSP §13.</summary>
+[TenantScoped]
+public class ContingencyPlanReference
+{
+    /// <summary>
+    /// FK to <see cref="Ato.Copilot.Core.Models.Tenancy.Tenant"/> — populated by
+    /// <c>TenantStampingSaveChangesInterceptor</c> (Feature 048 FR-021).
+    /// </summary>
+    public Guid TenantId { get; set; }
+
+    /// <summary>Unique identifier (GUID).</summary>
+    [Key]
+    [MaxLength(36)]
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>System this contingency plan belongs to.</summary>
+    [Required]
+    [MaxLength(36)]
+    public string RegisteredSystemId { get; set; } = string.Empty;
+
+    /// <summary>Document title (e.g., "ACME IT Contingency Plan v2.1").</summary>
+    [Required]
+    [MaxLength(500)]
+    public string DocumentTitle { get; set; } = string.Empty;
+
+    /// <summary>Document location (URL, file path, or SharePoint reference).</summary>
+    [Required]
+    [MaxLength(1000)]
+    public string DocumentLocation { get; set; } = string.Empty;
+
+    /// <summary>Document version string.</summary>
+    [MaxLength(50)]
+    public string? DocumentVersion { get; set; }
+
+    /// <summary>When the contingency plan was last tested (UTC).</summary>
+    public DateTime? LastTestedDate { get; set; }
+
+    /// <summary>Type of last test (tabletop, functional, full-scale).</summary>
+    [MaxLength(50)]
+    public string? TestType { get; set; }
+
+    /// <summary>Recovery Time Objective (e.g., "4 hours").</summary>
+    [MaxLength(100)]
+    public string? RecoveryTimeObjective { get; set; }
+
+    /// <summary>Recovery Point Objective (e.g., "1 hour").</summary>
+    [MaxLength(100)]
+    public string? RecoveryPointObjective { get; set; }
+
+    /// <summary>Alternate processing site location.</summary>
+    [MaxLength(500)]
+    public string? AlternateProcessingSite { get; set; }
+
+    /// <summary>Summary of backup procedures.</summary>
+    [MaxLength(4000)]
+    public string? BackupProceduresSummary { get; set; }
+
+    /// <summary>User who created the reference.</summary>
+    [Required]
+    [MaxLength(200)]
+    public string CreatedBy { get; set; } = string.Empty;
+
+    /// <summary>Creation timestamp (UTC).</summary>
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>Last modification (UTC).</summary>
+    public DateTime? ModifiedAt { get; set; }
+
+    // ─── Navigation property ─────────────────────────────────────────────────
+
+    /// <summary>Parent system.</summary>
+    public RegisteredSystem? RegisteredSystem { get; set; }
+}
+
+// ───────────────────────────── Boundary-Scoped Model (Feature 033) ─────────────────────────────
+
+/// <summary>Authorization boundary type classification.</summary>
+public enum BoundaryDefinitionType
+{
+    /// <summary>Physical security perimeter (e.g., data center, secure room).</summary>
+    Physical,
+    /// <summary>Logical security perimeter (e.g., cloud subscription, VLAN).</summary>
+    Logical,
+    /// <summary>Combined physical and logical boundary.</summary>
+    Hybrid
+}
+
+/// <summary>
+/// A named security perimeter within a registered system.
+/// Represents the boundary container (e.g., "Production", "Dev/Test").
+/// One system can have many boundary definitions.
+/// </summary>
+[TenantScoped]
+public class AuthorizationBoundaryDefinition
+{
+    /// <summary>
+    /// FK to <see cref="Ato.Copilot.Core.Models.Tenancy.Tenant"/> — populated by
+    /// <c>TenantStampingSaveChangesInterceptor</c> (Feature 048 FR-021).
+    /// </summary>
+    public Guid TenantId { get; set; }
+
+    /// <summary>Unique identifier (GUID).</summary>
+    [Key]
+    [MaxLength(36)]
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>FK to RegisteredSystem.</summary>
+    [Required]
+    [MaxLength(36)]
+    public string RegisteredSystemId { get; set; } = string.Empty;
+
+    /// <summary>Boundary name (unique within system).</summary>
+    [Required]
+    [MaxLength(200)]
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>Boundary type classification.</summary>
+    [Required]
+    public BoundaryDefinitionType BoundaryType { get; set; }
+
+    /// <summary>Free-text description of the boundary.</summary>
+    [MaxLength(2000)]
+    public string? Description { get; set; }
+
+    /// <summary>Whether this is the primary boundary for the system. One per system; cannot be deleted.</summary>
+    public bool IsPrimary { get; set; }
+
+    /// <summary>Creation timestamp (UTC).</summary>
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>User who created the boundary definition.</summary>
+    [Required]
+    [MaxLength(200)]
+    public string CreatedBy { get; set; } = string.Empty;
+
+    /// <summary>Last modification timestamp (UTC).</summary>
+    public DateTime? ModifiedAt { get; set; }
+
+    // ─── Navigation properties ───────────────────────────────────────────────
+
+    /// <summary>Parent system.</summary>
+    public RegisteredSystem RegisteredSystem { get; set; } = null!;
+
+    /// <summary>Resource records within this boundary.</summary>
+    public ICollection<AuthorizationBoundary> AuthorizationBoundaries { get; set; } = new List<AuthorizationBoundary>();
+
+    /// <summary>Components within this boundary.</summary>
+    public ICollection<SystemComponent> SystemComponents { get; set; } = new List<SystemComponent>();
+
+    /// <summary>Component assignments within this boundary (Feature 040).</summary>
+    public ICollection<BoundaryComponentAssignment> ComponentAssignments { get; set; } = new List<BoundaryComponentAssignment>();
+
+    /// <summary>Boundary-scoped capability-to-control mappings.</summary>
+    public ICollection<CapabilityControlMapping> CapabilityControlMappings { get; set; } = new List<CapabilityControlMapping>();
+}
+
+// ─── Deferred Prerequisites (Force-Advanced Gate Tracking) ──────────────────
+
+/// <summary>
+/// Tracks a prerequisite that was skipped during a forced RMF phase advance.
+/// Acts as a persistent reminder until the user resolves the deferred item.
+/// </summary>
+[TenantScoped]
+public class DeferredPrerequisite
+{
+    /// <summary>
+    /// FK to <see cref="Ato.Copilot.Core.Models.Tenancy.Tenant"/> — populated by
+    /// <c>TenantStampingSaveChangesInterceptor</c> (Feature 048 FR-021).
+    /// </summary>
+    public Guid TenantId { get; set; }
+
+    [Key]
+    [MaxLength(36)]
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    [Required]
+    [MaxLength(36)]
+    public string RegisteredSystemId { get; set; } = string.Empty;
+
+    /// <summary>Gate name that was skipped (e.g., "Privacy Readiness").</summary>
+    [Required]
+    [MaxLength(200)]
+    public string GateName { get; set; } = string.Empty;
+
+    /// <summary>Descriptive message about what needs to be completed.</summary>
+    [Required]
+    [MaxLength(1000)]
+    public string Message { get; set; } = string.Empty;
+
+    /// <summary>The phase from which the user force-advanced.</summary>
+    [Required]
+    [MaxLength(50)]
+    public string SkippedFromPhase { get; set; } = string.Empty;
+
+    /// <summary>The phase the user advanced to.</summary>
+    [Required]
+    [MaxLength(50)]
+    public string AdvancedToPhase { get; set; } = string.Empty;
+
+    /// <summary>When the forced advance occurred (UTC).</summary>
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>User who performed the force advance.</summary>
+    [MaxLength(200)]
+    public string CreatedBy { get; set; } = string.Empty;
+
+    /// <summary>Whether this deferred item has been resolved.</summary>
+    public bool IsResolved { get; set; }
+
+    /// <summary>When the item was resolved (UTC).</summary>
+    public DateTime? ResolvedAt { get; set; }
+
+    /// <summary>User who resolved the item.</summary>
+    [MaxLength(200)]
+    public string? ResolvedBy { get; set; }
+
+    // Navigation
+    public RegisteredSystem RegisteredSystem { get; set; } = null!;
+}
+
+// ──────────────────────── Org Inheritance Result Types (Feature 044) ────────────────────────
+
+/// <summary>Result of deriving org-level defaults from capabilities.</summary>
+public record OrgDerivationResult(
+    int DerivedCount,
+    int InheritedCount,
+    int SharedCount,
+    int RemovedCount,
+    int AffectedSystems,
+    DateTime DerivedAt);
+
+/// <summary>Result of propagating org defaults to a system's baseline.</summary>
+public record OrgPropagationResult(
+    int PropagatedCount,
+    int SkippedCount,
+    List<string> PropagatedControlIds);
+
+/// <summary>Result of reverting system overrides back to org defaults.</summary>
+public record RevertResult(
+    int RevertedCount,
+    int SkippedCount,
+    List<RevertSkip> Skipped);
+
+/// <summary>A control that was skipped during revert with a reason.</summary>
+public record RevertSkip(string ControlId, string Reason);
+
+/// <summary>Paginated list result for org-level defaults.</summary>
+public record OrgDefaultsListResult(
+    List<OrgInheritanceDefault> Items,
+    int TotalCount,
+    OrgDefaultsSummary Summary);
+
+/// <summary>Summary counts for org-level defaults.</summary>
+public record OrgDefaultsSummary(
+    int InheritedCount,
+    int SharedCount,
+    int TotalControls);

@@ -1,7 +1,10 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Ato.Copilot.Agents.Common;
+using Ato.Copilot.Core.Data.Context;
 using Ato.Copilot.Core.Interfaces.Compliance;
 using Ato.Copilot.Core.Models.Compliance;
 
@@ -407,13 +410,16 @@ public class AdvanceRmfStepTool : BaseTool
 public class DefineBoundaryTool : BaseTool
 {
     private readonly IBoundaryService _boundaryService;
+    private readonly IServiceScopeFactory _scopeFactory;
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
 
     public DefineBoundaryTool(
         IBoundaryService boundaryService,
+        IServiceScopeFactory scopeFactory,
         ILogger<DefineBoundaryTool> logger) : base(logger)
     {
         _boundaryService = boundaryService;
+        _scopeFactory = scopeFactory;
     }
 
     public override string Name => "compliance_define_boundary";
@@ -424,7 +430,8 @@ public class DefineBoundaryTool : BaseTool
     public override IReadOnlyDictionary<string, ToolParameter> Parameters => new Dictionary<string, ToolParameter>
     {
         ["system_id"] = new() { Name = "system_id", Description = "System GUID, name, or acronym", Type = "string", Required = true },
-        ["resources"] = new() { Name = "resources", Description = "Array of resources: [{resourceId, resourceType, resourceName?, inheritanceProvider?}]", Type = "array", Required = true }
+        ["resources"] = new() { Name = "resources", Description = "Array of resources: [{resourceId, resourceType, resourceName?, inheritanceProvider?}]", Type = "array", Required = true },
+        ["boundary_definition_name"] = new() { Name = "boundary_definition_name", Description = "Optional boundary definition name to assign resources to (e.g., 'Dev/Test'). If omitted, resources are unassigned.", Type = "string", Required = false }
     };
 
     public override async Task<string> ExecuteCoreAsync(
@@ -485,6 +492,30 @@ public class DefineBoundaryTool : BaseTool
             var entries = await _boundaryService.DefineBoundaryAsync(
                 systemId, resources, "mcp-user", cancellationToken);
 
+            // Assign resources to a specific boundary definition if name provided
+            var boundaryDefName = GetArg<string>(arguments, "boundary_definition_name");
+            string? assignedBoundaryName = null;
+            if (!string.IsNullOrWhiteSpace(boundaryDefName))
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<AtoCopilotContext>();
+                var boundaryDef = await db.AuthorizationBoundaryDefinitions
+                    .FirstOrDefaultAsync(b => b.RegisteredSystemId == systemId && b.Name == boundaryDefName, cancellationToken);
+
+                if (boundaryDef != null)
+                {
+                    foreach (var entry in entries)
+                    {
+                        var tracked = await db.AuthorizationBoundaries
+                            .FirstOrDefaultAsync(b => b.Id == entry.Id, cancellationToken);
+                        if (tracked != null)
+                            tracked.AuthorizationBoundaryDefinitionId = boundaryDef.Id;
+                    }
+                    await db.SaveChangesAsync(cancellationToken);
+                    assignedBoundaryName = boundaryDef.Name;
+                }
+            }
+
             sw.Stop();
             return JsonSerializer.Serialize(new
             {
@@ -493,6 +524,7 @@ public class DefineBoundaryTool : BaseTool
                 {
                     system_id = systemId,
                     resources_added = entries.Count,
+                    assigned_boundary = assignedBoundaryName,
                     boundary = entries.Select(b => new
                     {
                         id = b.Id,
@@ -608,24 +640,27 @@ public class ExcludeFromBoundaryTool : BaseTool
 public class AssignRmfRoleTool : BaseTool
 {
     private readonly IBoundaryService _boundaryService;
+    private readonly Services.IProfileNotificationService _notificationService;
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
 
     public AssignRmfRoleTool(
         IBoundaryService boundaryService,
+        Services.IProfileNotificationService notificationService,
         ILogger<AssignRmfRoleTool> logger) : base(logger)
     {
         _boundaryService = boundaryService;
+        _notificationService = notificationService;
     }
 
     public override string Name => "compliance_assign_rmf_role";
 
     public override string Description =>
-        "Assign an RMF role (AuthorizingOfficial, Issm, Isso, Sca, SystemOwner) to a user for a specific registered system.";
+        "Assign an RMF role (AuthorizingOfficial, Issm, Isso, Sca, SystemOwner, MissionOwner) to a user for a specific registered system.";
 
     public override IReadOnlyDictionary<string, ToolParameter> Parameters => new Dictionary<string, ToolParameter>
     {
         ["system_id"] = new() { Name = "system_id", Description = "System GUID, name, or acronym", Type = "string", Required = true },
-        ["role"] = new() { Name = "role", Description = "RMF role: AuthorizingOfficial | Issm | Isso | Sca | SystemOwner", Type = "string", Required = true },
+        ["role"] = new() { Name = "role", Description = "RMF role: AuthorizingOfficial | Issm | Isso | Sca | SystemOwner | MissionOwner", Type = "string", Required = true },
         ["user_id"] = new() { Name = "user_id", Description = "User identity", Type = "string", Required = true },
         ["user_display_name"] = new() { Name = "user_display_name", Description = "Display name of the user", Type = "string", Required = false }
     };
@@ -646,12 +681,26 @@ public class AssignRmfRoleTool : BaseTool
             return JsonSerializer.Serialize(new { status = "error", errorCode = "INVALID_INPUT", message = "The 'user_id' parameter is required." }, JsonOpts);
 
         if (!Enum.TryParse<RmfRole>(roleStr, true, out var role))
-            return JsonSerializer.Serialize(new { status = "error", errorCode = "INVALID_INPUT", message = $"Invalid role '{roleStr}'. Use: AuthorizingOfficial, Issm, Isso, Sca, SystemOwner." }, JsonOpts);
+            return JsonSerializer.Serialize(new { status = "error", errorCode = "INVALID_INPUT", message = $"Invalid role '{roleStr}'. Use: AuthorizingOfficial, Issm, Isso, Sca, SystemOwner, MissionOwner." }, JsonOpts);
 
         try
         {
             var assignment = await _boundaryService.AssignRmfRoleAsync(
                 systemId, role, userId, displayName, "mcp-user", cancellationToken);
+
+            // Notify Mission Owner on assignment (FR-049)
+            if (role == RmfRole.MissionOwner)
+            {
+                try
+                {
+                    await _notificationService.NotifyMissionOwnerAssignedAsync(
+                        assignment.RegisteredSystemId, assignment.UserId, cancellationToken);
+                }
+                catch (Exception notifyEx)
+                {
+                    Logger.LogWarning(notifyEx, "Failed to send MO assignment notification for system '{SystemId}'", systemId);
+                }
+            }
 
             sw.Stop();
             return JsonSerializer.Serialize(new

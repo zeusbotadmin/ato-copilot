@@ -44,6 +44,20 @@ This catalog documents the MCP tools introduced for RMF system registration, aut
 | `compliance_list_poam` | `ListPoamAsync` | List POA&M items with filtering |
 | `compliance_generate_rar` | `GenerateRarAsync` | Generate Risk Assessment Report |
 | `compliance_bundle_authorization_package` | `BundleAuthorizationPackageAsync` | Bundle complete authorization package |
+| `compliance_narrative_history` | `GetNarrativeHistoryAsync` | View version history for a control narrative |
+| `compliance_narrative_diff` | `GetNarrativeDiffAsync` | Compare two narrative versions with unified diff |
+| `compliance_rollback_narrative` | `RollbackNarrativeAsync` | Rollback to a previous narrative version |
+| `compliance_submit_narrative` | `SubmitNarrativeAsync` | Submit a Draft narrative for ISSM review |
+| `compliance_review_narrative` | `ReviewNarrativeAsync` | Approve or request revision of a narrative |
+| `compliance_batch_review_narratives` | `BatchReviewNarrativesAsync` | Batch review narratives by family or control IDs |
+| `compliance_narrative_approval_progress` | `GetNarrativeApprovalProgressAsync` | Aggregate approval status and progress dashboard |
+| `compliance_batch_submit_narratives` | `BatchSubmitNarrativesAsync` | Batch submit Draft narratives for review |
+| `compliance_generate_roadmap` | `GenerateRoadmapAsync` | Generate phased implementation roadmap from gap analysis |
+| `compliance_get_roadmap` | `GetRoadmapAsync` | Get active implementation roadmap for a system |
+| `compliance_get_roadmap_progress` | `GetRoadmapProgressAsync` | Get roadmap progress metrics with risk curve |
+| `compliance_update_roadmap` | `UpdateRoadmapAsync` | Update roadmap items, merge/split phases |
+| `compliance_create_board_from_roadmap` | `CreateBoardFromRoadmapAsync` | Create Kanban board from roadmap |
+| `compliance_export_roadmap_pdf` | `ExportRoadmapPdfAsync` | Export roadmap as PDF document |
 
 ---
 
@@ -489,6 +503,183 @@ Generate a Customer Responsibility Matrix (CRM) for the system. Groups controls 
 
 ---
 
+### Org-Level Inheritance Defaults (Feature 044)
+
+Dashboard REST endpoints for managing org-wide inheritance defaults derived from the Security Capabilities Library. These are not MCP tools but REST API endpoints consumed by the Dashboard UI.
+
+#### `GET /api/dashboard/inheritance/org-defaults`
+
+List paginated org-level inheritance defaults.
+
+**Query Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `family` | string | No | Filter by control family (e.g., "AC") |
+| `inheritanceType` | string | No | Filter by inheritance type |
+| `search` | string | No | Search by control ID or provider |
+| `page` | int | No | Page number (default: 1) |
+| `pageSize` | int | No | Items per page (default: 50) |
+
+**Response:**
+```json
+{
+  "items": [
+    {
+      "id": "guid",
+      "controlId": "AC-2",
+      "inheritanceType": 0,
+      "provider": "Microsoft Entra ID",
+      "sourceCapabilityIds": "guid1,guid2",
+      "sourceCapabilityNames": "RBAC, MFA",
+      "mappingRole": 0,
+      "derivedAt": "2026-03-22T03:44:27Z"
+    }
+  ],
+  "total": 24,
+  "page": 1,
+  "pageSize": 50
+}
+```
+
+#### `POST /api/dashboard/inheritance/org-defaults/derive`
+
+Derive org-level defaults from org-wide capability-control mappings and cascade to all system baselines.
+
+**Request:** No body required.
+
+**Response:**
+```json
+{
+  "derivedCount": 24,
+  "inheritedCount": 24,
+  "sharedCount": 0,
+  "removedCount": 0,
+  "affectedSystems": 6,
+  "derivedAt": "2026-03-22T03:44:24Z"
+}
+```
+
+**Cascade behavior:**
+- Creates `OrgDerived` designations on every system baseline for newly derived defaults
+- Updates existing `OrgDerived` designations when inheritance type/provider changes
+- Removes stale `OrgDerived` designations for controls no longer in org defaults
+- Creates `OrgPropagation` audit entries per affected system
+
+#### `POST /api/dashboard/systems/{systemId}/inheritance/revert-to-org-defaults`
+
+Revert selected controls back to their org-level default designation.
+
+**Request:**
+```json
+{
+  "controlIds": ["AC-2", "AC-3"],
+  "revertedBy": "dashboard-user"
+}
+```
+
+**Response:**
+```json
+{
+  "revertedCount": 2,
+  "skipped": [
+    { "controlId": "AC-99", "reason": "No org default exists" }
+  ]
+}
+```
+
+---
+
+### Security Capabilities Hub (Feature 045)
+
+Dashboard REST endpoints for the unified Capabilities Hub. CSP profile and CRM import have moved from the inheritance page to these capability-scoped endpoints.
+
+#### `GET /api/dashboard/capabilities/coverage`
+
+Compute coverage dashboard showing provider cards, KPI metrics, and gap controls.
+
+**Response:**
+```json
+{
+  "providers": [
+    {
+      "provider": "Azure Government",
+      "controlledCount": 24,
+      "totalControls": 339,
+      "capabilities": 8,
+      "components": 3
+    }
+  ],
+  "totalCapabilities": 12,
+  "totalControls": 339,
+  "coveredControls": 42,
+  "coveragePercent": 12.4,
+  "gapControls": ["AC-4", "AC-5", "AC-6"]
+}
+```
+
+#### `POST /api/dashboard/capabilities/import/csp-profile`
+
+Import a CSP profile to create components, capabilities, and control mappings. Use `?dryRun=true` for preview.
+
+**Request:**
+```json
+{
+  "profileId": "azure-gov-high",
+  "conflictResolution": "Skip"
+}
+```
+
+**Response (dryRun=true):**
+```json
+{
+  "profileName": "Azure Government — FedRAMP High",
+  "newCapabilities": 8,
+  "existingCapabilities": 2,
+  "newMappings": 42,
+  "conflicts": 3,
+  "newComponents": 3
+}
+```
+
+#### `POST /api/dashboard/capabilities/import/crm`
+
+Import CRM spreadsheet (CSV/Excel) as `multipart/form-data`. Use `?dryRun=true` for preview.
+
+**Form Fields:**
+- `file` — CSV or Excel file
+- `columnMapping` (optional) — JSON column mapping
+
+**Response (dryRun=true):**
+```json
+{
+  "totalRows": 120,
+  "newCapabilities": 6,
+  "existingCapabilities": 4,
+  "newMappings": 35,
+  "unmatchedControlIds": ["ZZ-99"],
+  "detectedColumns": ["Control ID", "Inheritance", "Provider"],
+  "sampleRows": [{"Control ID": "AC-2", "Inheritance": "Inherited"}]
+}
+```
+
+#### `POST /api/dashboard/components/{componentId}/capabilities`
+
+Bulk link capabilities to a component.
+
+**Request:**
+```json
+{
+  "capabilityIds": ["guid1", "guid2"]
+}
+```
+
+#### `DELETE /api/dashboard/components/{componentId}/capabilities/{capabilityId}`
+
+Unlink a capability from a component. Idempotent — returns 204 even if not linked.
+
+---
+
 ## US5: SSP Authoring & Narrative Management Tools
 
 ### `compliance_write_narrative`
@@ -640,49 +831,69 @@ Get SSP narrative completion status for a system. Shows per-family progress (tot
 
 ### `compliance_generate_ssp`
 
-Generate the System Security Plan (SSP) document for a registered system. Produces a Markdown document containing system information, security categorization, control baseline, and per-control implementation narratives. Warns about controls with missing narratives.
+Generate the System Security Plan (SSP) document for a registered system. Produces a 13-section Markdown document following NIST 800-18 structure with YAML front-matter, completeness warnings, and per-control implementation narratives.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `system_id` | string | Yes | RegisteredSystem ID (GUID) |
+| `system_id` | string | Yes | System GUID, name, or acronym |
 | `format` | string | No | Output format: `markdown` (default) or `docx` |
-| `sections` | string | No | Specific sections to include (comma-separated): `system_information`, `categorization`, `baseline`, `controls`. Default: all. |
+| `sections` | string | No | Specific sections to include (comma-separated). Default: all 13 sections. See section key table below. |
 
 **Response (success):**
 ```json
 {
   "status": "success",
   "data": {
-    "system_id": "guid",
-    "system_name": "My Application System",
+    "system_id": "...",
+    "system_name": "Eagle Eye",
     "format": "markdown",
-    "total_controls": 335,
+    "total_controls": 325,
     "controls_with_narratives": 310,
-    "controls_missing_narratives": 25,
-    "sections": ["system_information", "categorization", "baseline", "controls"],
+    "controls_missing_narratives": 15,
+    "sections": ["system_identification", "categorization", "personnel", "system_type", "description", "environment", "interconnections", "laws_regulations", "minimum_controls", "control_implementations", "authorization_boundary", "personnel_security", "contingency_plan"],
     "warnings": [
       "Control AC-3 has no implementation narrative",
-      "Control AU-7 has no implementation narrative"
+      "§12 (Personnel Security) has not been authored",
+      "§13 (Contingency Plan) has not been authored"
     ],
-    "content": "# System Security Plan (SSP)\n\n## 1. System Information\n...",
-    "generated_at": "2025-01-15T10:30:00Z"
+    "content": "---\ntitle: System Security Plan\nsystem: Eagle Eye\nbaseline: Moderate\n---\n\n# System Security Plan (SSP)\n\n## §1 System Identification\n...",
+    "generated_at": "2026-03-11T10:30:00Z"
   },
-  "metadata": { "tool": "compliance_generate_ssp", "timestamp": "..." }
+  "metadata": { "tool": "compliance_generate_ssp", "duration_ms": 2500, "timestamp": "..." }
 }
 ```
 
-**SSP Document Sections:**
+**SSP Document Sections (NIST 800-18):**
 
-| Section | Content |
-|---------|---------|
-| `system_information` | System name, type, mission criticality, hosting environment, RMF status |
-| `categorization` | FIPS 199 notation, C/I/A impacts, DoD IL, information types |
-| `baseline` | Baseline level, overlay applied, total controls, tailoring/inheritance summary |
-| `controls` | Per-family grouped controls with narratives, status, inheritance type |
+| §  | New Section Key | Content | Auto/Authored |
+|----|-----------------|---------|---------------|
+| §1  | `system_identification` | System name, type, mission criticality, hosting environment, RMF status | Auto |
+| §2  | `categorization` | FIPS 199 notation, C/I/A impacts, DoD IL, information types | Auto |
+| §3  | `personnel` | RMF role assignments, contact information | Auto |
+| §4  | `system_type` | Major/minor application, enclave classification | Auto |
+| §5  | `description` | System purpose, functions, user base | Authored |
+| §6  | `environment` | Deployment topology, hardware, software inventory | Authored |
+| §7  | `interconnections` | System-to-system connections from Feature 021 data | Auto |
+| §8  | `laws_regulations` | Applicable laws, Executive Orders, directives | Authored |
+| §9  | `minimum_controls` | Baseline level, overlay, total controls, tailoring/inheritance summary | Auto |
+| §10 | `control_implementations` | Per-family grouped controls with narratives, status, inheritance type | Auto |
+| §11 | `authorization_boundary` | Authorization boundary description and diagram references | Auto |
+| §12 | `personnel_security` | Personnel screening, access agreements, separation procedures | Authored |
+| §13 | `contingency_plan` | Contingency plan overview, recovery objectives, testing schedule | Authored |
+
+**Backward-Compatible Section Keys:**
+
+| Old Key | Maps To | § |
+|---------|---------|---|
+| `system_information` | `system_identification` | §1 |
+| `baseline` | `minimum_controls` | §9 |
+| `controls` | `control_implementations` | §10 |
 
 **Progress Reporting:** When called programmatically with `IProgress<string>`, reports progress per section and per control family.
+
+> **Feature 022 Enhancement**: SSP generation now produces a 13-section NIST 800-18 document with YAML front-matter metadata. Sections §7 (Interconnections) pulls data from Feature 021 interconnection records. Authored sections (§5, §6, §8, §12, §13) are populated from `SspSection` entities written via `compliance_write_ssp_section`.
 
 ---
 
@@ -1585,13 +1796,15 @@ conflict resolution (skip, overwrite, merge) and dry-run preview.
 
 ### `compliance_export_oscal`
 
-Export system data in OSCAL JSON format (v1.0.6). Supports SSP,
-assessment-results, and POA&M OSCAL models.
+Export system data in OSCAL JSON format (v1.1.2). Supports SSP,
+assessment-results, POA&M, and assessment-plan OSCAL models.
+
+> **Feature 041 Enhancement**: Now supports `assessment-plan` model type via `OscalSapExportService`. OSCAL version updated to 1.1.2 for all models.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `system_id` | string | yes | RegisteredSystem ID |
-| `model` | string | yes | `ssp`, `assessment-results`, or `poam` |
+| `model` | string | yes | `ssp`, `assessment-results`, `poam`, or `assessment-plan` |
 
 ```json
 {
@@ -1757,6 +1970,7 @@ Accepts base64-encoded file content (max 5 MB after decoding).
       "pass": 260,
       "not_applicable": 10,
       "not_reviewed": 5,
+      "error": 0,
       "skipped": 0,
       "unmatched": 3
     },
@@ -1767,7 +1981,8 @@ Accepts base64-encoded file content (max 5 MB after decoding).
       "effectiveness_updated": 0,
       "nist_controls_affected": 8
     },
-    "warnings": ["3 STIG rule(s) not found in curated library: V-99997, V-99998, V-99999"]
+    "warnings": ["3 STIG rule(s) not found in curated library: V-99997, V-99998, V-99999"],
+    "error_message": null
   }
 }
 ```
@@ -1886,12 +2101,16 @@ summary statistics. Supports pagination and filtering.
         "file_name": "windows_2022.ckl",
         "import_type": "Ckl",
         "benchmark_id": "Windows_Server_2022_STIG",
+        "benchmark_title": "Windows Server 2022 STIG",
         "status": "Completed",
+        "imported_by": "mcp-user",
         "imported_at": "2026-03-15T10:30:00Z",
+        "is_dry_run": false,
         "total_entries": 287,
         "open_count": 12,
         "pass_count": 260,
-        "findings_created": 12
+        "findings_created": 12,
+        "findings_updated": 0
       }
     ]
   }
@@ -1922,13 +2141,25 @@ breakdown, unmatched rules, and import configuration.
     "import_type": "Ckl",
     "import_status": "CompletedWithWarnings",
     "benchmark_id": "Windows_Server_2022_STIG",
+    "benchmark_title": "Windows Server 2022 STIG",
+    "target_host": "DC01.agency.mil",
+    "imported_by": "mcp-user",
     "imported_at": "2026-03-15T10:30:00Z",
+    "is_dry_run": false,
     "conflict_resolution": "Skip",
     "counts": {
       "total": 287,
       "open": 12,
       "pass": 260,
+      "not_applicable": 10,
+      "not_reviewed": 5,
+      "error": 0,
+      "skipped": 0,
+      "unmatched": 3,
       "findings_created": 12,
+      "findings_updated": 0,
+      "effectiveness_created": 8,
+      "effectiveness_updated": 0,
       "nist_controls_affected": 8
     },
     "findings": [
@@ -1959,29 +2190,48 @@ Import a Prisma Cloud CSPM compliance CSV export file. Supports multi-subscripti
 | `file_content` | string | Yes | Base64-encoded Prisma Cloud CSV file |
 | `file_name` | string | Yes | Original file name |
 | `system_id` | string | No | Registered system ID (if omitted, auto-resolves from Azure subscription IDs) |
-| `conflict_resolution` | string | No | `"skip"` (default), `"overwrite"` |
+| `conflict_resolution` | string | No | `"Skip"` (default), `"Overwrite"`, `"Merge"` |
 | `dry_run` | boolean | No | Preview import without persisting (default: false) |
 | `assessment_id` | string | No | Existing assessment ID (auto-resolved if omitted) |
 
 ```json
 {
   "status": "success",
-  "imports": [
-    {
-      "import_record_id": "...",
-      "system_id": "...",
-      "system_name": "ACME Portal",
-      "total_alerts": 47,
-      "open_count": 32,
-      "resolved_count": 12,
-      "findings_created": 32,
-      "nist_controls_affected": 22,
-      "is_dry_run": false
-    }
-  ],
-  "unresolved_subscriptions": [],
-  "total_processed": 47,
-  "duration_ms": 2340
+  "data": {
+    "total_processed": 47,
+    "total_skipped": 0,
+    "duration_ms": 2340,
+    "dry_run": false,
+    "imports": [
+      {
+        "system_id": "...",
+        "system_name": "ACME Portal",
+        "import_record_id": "...",
+        "import_status": "Completed",
+        "total_alerts": 47,
+        "summary": {
+          "open": 32,
+          "resolved": 12,
+          "dismissed": 2,
+          "snoozed": 1
+        },
+        "changes": {
+          "findings_created": 32,
+          "findings_updated": 0,
+          "skipped": 0,
+          "unmapped_policies": 3,
+          "effectiveness_created": 22,
+          "effectiveness_updated": 0,
+          "nist_controls_affected": 22,
+          "evidence_created": 32
+        },
+        "file_hash": "abc123...",
+        "warnings": []
+      }
+    ],
+    "unresolved_subscriptions": [],
+    "skipped_non_azure": null
+  }
 }
 ```
 
@@ -1999,20 +2249,22 @@ Import Prisma Cloud API JSON (RQL alert response) with enhanced remediation cont
 | `file_content` | string | Yes | Base64-encoded JSON file |
 | `file_name` | string | Yes | Original file name |
 | `system_id` | string | No | Registered system ID |
-| `conflict_resolution` | string | No | `"skip"` (default), `"overwrite"` |
+| `conflict_resolution` | string | No | `"Skip"` (default), `"Overwrite"`, `"Merge"` |
 | `dry_run` | boolean | No | Preview without persisting (default: false) |
 | `assessment_id` | string | No | Existing assessment ID |
 
-Returns the same format as CSV import, plus enhanced fields:
+Returns the same format as CSV import, plus enhanced fields per import:
 
 ```json
 {
   "imports": [
     {
-      "remediable_count": 28,
-      "cli_scripts_extracted": 22,
-      "policy_labels_found": ["CSPM", "Azure", "Storage"],
-      "alerts_with_history": 47
+      "enhanced": {
+        "remediable_count": 28,
+        "cli_scripts_extracted": 22,
+        "policy_labels_found": ["CSPM", "Azure", "Storage"],
+        "alerts_with_history": 47
+      }
     }
   ]
 }
@@ -2045,6 +2297,7 @@ List unique Prisma Cloud policies observed across imports for a system, with NIS
       "resolved_count": 7,
       "dismissed_count": 1,
       "affected_resource_types": ["Microsoft.Storage/storageAccounts"],
+      "last_seen_import_id": "...",
       "last_seen_at": "2026-03-05T10:30:00Z"
     }
   ]
@@ -2084,3 +2337,1522 @@ Compare Prisma Cloud findings across scan imports to show remediation progress, 
 
 - **RBAC**: `SecurityLead`, `Analyst`, `Assessor`, `Administrator`
 - **RMF Step**: Assess (Step 4), Monitor (Step 6)
+
+---
+
+## ACAS/Nessus Scan Import Tools (Feature 026)
+
+### `compliance_import_nessus`
+
+Import a Tenable Nessus/ACAS vulnerability scan file (.nessus XML format) for a
+registered system. Parses plugin results per host, maps plugin families to NIST
+800-53 controls via curated mapping table with heuristic fallback, creates
+compliance findings, updates control effectiveness, and generates POA&M weakness
+entries for Critical/High/Medium severity findings.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | Registered system ID |
+| `file_content` | string | Yes | Base64-encoded .nessus XML file content (max 10 MB) |
+| `file_name` | string | Yes | Original file name (e.g., `acas_scan_2025Q1.nessus`) |
+| `conflict_resolution` | string | No | How to handle duplicates: `Skip` (default), `Overwrite`, `Merge` |
+| `dry_run` | boolean | No | Preview results without persisting (default: `false`) |
+| `assessment_id` | string | No | Optional assessment ID; auto-resolves or creates one if omitted |
+| `user_role` | string | Yes | Caller's compliance role for RBAC enforcement |
+
+```json
+{
+  "status": "success",
+  "data": {
+    "import_record_id": "...",
+    "import_status": "Completed",
+    "dry_run": false,
+    "total_hosts": 5,
+    "total_plugins": 287,
+    "summary": {
+      "critical": 3,
+      "high": 12,
+      "medium": 45,
+      "low": 120,
+      "informational": 107
+    },
+    "changes": {
+      "findings_created": 60,
+      "findings_updated": 0,
+      "findings_skipped": 0,
+      "effectiveness_created": 15,
+      "effectiveness_updated": 0,
+      "nist_controls_affected": 15,
+      "poam_weaknesses_created": 12
+    },
+    "warnings": ["12 plugin(s) mapped via heuristic fallback (family → control)"],
+    "error_message": null
+  }
+}
+```
+
+- **RBAC**: Analyst, SecurityLead, Administrator, PlatformEngineer
+- **RMF Step**: Assess (Step 4)
+- **Duplicate Detection**: SHA-256 file hash prevents re-importing identical files
+- **Conflict Resolution**: `Skip` ignores existing findings, `Overwrite` replaces, `Merge` keeps higher severity
+- **Control Mapping**: Curated plugin-family → NIST 800-53 mapping table with heuristic fallback
+- **POA&M Integration**: Auto-creates POA&M weakness entries for Cat I/II/III findings
+
+---
+
+### `compliance_list_nessus_imports`
+
+List Nessus/ACAS import history for a registered system. Filters to NessusXml
+import type only. Supports date range filtering and pagination.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | Registered system ID |
+| `from_date` | string | No | Start date filter (ISO 8601) |
+| `to_date` | string | No | End date filter (ISO 8601) |
+| `page_size` | integer | No | Items per page (default: 20, max: 50) |
+| `user_role` | string | Yes | Caller's compliance role for RBAC enforcement |
+
+```json
+{
+  "status": "success",
+  "data": {
+    "total_count": 3,
+    "imports": [
+      {
+        "id": "...",
+        "file_name": "acas_scan_2025Q1.nessus",
+        "import_type": "NessusXml",
+        "status": "Completed",
+        "imported_by": "mcp-user",
+        "imported_at": "2025-03-15T10:30:00Z",
+        "total_findings": 287,
+        "findings_created": 60
+      }
+    ]
+  }
+}
+```
+
+- **RBAC**: Analyst, SecurityLead, Administrator, PlatformEngineer, Auditor, AuthorizingOfficial, Viewer
+- **RMF Step**: Assess (Step 4), Monitor (Step 6)
+
+---
+
+## SAP Generation Tools (Feature 018)
+
+### `compliance_generate_sap`
+
+Generate a Security Assessment Plan (SAP) for a registered system. Auto-populates from control baseline, OSCAL assessment objectives, STIG mappings, and evidence data. All optional parameters are auto-populated with sensible defaults — call with just the `system_id`. Produces a Markdown SAP document with 15 sections.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | System GUID, name, or acronym |
+| `assessment_id` | string | No | Optional assessment cycle ID to link SAP to |
+| `schedule_start` | string | No | Assessment start date (ISO 8601) |
+| `schedule_end` | string | No | Assessment end date (ISO 8601) |
+| `team_members` | string | No | JSON array of `{ name, organization, role, contact_info? }` |
+| `scope_notes` | string | No | SCA-provided assessment scope notes |
+| `method_overrides` | string | No | JSON array of `{ control_id, methods[], rationale? }` |
+| `rules_of_engagement` | string | No | Assessment constraints and availability windows |
+| `format` | string | No | Output format: `markdown` (default), `docx`, or `pdf` |
+
+```json
+{
+  "status": "success",
+  "data": {
+    "sap_id": "...",
+    "system_id": "...",
+    "assessment_id": "...",
+    "title": "Security Assessment Plan — Eagle Eye",
+    "status": "Draft",
+    "format": "markdown",
+    "baseline_level": "Moderate",
+    "total_controls": 325,
+    "customer_controls": 180,
+    "inherited_controls": 100,
+    "shared_controls": 45,
+    "stig_benchmark_count": 3,
+    "controls_with_objectives": 325,
+    "evidence_gaps": 12,
+    "family_summaries": [
+      { "family": "AC", "control_count": 25, "customer_count": 15, "inherited_count": 7, "methods": ["Test", "Interview"] }
+    ],
+    "content": "# Security Assessment Plan\n...",
+    "generated_at": "2026-03-11T10:00:00Z",
+    "warnings": ["12 controls have no evidence artifacts"]
+  },
+  "metadata": { "tool": "compliance_generate_sap", "duration_ms": 1500, "timestamp": "..." }
+}
+```
+
+- **RBAC**: `Analyst` (SCA), `SecurityLead` (ISSM)
+- **RMF Step**: Assess (Step 4)
+- **Auto-Population**: Schedule defaults to 30-day window, team populated from RMF role assignments, methods derived from OSCAL objectives
+
+---
+
+### `compliance_update_sap`
+
+Update a Draft SAP's schedule, scope, team, assessment methods, or rules of engagement. Team replacement is atomic. Method overrides are additive (only specified controls updated). Finalized SAPs cannot be modified.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sap_id` | string | No | SAP ID to update (optional if `system_id` is provided) |
+| `system_id` | string | No | System GUID, name, or acronym — looks up the latest Draft SAP |
+| `schedule_start` | string | No | Updated assessment start date (ISO 8601) |
+| `schedule_end` | string | No | Updated assessment end date (ISO 8601) |
+| `scope_notes` | string | No | Updated scope notes |
+| `rules_of_engagement` | string | No | Updated rules of engagement |
+| `team_members` | string | No | JSON array of `{ name, organization, role, contact_info? }` — replaces entire team |
+| `method_overrides` | string | No | JSON array of `{ control_id, methods[], rationale? }` — additive per-control overrides |
+
+```json
+{
+  "status": "success",
+  "data": {
+    "sap_id": "...",
+    "status": "Draft",
+    "content": "# Security Assessment Plan\n...",
+    "updated_at": "2026-03-11T11:00:00Z"
+  },
+  "metadata": { "tool": "compliance_update_sap", "duration_ms": 800, "timestamp": "..." }
+}
+```
+
+- **RBAC**: `Analyst` (SCA), `SecurityLead` (ISSM)
+- **RMF Step**: Assess (Step 4)
+- **Lookup Behavior**: If only `system_id` is provided and no Draft SAP exists, auto-generates one first
+
+---
+
+### `compliance_finalize_sap`
+
+Finalize a Draft SAP — locks it with SHA-256 content hash. Finalized SAPs are immutable: no updates, no re-finalization. Sets `FinalizedBy`, `FinalizedAt`, and `ContentHash` fields.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sap_id` | string | No | SAP ID to finalize (optional if `system_id` is provided) |
+| `system_id` | string | No | System GUID, name, or acronym — looks up the latest SAP |
+
+```json
+{
+  "status": "success",
+  "data": {
+    "sap_id": "...",
+    "status": "Finalized",
+    "content_hash": "sha256:a1b2c3d4...",
+    "finalized_by": "mcp-user",
+    "finalized_at": "2026-03-11T12:00:00Z",
+    "total_controls": 325,
+    "title": "Security Assessment Plan — Eagle Eye"
+  },
+  "metadata": { "tool": "compliance_finalize_sap", "duration_ms": 400, "timestamp": "..." }
+}
+```
+
+- **RBAC**: `Analyst` (SCA)
+- **RMF Step**: Assess (Step 4)
+- **Integrity**: SHA-256 hash enables tamper detection for finalized assessment plans
+
+---
+
+### `compliance_get_sap`
+
+Retrieve a specific SAP by its ID, or the latest SAP for a system. If both `sap_id` and `system_id` are provided, `sap_id` takes precedence. When retrieving by `system_id`, prefers Finalized SAPs over Drafts.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sap_id` | string | No | Specific SAP ID to retrieve |
+| `system_id` | string | No | System GUID, name, or acronym — returns latest SAP (prefers Finalized) |
+
+```json
+{
+  "status": "success",
+  "data": {
+    "sap_id": "...",
+    "system_id": "...",
+    "assessment_id": "...",
+    "title": "Security Assessment Plan — Eagle Eye",
+    "status": "Finalized",
+    "format": "markdown",
+    "baseline_level": "Moderate",
+    "total_controls": 325,
+    "customer_controls": 180,
+    "inherited_controls": 100,
+    "shared_controls": 45,
+    "stig_benchmark_count": 3,
+    "controls_with_objectives": 325,
+    "content": "# Security Assessment Plan\n...",
+    "content_hash": "sha256:a1b2c3d4...",
+    "generated_at": "2026-03-11T10:00:00Z",
+    "finalized_at": "2026-03-11T12:00:00Z",
+    "family_summaries": [
+      { "family": "AC", "control_count": 25, "customer_count": 15, "inherited_count": 7, "methods": ["Test", "Interview"] }
+    ]
+  },
+  "metadata": { "tool": "compliance_get_sap", "duration_ms": 200, "timestamp": "..." }
+}
+```
+
+- **RBAC**: All roles
+- **RMF Step**: Assess (Step 4)
+
+---
+
+### `compliance_list_saps`
+
+List all Security Assessment Plans (SAPs) for a system, including Draft and Finalized history. Returns status, dates, and scope summary per SAP. Content is omitted for brevity.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | System GUID, name, or acronym |
+
+```json
+{
+  "status": "success",
+  "data": {
+    "system_id": "...",
+    "sap_count": 2,
+    "saps": [
+      {
+        "sap_id": "...",
+        "title": "Security Assessment Plan — Eagle Eye",
+        "status": "Finalized",
+        "baseline_level": "Moderate",
+        "total_controls": 325,
+        "customer_controls": 180,
+        "inherited_controls": 100,
+        "shared_controls": 45,
+        "generated_at": "2026-03-11T10:00:00Z",
+        "finalized_at": "2026-03-11T12:00:00Z"
+      }
+    ]
+  },
+  "metadata": { "tool": "compliance_list_saps", "duration_ms": 150, "timestamp": "..." }
+}
+```
+
+- **RBAC**: All roles
+- **RMF Step**: Assess (Step 4)
+
+### Troubleshooting — SAP Tools
+
+**"Tool not found" error**: SAP tools require Feature 018 to be deployed and `ISapService` registered in DI. If you receive a tool-not-found response, verify the service is registered in `ServiceCollectionExtensions.cs` and the `Feature018_SapGeneration` migration has been applied.
+
+```json
+{
+  "status": "error",
+  "error": "Tool 'compliance_generate_sap' not found. Feature 018 (SAP Generation) may not be deployed in this environment.",
+  "resolution": "Verify ISapService is registered and Feature018_SapGeneration migration is applied."
+}
+```
+
+---
+
+## Privacy & Interconnection Tools (Feature 021)
+
+### `compliance_create_pta`
+
+Conduct a Privacy Threshold Analysis (PTA) for a registered system. Auto-detects PII from categorized information types or accepts manual PII flags.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | System GUID, name, or acronym |
+| `manual_mode` | boolean | No | If true, use explicit PII flags instead of auto-detection |
+| `collects_pii` | boolean | No | Manual mode: whether system collects PII |
+| `maintains_pii` | boolean | No | Manual mode: whether system maintains PII |
+| `disseminates_pii` | boolean | No | Manual mode: whether system disseminates PII |
+| `pii_categories` | string | No | JSON array of PII categories |
+| `estimated_record_count` | integer | No | Estimated number of PII records |
+| `exemption_rationale` | string | No | Exemption justification if exempt |
+
+```json
+{
+  "status": "success",
+  "data": {
+    "pta_id": "...",
+    "determination": "PiaRequired",
+    "collects_pii": true,
+    "maintains_pii": true,
+    "disseminates_pii": false,
+    "pii_categories": ["SSN", "Name", "Email"],
+    "pii_source_info_types": ["D.3.5.1 – Civilian Personnel"],
+    "rationale": "System processes SSN for personnel records. PIA required per OMB M-03-22."
+  }
+}
+```
+
+- **RBAC**: `Analyst` (ISSO), `SecurityLead` (ISSM)
+- **RMF Step**: Prepare (Step 1)
+- **Auto-Detection**: When `manual_mode` is false, scans SP 800-60 information types from system categorization for PII indicators
+
+---
+
+### `compliance_generate_pia`
+
+Generate a Privacy Impact Assessment (PIA) with 8 OMB M-03-22 sections. Requires a completed PTA with `PiaRequired` determination.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | System GUID, name, or acronym |
+
+```json
+{
+  "status": "success",
+  "data": {
+    "pia_id": "...",
+    "pia_status": "Draft",
+    "version": 1,
+    "total_sections": 8,
+    "pre_populated_sections": 5,
+    "sections": [
+      {
+        "section_id": "1",
+        "title": "Authority to Collect",
+        "question": "What legal authority allows the collection of this PII?",
+        "answer": "10 USC §136, DoD Instruction 5400.11...",
+        "is_pre_populated": true
+      }
+    ]
+  }
+}
+```
+
+- **RBAC**: `Analyst` (ISSO), `SecurityLead` (ISSM)
+- **RMF Step**: Prepare (Step 1)
+- **Prerequisite**: PTA must exist with `PiaRequired` determination
+
+---
+
+### `compliance_review_pia`
+
+Review a Privacy Impact Assessment — approve or request revision with deficiency notes.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | System GUID, name, or acronym |
+| `decision` | string | Yes | Review decision: `Approved` or `RequestRevision` |
+| `reviewer_comments` | string | Yes | Reviewer notes and observations |
+| `deficiencies` | string | No | JSON array of deficiency strings (required for `RequestRevision`) |
+
+```json
+{
+  "status": "success",
+  "data": {
+    "pia_id": "...",
+    "decision": "Approved",
+    "new_status": "Approved",
+    "reviewer_comments": "All sections adequately address PII handling and retention.",
+    "deficiencies": [],
+    "expiration_date": "2027-03-11T00:00:00Z"
+  }
+}
+```
+
+- **RBAC**: `SecurityLead` (ISSM)
+- **RMF Step**: Prepare (Step 1)
+- **Expiration**: Approved PIAs expire annually and must be re-reviewed
+
+---
+
+### `compliance_check_privacy_compliance`
+
+Get privacy compliance dashboard for a system — aggregates PTA, PIA, and gate status including interconnection agreement health.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | System GUID, name, or acronym |
+
+```json
+{
+  "status": "success",
+  "data": {
+    "system_id": "...",
+    "system_name": "Eagle Eye",
+    "pta_determination": "PiaRequired",
+    "pia_status": "Approved",
+    "privacy_gate_satisfied": true,
+    "active_interconnections": 3,
+    "interconnections_with_agreements": 3,
+    "expired_agreements": 0,
+    "expiring_within_90_days": 1,
+    "interconnection_gate_satisfied": true,
+    "has_no_external_interconnections": false,
+    "overall_status": "Compliant"
+  }
+}
+```
+
+- **RBAC**: All roles
+- **RMF Step**: Prepare (Step 1)
+
+---
+
+### `compliance_add_interconnection`
+
+Register a system-to-system interconnection that crosses the authorization boundary. Clears `HasNoExternalInterconnections` flag if previously set.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | System GUID, name, or acronym |
+| `target_system_name` | string | Yes | Name of external system |
+| `connection_type` | string | Yes | Connection type: `direct`, `vpn`, `api`, `federated`, `wireless`, `remote_access` |
+| `data_flow_direction` | string | Yes | Data flow: `inbound`, `outbound`, `bidirectional` |
+| `data_classification` | string | Yes | Data classification: `unclassified`, `cui`, `secret`, `top_secret` |
+| `target_system_owner` | string | No | Organization/POC owning target system |
+| `target_system_acronym` | string | No | Target system abbreviation |
+| `data_description` | string | No | Description of data exchanged |
+| `protocols` | string | No | JSON array of protocols used |
+| `ports` | string | No | JSON array of ports used |
+| `security_measures` | string | No | JSON array of security controls |
+| `authentication_method` | string | No | How systems authenticate to each other |
+
+```json
+{
+  "status": "success",
+  "data": {
+    "interconnectionId": "...",
+    "targetSystemName": "JIRA Cloud",
+    "interconnectionStatus": "Proposed",
+    "hasAgreement": false
+  }
+}
+```
+
+- **RBAC**: `PlatformEngineer` (Eng), `Analyst` (ISSO), `SecurityLead` (ISSM)
+- **RMF Step**: Prepare (Step 1)
+
+---
+
+### `compliance_list_interconnections`
+
+List all system interconnections with agreement status summaries. Optionally filter by status.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | System GUID, name, or acronym |
+| `status_filter` | string | No | Filter: `proposed`, `active`, `suspended`, `terminated` |
+
+```json
+{
+  "status": "success",
+  "data": {
+    "systemId": "...",
+    "totalInterconnections": 3,
+    "interconnections": [
+      {
+        "id": "...",
+        "targetSystemName": "JIRA Cloud",
+        "interconnectionStatus": "Active",
+        "hasAgreement": true
+      }
+    ]
+  }
+}
+```
+
+- **RBAC**: All roles
+- **RMF Step**: Prepare (Step 1)
+
+---
+
+### `compliance_update_interconnection`
+
+Update an existing interconnection's details or status. Requires `status_reason` when suspending or terminating.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `interconnection_id` | string | Yes | SystemInterconnection ID (GUID) |
+| `status` | string | No | New status: `proposed`, `active`, `suspended`, `terminated` |
+| `status_reason` | string | No | Reason for status change (required for `suspended`/`terminated`) |
+| `connection_type` | string | No | Updated connection type |
+| `data_classification` | string | No | Updated data classification |
+| `protocols` | string | No | Updated protocols (JSON array) |
+| `ports` | string | No | Updated ports (JSON array) |
+| `security_measures` | string | No | Updated security controls (JSON array) |
+
+```json
+{
+  "status": "success",
+  "data": {
+    "interconnectionId": "...",
+    "targetSystemName": "JIRA Cloud",
+    "interconnectionStatus": "Active",
+    "hasAgreement": true
+  }
+}
+```
+
+- **RBAC**: `Analyst` (ISSO), `SecurityLead` (ISSM)
+- **RMF Step**: Prepare (Step 1)
+
+---
+
+### `compliance_generate_isa`
+
+Generate an AI-drafted Interconnection Security Agreement (ISA) from interconnection data using NIST SP 800-47 structure.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `interconnection_id` | string | Yes | SystemInterconnection ID (GUID) |
+
+```json
+{
+  "status": "success",
+  "data": {
+    "agreementId": "...",
+    "title": "ISA — Eagle Eye ↔ JIRA Cloud",
+    "agreementType": "Isa",
+    "narrativeDocument": "# Interconnection Security Agreement\n..."
+  }
+}
+```
+
+- **RBAC**: `SecurityLead` (ISSM)
+- **RMF Step**: Prepare (Step 1)
+
+---
+
+### `compliance_register_agreement`
+
+Register a pre-existing ISA, MOU, or SLA agreement for a system interconnection.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `interconnection_id` | string | Yes | SystemInterconnection ID |
+| `agreement_type` | string | Yes | Agreement type: `isa`, `mou`, `sla` |
+| `title` | string | Yes | Agreement title |
+| `document_reference` | string | No | URL or path to agreement document |
+| `status` | string | No | Initial status: `draft`, `pending_signature`, `signed` |
+| `effective_date` | string | No | ISO 8601 effective date |
+| `expiration_date` | string | No | ISO 8601 expiration date |
+| `signed_by_local` | string | No | Local signatory name/title |
+| `signed_by_remote` | string | No | Remote signatory name/title |
+
+```json
+{
+  "status": "success",
+  "data": {
+    "agreementId": "...",
+    "title": "ISA — Eagle Eye ↔ JIRA Cloud",
+    "agreementType": "Isa",
+    "agreementStatus": "Signed",
+    "expirationDate": "2027-03-11T00:00:00Z"
+  }
+}
+```
+
+- **RBAC**: `SecurityLead` (ISSM)
+- **RMF Step**: Prepare (Step 1)
+
+---
+
+### `compliance_update_agreement`
+
+Update an existing agreement's status, metadata, or signatories. Terminated agreements can only have `review_notes` updated.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `agreement_id` | string | Yes | InterconnectionAgreement ID (GUID) |
+| `status` | string | No | New status: `draft`, `pending_signature`, `signed`, `expired`, `terminated` |
+| `effective_date` | string | No | Updated ISO 8601 effective date |
+| `expiration_date` | string | No | Updated ISO 8601 expiration date |
+| `signed_by_local` | string | No | Updated local signatory |
+| `signed_by_local_date` | string | No | Updated ISO 8601 local signature date |
+| `signed_by_remote` | string | No | Updated remote signatory |
+| `signed_by_remote_date` | string | No | Updated ISO 8601 remote signature date |
+| `review_notes` | string | No | Review or renewal notes |
+
+```json
+{
+  "status": "success",
+  "data": {
+    "agreementId": "...",
+    "title": "ISA — Eagle Eye ↔ JIRA Cloud",
+    "agreementType": "Isa",
+    "agreementStatus": "Signed",
+    "expirationDate": "2027-03-11T00:00:00Z"
+  }
+}
+```
+
+- **RBAC**: `SecurityLead` (ISSM)
+- **RMF Step**: Prepare (Step 1)
+
+---
+
+### `compliance_certify_no_interconnections`
+
+Certify that a system has no external interconnections, satisfying Gate 4 without requiring interconnection records.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | System GUID, name, or acronym |
+| `certify` | boolean | Yes | `true` to certify no interconnections, `false` to revoke |
+
+```json
+{
+  "status": "success",
+  "data": {
+    "systemId": "...",
+    "hasNoExternalInterconnections": true,
+    "interconnectionGateSatisfied": true
+  }
+}
+```
+
+- **RBAC**: `SecurityLead` (ISSM)
+- **RMF Step**: Prepare (Step 1)
+
+---
+
+### `compliance_validate_agreements`
+
+Validate that all active system interconnections have signed, current agreements. Supports `HasNoExternalInterconnections` bypass.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | System GUID, name, or acronym |
+
+```json
+{
+  "status": "success",
+  "data": {
+    "totalInterconnections": 3,
+    "compliantCount": 2,
+    "expiringWithin90DaysCount": 1,
+    "missingAgreementCount": 0,
+    "expiredAgreementCount": 0,
+    "isFullyCompliant": true,
+    "items": [
+      {
+        "interconnectionId": "...",
+        "targetSystemName": "JIRA Cloud",
+        "validationStatus": "Compliant",
+        "agreementTitle": "ISA — Eagle Eye ↔ JIRA Cloud",
+        "expirationDate": "2027-03-11T00:00:00Z",
+        "notes": null
+      }
+    ]
+  }
+}
+```
+
+- **RBAC**: `Analyst` (ISSO), `SecurityLead` (ISSM), `Assessor` (SCA)
+- **RMF Step**: Prepare (Step 1)
+
+### Troubleshooting — Privacy & Interconnection Tools
+
+**"Tool not found" error**: Privacy and interconnection tools require Feature 021 to be deployed with `IPrivacyService` and `IInterconnectionService` registered in DI. If you receive a tool-not-found response, verify the services are registered in `ServiceCollectionExtensions.cs` and the `Feature021_PrivacyInterconnection` migration has been applied.
+
+```json
+{
+  "status": "error",
+  "error": "Tool 'compliance_create_pta' not found. Feature 021 (Privacy & Interconnections) may not be deployed in this environment.",
+  "resolution": "Verify IPrivacyService and IInterconnectionService are registered and Feature021_PrivacyInterconnection migration is applied."
+}
+```
+
+---
+
+## SSP Authoring & OSCAL Export Tools (Feature 022)
+
+### `compliance_write_ssp_section`
+
+Write or update an individual NIST SP 800-18 SSP section (§1–§13). Creates a new section on first write; subsequent writes increment the version and reset status to Draft. Auto-generated sections (§1,§2,§3,§4,§7,§9,§10,§11) regenerate from entity data; authored sections (§5,§6,§8,§12,§13) store user-provided markdown content. Use `submit_for_review=true` to transition from Draft to UnderReview.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | System GUID, name, or acronym |
+| `section_number` | integer | Yes | NIST 800-18 section number (1–13) |
+| `content` | string | No | Section content in markdown (required for authored sections §5,§6,§8,§12,§13) |
+| `authored_by` | string | Yes | Identity of the user authoring this section |
+| `expected_version` | integer | No | Optimistic concurrency check — reject if stored version does not match |
+| `submit_for_review` | boolean | No | If true, transitions from Draft to UnderReview after writing (default: `false`) |
+
+```json
+{
+  "status": "success",
+  "data": {
+    "section_number": 5,
+    "section_title": "System Environment",
+    "status": "Draft",
+    "version": 2,
+    "word_count": 450,
+    "is_auto_generated": false,
+    "has_manual_override": true
+  },
+  "metadata": { "tool": "compliance_write_ssp_section", "duration_ms": 300, "timestamp": "..." }
+}
+```
+
+- **RBAC**: `Analyst` (ISSO), `PlatformEngineer` (Eng)
+- **RMF Step**: Implement (Step 3)
+- **Concurrency**: `expected_version` provides optimistic locking to prevent lost updates
+
+---
+
+### `compliance_review_ssp_section`
+
+Review an SSP section that is in UnderReview status. Approve to mark as Approved, or request revision to return to Draft with reviewer comments.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | System GUID, name, or acronym |
+| `section_number` | integer | Yes | NIST 800-18 section number (1–13) |
+| `decision` | string | Yes | Review decision: `approve` or `request_revision` |
+| `reviewer` | string | Yes | Identity of the reviewer |
+| `comments` | string | No | Reviewer comments (required when requesting revision) |
+
+```json
+{
+  "status": "success",
+  "data": {
+    "section_number": 5,
+    "section_title": "System Environment",
+    "status": "Approved",
+    "reviewed_by": "jane.smith@agency.gov",
+    "reviewed_at": "2026-03-11T14:00:00Z",
+    "reviewer_comments": "Section accurately describes the deployment environment.",
+    "version": 2
+  },
+  "metadata": { "tool": "compliance_review_ssp_section", "duration_ms": 200, "timestamp": "..." }
+}
+```
+
+- **RBAC**: `SecurityLead` (ISSM)
+- **RMF Step**: Implement (Step 3), Assess (Step 4)
+- **State Machine**: Only sections in `UnderReview` status can be reviewed
+
+---
+
+### `compliance_ssp_completeness`
+
+Check SSP section completeness status for a registered system. Returns per-section summary with status, word count, and version for all 13 NIST 800-18 sections. Includes overall readiness percentage and blocking issues list.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | System GUID, name, or acronym |
+
+```json
+{
+  "status": "success",
+  "data": {
+    "system_name": "Eagle Eye",
+    "overall_readiness_percent": 85,
+    "approved_count": 11,
+    "total_sections": 13,
+    "sections": [
+      {
+        "section_number": 1,
+        "section_title": "System Identification",
+        "status": "Approved",
+        "is_auto_generated": true,
+        "has_manual_override": false,
+        "authored_by": "system",
+        "authored_at": "2026-03-10T09:00:00Z",
+        "word_count": 320,
+        "version": 1
+      }
+    ],
+    "blocking_issues": ["§12 (Personnel Security) is still in Draft", "§13 (Contingency Plan) has not been authored"]
+  },
+  "metadata": { "tool": "compliance_ssp_completeness", "duration_ms": 250, "timestamp": "..." }
+}
+```
+
+- **RBAC**: All roles
+- **RMF Step**: Implement (Step 3), Assess (Step 4)
+
+---
+
+### `compliance_export_oscal_ssp`
+
+Export an OSCAL 1.1.2 System Security Plan as JSON for a registered system.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | System ID (GUID) or name/acronym |
+| `include_back_matter` | boolean | No | Include back-matter resources (default: `true`) |
+| `pretty_print` | boolean | No | Pretty-print JSON output (default: `true`) |
+
+```json
+{
+  "status": "success",
+  "data": {
+    "oscal_ssp_json": "{ \"system-security-plan\": { ... } }",
+    "warnings": [],
+    "statistics": {
+      "control_count": 325,
+      "component_count": 12,
+      "inventory_item_count": 8,
+      "user_count": 5,
+      "back_matter_resource_count": 3
+    }
+  },
+  "metadata": { "tool": "compliance_export_oscal_ssp", "duration_ms": 2000, "timestamp": "..." }
+}
+```
+
+- **RBAC**: `SecurityLead` (ISSM), `Assessor` (SCA), `AuthorizingOfficial` (AO)
+- **RMF Step**: Authorize (Step 5)
+- **OSCAL Version**: 1.1.2 compliant JSON output
+
+---
+
+### `compliance_validate_oscal_ssp`
+
+Generate OSCAL 1.1.2 SSP JSON for a system, then validate it for structural correctness.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | System ID (GUID) or name/acronym |
+
+```json
+{
+  "status": "success",
+  "data": {
+    "is_valid": true,
+    "errors": [],
+    "warnings": ["Back-matter has no document references"],
+    "statistics": {
+      "control_count": 325,
+      "component_count": 12,
+      "inventory_item_count": 8,
+      "user_count": 5,
+      "back_matter_resource_count": 0
+    }
+  },
+  "metadata": { "tool": "compliance_validate_oscal_ssp", "duration_ms": 3000, "timestamp": "..." }
+}
+```
+
+- **RBAC**: `SecurityLead` (ISSM), `Assessor` (SCA)
+- **RMF Step**: Authorize (Step 5)
+
+### Troubleshooting — SSP Authoring & OSCAL Tools
+
+**"Tool not found" error**: SSP and OSCAL tools require Feature 022 to be deployed with `ISspService`, `IOscalSspExportService`, and `IOscalValidationService` registered in DI. If you receive a tool-not-found response, verify the services are registered in `ServiceCollectionExtensions.cs` and the `Feature022_SspOscal` migration has been applied.
+
+```json
+{
+  "status": "error",
+  "error": "Tool 'compliance_write_ssp_section' not found. Feature 022 (SSP Authoring & OSCAL) may not be deployed in this environment.",
+  "resolution": "Verify ISspService, IOscalSspExportService, and IOscalValidationService are registered and Feature022_SspOscal migration is applied."
+}
+```
+
+---
+
+## Feature 024: Narrative Governance Tools
+
+> Version Control + Approval Workflow for SSP control implementation narratives.
+
+### `compliance_narrative_history`
+
+View paginated version history for a control implementation narrative.
+
+- **RBAC**: All compliance roles (read-only)
+- **RMF Step**: Implement (Phase 3)
+- **Parameters**: `system_id` (required), `control_id` (required), `page` (optional, default 1), `page_size` (optional, default 20)
+- **Response**: Array of version records with `version_number`, `content`, `status`, `authored_by`, `authored_at`, `change_reason`
+
+### `compliance_narrative_diff`
+
+Compare two versions of a control narrative using unified diff format.
+
+- **RBAC**: All compliance roles (read-only)
+- **RMF Step**: Implement (Phase 3)
+- **Parameters**: `system_id` (required), `control_id` (required), `from_version` (required), `to_version` (required)
+- **Response**: `from_version`, `to_version`, `unified_diff` (text), `has_changes` (boolean)
+
+### `compliance_rollback_narrative`
+
+Rollback a control narrative to a previous version (creates a new version with the old content).
+
+- **RBAC**: Compliance.Analyst (ISSO), Compliance.PlatformEngineer (Engineer)
+- **RMF Step**: Implement (Phase 3)
+- **Parameters**: `system_id` (required), `control_id` (required), `target_version` (required)
+- **Response**: New `version_number`, `status`, `authored_by`, `authored_at`, `change_reason`
+- **Error**: `UNDER_REVIEW` if narrative is currently in UnderReview status
+
+### `compliance_submit_narrative`
+
+Submit a Draft narrative for ISSM review. Transitions status from Draft/NeedsRevision to UnderReview.
+
+- **RBAC**: Compliance.Analyst (ISSO), Compliance.PlatformEngineer (Engineer)
+- **RMF Step**: Implement (Phase 3)
+- **Parameters**: `system_id` (required), `control_id` (required)
+- **Response**: `version_number`, `previous_status`, `new_status`, `submitted_by`, `submitted_at`
+
+### `compliance_review_narrative`
+
+Approve or request revision of a narrative in UnderReview status.
+
+- **RBAC**: Compliance.SecurityLead (ISSM)
+- **RMF Step**: Implement (Phase 3)
+- **Parameters**: `system_id` (required), `control_id` (required), `decision` (required: `approve`|`request_revision`), `comments` (optional, required for `request_revision`)
+- **Response**: `decision`, `previous_status`, `new_status`, `reviewed_by`, `reviewed_at`, `comments`
+- **Error**: `COMMENTS_REQUIRED` when decision is `request_revision` but no comments provided
+
+### `compliance_batch_review_narratives`
+
+Batch approve or request revision of narratives for a control family or specific control IDs.
+
+- **RBAC**: Compliance.SecurityLead (ISSM)
+- **RMF Step**: Implement (Phase 3)
+- **Parameters**: `system_id` (required), `decision` (required), `comments` (optional), `family_filter` (optional), `control_ids` (optional, comma-separated)
+- **Response**: `reviewed_count`, `skipped_count`, `reviewed_controls`, `skipped_controls`
+- **Error**: `MUTUALLY_EXCLUSIVE_FILTERS` if both `family_filter` and `control_ids` provided
+
+### `compliance_narrative_approval_progress`
+
+Aggregate approval status counts, overall approval percentage, and per-family breakdown.
+
+- **RBAC**: All compliance roles (read-only)
+- **RMF Step**: Implement (Phase 3)
+- **Parameters**: `system_id` (required), `family_filter` (optional)
+- **Response**: `overall` (total/approved/draft/in_review/needs_revision/missing/approval_percentage), `families` array, `review_queue`, `staleness_warnings`
+
+### `compliance_batch_submit_narratives`
+
+Submit all Draft narratives for a control family (or all families) for ISSM review.
+
+- **RBAC**: Compliance.Analyst (ISSO), Compliance.PlatformEngineer (Engineer)
+- **RMF Step**: Implement (Phase 3)
+- **Parameters**: `system_id` (required), `family_filter` (optional)
+- **Response**: `submitted_count`, `skipped_count`, `submitted_controls`, `skipped_controls`
+- **Error**: `NO_DRAFT_NARRATIVES` if no Draft narratives found matching the filter
+
+### Enhanced: `compliance_write_narrative`
+
+> Feature 024 Enhancement: Now creates a `NarrativeVersion` record on every write, increments `CurrentVersion`, and supports optimistic concurrency control.
+
+- **New Parameters**: `expected_version` (optional int, concurrency check), `change_reason` (optional string)
+- **Enhanced Response**: Adds `version_number`, `approval_status`, `previous_version` fields
+- **New Error Codes**: `CONCURRENCY_CONFLICT` (expected_version mismatch), `UNDER_REVIEW` (narrative is in review)
+
+### Troubleshooting — Narrative Governance Tools
+
+**"Tool not found" error**: Narrative governance tools require Feature 024 to be deployed with `INarrativeGovernanceService` registered in DI. Verify the service is registered in `ServiceCollectionExtensions.cs` and the `Feature024_NarrativeGovernance` migration has been applied.
+
+```json
+{
+  "status": "error",
+  "error": "Tool 'compliance_narrative_history' not found. Feature 024 (Narrative Governance) may not be deployed in this environment.",
+  "resolution": "Verify INarrativeGovernanceService is registered and Feature024_NarrativeGovernance migration is applied."
+}
+```
+
+---
+
+## HW/SW Inventory Tools (Feature 025)
+
+> **Feature 025**: HW/SW Inventory Management — Register, manage, import/export, and assess completeness of hardware and software inventory items.
+
+### `inventory_add_item`
+
+Register a hardware or software inventory item with function-based field validation.
+
+- **RBAC**: Compliance.Analyst (ISSO), Compliance.SecurityLead (ISSM), Compliance.PlatformEngineer (Engineer)
+- **RMF Step**: Implement (Phase 3)
+- **Parameters**:
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID, name, or acronym |
+| `item_name` | string | ✓ | Display name |
+| `type` | string | ✓ | `hardware` or `software` |
+| `function` | string | ✓ | HW: Server, Workstation, NetworkDevice, Storage, Other; SW: OperatingSystem, Database, Middleware, Application, SecurityTool, Other |
+| `manufacturer` | string | | Required for hardware |
+| `model` | string | | Hardware model |
+| `serial_number` | string | | Serial number |
+| `ip_address` | string | | Required for Server/NetworkDevice |
+| `mac_address` | string | | MAC address |
+| `location` | string | | Physical location |
+| `vendor` | string | | Required for software |
+| `version` | string | | Required for software |
+| `patch_level` | string | | Patch level |
+| `license_type` | string | | License type |
+| `parent_hardware_id` | string | | Parent HW GUID (for SW items) |
+
+- **Response**: Created item with `id`, `item_name`, `type`, `status`
+- **Errors**: `SYSTEM_NOT_FOUND`, `VALIDATION_FAILED`, `DUPLICATE_IP`, `INVALID_INPUT`
+
+### `inventory_update_item`
+
+Update fields on an existing inventory item (partial update — null fields unchanged).
+
+- **RBAC**: Compliance.Analyst (ISSO), Compliance.SecurityLead (ISSM), Compliance.PlatformEngineer (Engineer)
+- **RMF Step**: Implement (Phase 3)
+- **Parameters**: `item_id` (required), plus optional `item_name`, `manufacturer`, `model`, `serial_number`, `ip_address`, `mac_address`, `location`, `vendor`, `version`, `patch_level`, `license_type`
+- **Response**: Updated item
+- **Errors**: `ITEM_NOT_FOUND`, `DUPLICATE_IP`, `INVALID_INPUT`
+
+### `inventory_decommission_item`
+
+Soft-delete an inventory item. Cascades to child software items.
+
+- **RBAC**: Compliance.Analyst (ISSO), Compliance.SecurityLead (ISSM)
+- **RMF Step**: Implement (Phase 3)
+- **Parameters**: `item_id` (required), `rationale` (required)
+- **Response**: Decommissioned item with cascaded child count in metadata
+- **Errors**: `ITEM_NOT_FOUND`, `ALREADY_DECOMMISSIONED`, `INVALID_INPUT`
+
+### `inventory_list`
+
+List and filter inventory items with pagination.
+
+- **RBAC**: Compliance.Analyst (ISSO), Compliance.Auditor (SCA), Compliance.PlatformEngineer (Engineer)
+- **RMF Step**: Implement (Phase 3), Assess (Phase 5)
+- **Parameters**: `system_id` (required), optional `type`, `function`, `vendor`, `status`, `search`, `page_size`, `page`
+- **Response**: `count`, `page`, `page_size`, `items[]`
+- **Errors**: `SYSTEM_NOT_FOUND`, `INVALID_INPUT`
+
+### `inventory_get`
+
+Retrieve a single inventory item with installed software children.
+
+- **RBAC**: All compliance roles
+- **RMF Step**: Any
+- **Parameters**: `item_id` (required)
+- **Response**: Item detail with `installed_software[]` for hardware items
+- **Errors**: `ITEM_NOT_FOUND`, `INVALID_INPUT`
+
+### `inventory_export`
+
+Export inventory to an eMASS-compatible Excel workbook with Hardware and Software worksheets.
+
+- **RBAC**: Compliance.Analyst (ISSO), Compliance.SecurityLead (ISSM)
+- **RMF Step**: Implement (Phase 3), Authorize (Phase 6)
+- **Parameters**: `system_id` (required), optional `export_type` (`all`/`hardware`/`software`), `include_decommissioned`
+- **Response**: `file_base64` (base64-encoded .xlsx)
+- **Errors**: `SYSTEM_NOT_FOUND`, `NO_INVENTORY_DATA`
+
+### `inventory_import`
+
+Import inventory from an eMASS-format Excel workbook with dry-run support.
+
+- **RBAC**: Compliance.Analyst (ISSO), Compliance.SecurityLead (ISSM)
+- **RMF Step**: Implement (Phase 3)
+- **Parameters**: `system_id` (required), `file_base64` (required), optional `dry_run`
+- **Response**: `hardware_created`, `software_created`, `rows_skipped`, `dry_run`, `errors[]`
+- **Errors**: `SYSTEM_NOT_FOUND`, `INVALID_BASE64`
+
+### `inventory_completeness`
+
+Check inventory completeness — missing fields, unmatched boundary resources, hardware without software.
+
+- **RBAC**: Compliance.Analyst (ISSO), Compliance.Auditor (SCA)
+- **RMF Step**: Implement (Phase 3), Assess (Phase 5)
+- **Parameters**: `system_id` (required)
+- **Response**: `completeness_score`, `is_complete`, `items_with_missing_fields[]`, `unmatched_boundary_resources[]`, `hardware_without_software[]`
+- **Errors**: `SYSTEM_NOT_FOUND`
+
+### `inventory_auto_seed`
+
+Auto-create hardware inventory items from authorization boundary resources. Idempotent via BoundaryResourceId FK.
+
+- **RBAC**: Compliance.Analyst (ISSO), Compliance.SecurityLead (ISSM)
+- **RMF Step**: Implement (Phase 3)
+- **Parameters**: `system_id` (required)
+- **Response**: `created_count`, `items[]`
+- **Errors**: `SYSTEM_NOT_FOUND`, `NO_BOUNDARY_DATA`
+
+---
+
+## Implementation Roadmap Tools (Feature 031)
+
+### `compliance_generate_roadmap`
+
+Generate a phased implementation roadmap from a system's gap analysis data. Uses AI-driven clustering to group controls into phases based on severity, dependency chains, and control family relationships. Falls back to deterministic severity-first grouping when AI is unavailable. Historical Kanban task completion data refines effort estimates when available.
+
+- **RBAC**: Compliance.SecurityLead (ISSM) only
+- **RMF Step**: Implement (Phase 4)
+- **Parameters**: `system_id` (required)
+- **Preconditions**: System must have a selected baseline and at least one unmapped control (gap)
+- **Response**: `roadmap_id`, `system_name`, `status` (Draft), `total_gaps`, `total_estimated_effort_days`, `total_risk_points`, `phases[]` (with items), `generation_method` (AI/Deterministic)
+- **Business Rules**: Only one Active roadmap per system; generating a new roadmap archives any existing Active roadmap
+- **Errors**: `SYSTEM_NOT_FOUND`, `NO_BASELINE_SELECTED`, `NO_GAPS_FOUND`
+
+### `compliance_get_roadmap`
+
+Get the active implementation roadmap for a system with phases and items.
+
+- **RBAC**: Any compliance role (read-only, no PIM tier required)
+- **RMF Step**: Implement (Phase 4)
+- **Parameters**: `system_id` (required), `include_items` (optional, default: true)
+- **Response**: Full roadmap with phases and items (same structure as generate), or null if no active roadmap
+- **Errors**: `SYSTEM_NOT_FOUND`
+
+### `compliance_get_roadmap_progress`
+
+Get progress metrics for a system's active roadmap including actual-vs-projected risk reduction and overdue phase detection.
+
+- **RBAC**: Any compliance role (read-only, no PIM tier required)
+- **RMF Step**: Implement (Phase 4), Monitor (Phase 7)
+- **Parameters**: `system_id` (required)
+- **Response**: `overall_completion_percent`, `items_completed`/`items_total`, `actual_risk_reduction`, `projected_risk_reduction`, `phases[]` (with `completion_percent`, `is_overdue`, `days_overdue`, `actual_risk_reduction_percent`), `untracked_gaps`
+- **Errors**: `SYSTEM_NOT_FOUND`, `NO_ACTIVE_ROADMAP`
+
+### `compliance_update_roadmap`
+
+Update a roadmap's items — move items between phases, change role assignments, update effort estimates, merge phases, or split phases. Changes propagate to linked Kanban tasks. Increments the roadmap Version counter.
+
+- **RBAC**: Compliance.SecurityLead (ISSM) only
+- **RMF Step**: Implement (Phase 4)
+- **Parameters**: `system_id` (required), `move_item` (optional: `{ control_id, target_phase_order }`), `update_effort` (optional: `{ control_id, effort_days }`), `update_role` (optional: `{ control_id, assigned_role }`), `merge_phases` (optional: `{ source_phase_order, target_phase_order }`), `split_phase` (optional: `{ phase_order, split_after_item_index }`)
+- **Response**: Updated roadmap (same structure as generate)
+- **Errors**: `SYSTEM_NOT_FOUND`, `NO_ACTIVE_ROADMAP`, `ITEM_NOT_FOUND`, `PHASE_NOT_FOUND`
+
+### `compliance_create_board_from_roadmap`
+
+Create a Kanban remediation board pre-populated from a roadmap. Maps phases to task groupings and items to tasks with effort estimates, role assignments, and dependency ordering. Establishes bi-directional sync — completing a Kanban task updates the corresponding roadmap item.
+
+- **RBAC**: Compliance.SecurityLead (ISSM) only
+- **RMF Step**: Implement (Phase 4)
+- **Parameters**: `system_id` (required)
+- **Preconditions**: System must have an active roadmap without an existing linked board
+- **Response**: `board_id`, `board_name`, `tasks_created`, `roadmap_id`, `phases_mapped`
+- **Errors**: `SYSTEM_NOT_FOUND`, `NO_ACTIVE_ROADMAP`, `BOARD_ALREADY_EXISTS`
+
+### `compliance_export_roadmap_pdf`
+
+Export a roadmap as a PDF document using QuestPDF. Includes header with summary metrics, phase detail tables with control items, and paginated footer. Suitable for AO briefings and authorization package supplements.
+
+- **RBAC**: Any compliance role (read-only, no PIM tier required)
+- **RMF Step**: Implement (Phase 4), Authorize (Phase 6)
+- **Parameters**: `system_id` (required)
+- **Response**: `file_name`, `content_base64`, `content_type` (application/pdf)
+- **Errors**: `SYSTEM_NOT_FOUND`, `NO_ACTIVE_ROADMAP`
+
+### Troubleshooting — Implementation Roadmap Tools
+
+**"No baseline selected" error**: The system must have a baseline selected before a roadmap can be generated. Run `compliance_select_baseline` first.
+
+**"No gaps found" error**: All controls are fully covered — no roadmap is needed. This is a success condition, not an error.
+
+**"Board already exists" error**: A Kanban board is already linked to this roadmap. Use the existing board or archive the current roadmap and regenerate.
+
+### Troubleshooting — HW/SW Inventory Tools
+
+**"Tool not found" error**: Inventory tools require Feature 025 to be deployed with `IInventoryService` registered in DI. Verify the service is registered in `ServiceCollectionExtensions.cs`.
+
+```json
+{
+  "status": "error",
+  "error": "Tool 'inventory_add_item' not found. Feature 025 (HW/SW Inventory) may not be deployed in this environment.",
+  "resolution": "Verify IInventoryService is registered and database migration is applied."
+}
+```
+
+---
+
+## Boundary Definition Tools (Feature 033)
+
+Tools for managing authorization boundary definitions and boundary-scoped compliance analysis.
+
+### `compliance_list_boundary_definitions`
+
+Lists all boundary definitions for a system.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | Registered system ID |
+
+### `compliance_create_boundary_definition`
+
+Creates a new boundary definition.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | Registered system ID |
+| `name` | string | Yes | Boundary name (unique within system) |
+| `boundary_type` | string | Yes | Physical, Logical, or Hybrid |
+| `description` | string | No | Boundary description |
+
+### `compliance_delete_boundary_definition`
+
+Deletes a boundary definition. Resources and components are reassigned to the Primary boundary.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `boundary_id` | string | Yes | Boundary definition ID |
+
+### `compliance_boundary_gap_analysis`
+
+Runs gap analysis with optional boundary filter. Returns boundary comparison table when no filter is applied.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | Registered system ID |
+| `boundary_id` | string | No | Filter to a specific boundary (omit for all boundaries with comparison) |
+
+### `compliance_define_boundary` (Modified)
+
+The existing define boundary tool now supports an optional `boundary_definition_name` parameter to assign resources to a specific boundary definition.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `boundary_definition_name` | string | No | Name of boundary definition to assign resources to |
+
+---
+
+## POA&M Management Tools (Feature 039)
+
+### `compliance_get_poam`
+
+Retrieve detailed POA&M item information including milestones, history, components, and ticket sync status.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `poam_id` | string | Yes | POA&M item ID |
+
+### `compliance_update_poam`
+
+Update a POA&M item's fields. Enforces lifecycle transition rules.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `poam_id` | string | Yes | POA&M item ID |
+| `status` | string | No | Target status (Ongoing, Completed, Delayed, RiskAccepted) |
+| `cat_severity` | string | No | Target severity (CatI, CatII, CatIII) |
+| `poc` | string | No | Point of contact |
+| `scheduled_completion` | string | No | Target date (ISO 8601) |
+| `comment` | string | No | Comment text |
+| `row_version` | string | Yes | Concurrency token |
+
+### `compliance_close_poam`
+
+Close a POA&M item as Completed with milestone and finding validation.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `poam_id` | string | Yes | POA&M item ID |
+| `row_version` | string | Yes | Concurrency token |
+
+### `compliance_update_poam_milestone`
+
+Add or update a milestone on a POA&M item.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `poam_id` | string | Yes | POA&M item ID |
+| `milestone_id` | string | No | Milestone ID (omit to create new) |
+| `description` | string | Yes | Milestone description |
+| `target_date` | string | Yes | Target date (ISO 8601) |
+| `completed` | boolean | No | Mark as completed |
+
+### `compliance_link_poam_component` / `compliance_unlink_poam_component`
+
+Link or unlink system components to a POA&M item.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `poam_id` | string | Yes | POA&M item ID |
+| `component_ids` | string[] | Yes | Component IDs to link/unlink |
+
+### `compliance_poam_by_component`
+
+Get all POA&M items linked to a component with summary metrics.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `component_id` | string | Yes | Component ID |
+
+### `compliance_link_poam_task` / `compliance_unlink_poam_task`
+
+Link or unlink a remediation task to a POA&M item.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `poam_id` | string | Yes | POA&M item ID |
+| `task_id` | string | Yes (link only) | Remediation task ID |
+
+### `compliance_create_task_from_poam`
+
+Create a new Kanban task from a POA&M item.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `poam_id` | string | Yes | POA&M item ID |
+| `board_id` | string | Yes | Target Kanban board ID |
+
+### `compliance_bulk_create_poam_from_findings`
+
+Auto-generate POA&M items from scan findings with deduplication.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | System ID |
+| `finding_ids` | string[] | Yes | Finding IDs |
+| `default_poc` | string | No | Default point of contact |
+
+### `compliance_bulk_update_poam`
+
+Bulk update multiple POA&M items.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `poam_ids` | string[] | Yes | POA&M item IDs (1-100) |
+| `status` | string | No | Target status |
+| `cat_severity` | string | No | Target severity |
+| `poc` | string | No | Target POC |
+| `comment` | string | No | Comment for all items |
+
+### `compliance_poam_metrics`
+
+Get POA&M summary metrics (open, overdue, severity breakdown, avg days to close).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | No | System ID (omit for cross-system) |
+
+### `compliance_poam_trend`
+
+Get POA&M trend data (open over time, closure rates, aging, time-to-close).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | System ID |
+| `period` | string | No | daily, weekly, monthly (default: monthly) |
+| `start_date` | string | No | Start date (ISO 8601) |
+| `end_date` | string | No | End date (ISO 8601) |
+
+### `compliance_export_poam`
+
+Export POA&M data in specified format.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | System ID |
+| `format` | string | Yes | emass_excel, oscal_json, csv |
+| `status_filter` | string | No | Filter by status |
+| `severity_filter` | string | No | Filter by severity |
+| `include_all` | boolean | No | Include all items ignoring filters |
+
+### `compliance_configure_ticketing`
+
+Configure Jira/ServiceNow integration for a system.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | System ID |
+| `provider` | string | Yes | jira or servicenow |
+| `base_url` | string | Yes | Ticketing system base URL |
+| `project_key` | string | Yes | Jira project key or ServiceNow table name |
+| `api_key_secret` | string | Yes | Key Vault secret URI |
+| `sync_enabled` | boolean | No | Enable auto-sync (default: true) |
+
+### `compliance_sync_poam_ticket`
+
+Sync a POA&M item with external ticketing system.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `poam_id` | string | Yes | POA&M item ID |
+| `direction` | string | No | push, pull, or bidirectional |
+
+### `compliance_bulk_sync_tickets`
+
+Bulk sync all active POA&Ms for a system.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | System ID |
+| `direction` | string | No | push, pull, or bidirectional |
+
+---
+
+## eMASS Authorization Package Tools (Feature 041)
+
+### `compliance_generate_package`
+
+Generate a complete eMASS authorization package as a ZIP archive containing OSCAL SSP, POA&M, Assessment Results, Assessment Plan, SAR, and evidence. Runs readiness validation first. Returns immediately — generation runs in background.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | System GUID, name, or acronym |
+| `evidence_mode` | string | No | `embedded` (default) or `manifest_only` |
+
+- **RBAC**: ISSM, AO
+- **RMF Step**: Authorize (Step 5)
+
+### `compliance_package_status`
+
+Get current status of an authorization package generation job, including artifacts generated, validation results, and download link.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `package_id` | string | Yes | Package ID from `compliance_generate_package` |
+
+- **RBAC**: ISSM, SCA, AO
+
+### `compliance_validate_package`
+
+Run pre-submission readiness check for an authorization package. Validates artifact presence, SSP completeness, SAR status, OSCAL schema conformance, cross-artifact consistency, and evidence coverage.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | System GUID, name, or acronym |
+
+- **RBAC**: ISSM, SCA, AO
+
+### `compliance_list_packages`
+
+List authorization packages for a system with pagination, sorted by most recent first.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | System GUID, name, or acronym |
+| `limit` | integer | No | Max results (default: 10) |
+| `include_failed` | boolean | No | Include failed packages (default: false) |
+
+- **RBAC**: ISSM, SCA, AO
+
+### `compliance_validate_oscal_schema`
+
+Validate an OSCAL JSON artifact against the NIST OSCAL 1.1.2 JSON schema. Generates the artifact for the given system, then validates.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | System GUID, name, or acronym |
+| `model` | string | Yes | `ssp`, `poam`, `assessment-results`, or `assessment-plan` |
+
+- **RBAC**: ISSM, SCA, AO
+
+### `compliance_generate_sar`
+
+Generate a new Security Assessment Report auto-populated from assessment findings.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | Yes | System GUID, name, or acronym |
+| `title` | string | Yes | SAR title |
+
+- **RBAC**: ISSM, SCA
+
+### `compliance_edit_sar_section`
+
+Edit a specific section of a Security Assessment Report.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sar_id` | string | Yes | SAR identifier |
+| `section_type` | string | Yes | Section: ExecutiveSummary, Methodology, Findings, Recommendations, ConclusionRiskAssessment |
+| `content` | string | Yes | New section content |
+
+- **RBAC**: ISSM, SCA
+
+### `compliance_review_sar`
+
+Submit, approve, or reject a Security Assessment Report.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sar_id` | string | Yes | SAR identifier |
+| `action` | string | Yes | `submit`, `approve`, or `reject` |
+| `comments` | string | No | Review comments |
+
+- **RBAC**: ISSM (submit), SCA (approve/reject), AO (approve)

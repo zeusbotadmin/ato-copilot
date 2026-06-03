@@ -42,6 +42,10 @@ export interface McpChatRequest {
       fileName?: string;
       language?: string;
       analysisType?: string;
+      /** Caller's home tenant id (Guid). Set by the status bar provider (T141). */
+      tenantId?: string;
+      /** Optional impersonated tenant id (Guid). CSP-Admin only. */
+      impersonatedTenantId?: string;
     };
   };
   /** Action identifier for button-initiated requests (FR-014b) */
@@ -101,10 +105,62 @@ export interface McpError {
 export class McpClient {
   private client: AxiosInstance;
   private outputChannel?: vscode.OutputChannel;
+  private tenantContextProvider?: () =>
+    | { tenantId: string; impersonatedTenantId?: string }
+    | null;
+  /**
+   * Feature 051 (T110) — async bearer-token provider. When set, every
+   * outbound request fetches a fresh token from the per-tenant
+   * SecretStorage (and, on a miss, prompts the user to sign in via the
+   * device-code flow). When unset, the legacy `apiKey` setting is used
+   * so the extension still functions in pre-051 development setups.
+   */
+  private tokenProvider?: () => Promise<string | undefined>;
 
   constructor(outputChannel?: vscode.OutputChannel) {
     this.outputChannel = outputChannel;
     this.client = this.createClient();
+  }
+
+  /**
+   * Register a callback that supplies the current tenant scope (home tenant
+   * id and optional impersonated tenant id) on every outbound MCP request.
+   * Used by the status bar (T141) to forward the user's current tenant
+   * context to the server so MCP tools see the correct identity (FR-024).
+   */
+  public setTenantContextProvider(
+    provider: () => { tenantId: string; impersonatedTenantId?: string } | null
+  ): void {
+    this.tenantContextProvider = provider;
+  }
+
+  /**
+   * Feature 051 (T110) — register the per-request bearer-token provider.
+   * Pass a closure that calls `getActiveTenantToken(context, statusBar)`.
+   * Once set, the legacy `ato-copilot.apiKey` setting is ignored.
+   */
+  public setTokenProvider(provider: () => Promise<string | undefined>): void {
+    this.tokenProvider = provider;
+    this.client = this.createClient();
+  }
+
+  private attachTenantContext(request: McpChatRequest): McpChatRequest {
+    const tenant = this.tenantContextProvider?.();
+    if (!tenant) return request;
+    const merged: McpChatRequest = {
+      ...request,
+      context: {
+        ...request.context,
+        metadata: {
+          ...request.context.metadata,
+          tenantId: tenant.tenantId,
+          ...(tenant.impersonatedTenantId
+            ? { impersonatedTenantId: tenant.impersonatedTenantId }
+            : {}),
+        },
+      },
+    };
+    return merged;
   }
 
   private getConfig() {
@@ -123,15 +179,47 @@ export class McpClient {
       "Content-Type": "application/json",
     };
 
-    if (config.apiKey) {
+    // Legacy fallback — only used when the Feature 051 token provider has
+    // NOT been wired up (e.g. early-boot health check, or developer-only
+    // mode without device-code sign-in).
+    if (!this.tokenProvider && config.apiKey) {
       headers["Authorization"] = `Bearer ${config.apiKey}`;
     }
 
-    return axios.create({
+    const instance = axios.create({
       baseURL: config.apiUrl,
       timeout: config.timeout,
       headers,
     });
+
+    // Feature 051 (T110) — inject the per-request bearer when a provider
+    // is registered. The provider triggers an interactive sign-in if no
+    // token is cached, so this MUST NOT run during the silent health check
+    // path; callers gate that themselves via `getActiveTenantToken`.
+    if (this.tokenProvider) {
+      const provider = this.tokenProvider;
+      instance.interceptors.request.use(async (req) => {
+        try {
+          const token = await provider();
+          if (token) {
+            req.headers = req.headers ?? {};
+            (req.headers as Record<string, string>)[
+              "Authorization"
+            ] = `Bearer ${token}`;
+          }
+        } catch (err) {
+          // Surface to the channel but let the request go through without
+          // the header so the server can return a structured 401 the
+          // caller knows how to map.
+          this.logError(
+            `Token provider failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+        return req;
+      });
+    }
+
+    return instance;
   }
 
   /**
@@ -172,10 +260,12 @@ export class McpClient {
       `POST /mcp/chat — conversationId=${request.conversationId} messageLen=${request.message.length}`
     );
 
+    const enriched = this.attachTenantContext(request);
+
     try {
       const response = await this.client.post<McpChatResponse>(
         "/mcp/chat",
-        request
+        enriched
       );
       const elapsed = Date.now() - startTime;
       this.log(
@@ -229,12 +319,28 @@ export class McpClient {
       `POST /mcp/chat/stream — conversationId=${request.conversationId} messageLen=${request.message.length}`
     );
 
+    // Feature 051 (T110) — resolve the bearer ahead of socket creation so
+    // it's available synchronously inside the request callback. Falls back
+    // to the legacy `apiKey` when no provider is registered.
+    let bearer: string | undefined;
+    if (this.tokenProvider) {
+      try {
+        bearer = await this.tokenProvider();
+      } catch (err) {
+        this.logError(
+          `SSE token provider failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    } else if (config.apiKey) {
+      bearer = config.apiKey;
+    }
+
     return new Promise<McpChatResponse>((resolve, reject) => {
       const url = new URL(`${config.apiUrl}/mcp/chat/stream`);
       const isHttps = url.protocol === "https:";
       const transport = isHttps ? https : http;
 
-      const body = JSON.stringify(request);
+      const body = JSON.stringify(this.attachTenantContext(request));
       // Use a generous timeout for streaming — AI + tool execution can
       // take well over 30 s.  The socket-level timeout resets with every
       // SSE chunk, so this only fires when the connection truly goes idle.
@@ -248,7 +354,7 @@ export class McpClient {
         headers: {
           "Content-Type": "application/json",
           "Content-Length": Buffer.byteLength(body),
-          ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+          ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
         },
         timeout: streamTimeout,
       };

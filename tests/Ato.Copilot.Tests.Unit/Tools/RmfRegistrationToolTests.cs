@@ -1,8 +1,10 @@
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
+using Ato.Copilot.Agents.Compliance.Services;
 using Ato.Copilot.Agents.Compliance.Tools;
 using Ato.Copilot.Core.Interfaces.Compliance;
 using Ato.Copilot.Core.Models.Compliance;
@@ -399,7 +401,7 @@ public class RmfRegistrationToolTests
         mock.Setup(s => s.DefineBoundaryAsync("sys-1", It.IsAny<IEnumerable<BoundaryResourceInput>>(), "mcp-user", It.IsAny<CancellationToken>()))
             .ReturnsAsync(entries.AsReadOnly());
 
-        var tool = new DefineBoundaryTool(mock.Object, Mock.Of<ILogger<DefineBoundaryTool>>());
+        var tool = new DefineBoundaryTool(mock.Object, Mock.Of<IServiceScopeFactory>(), Mock.Of<ILogger<DefineBoundaryTool>>());
         var result = await tool.ExecuteAsync(new Dictionary<string, object?>
         {
             ["system_id"] = "sys-1",
@@ -423,7 +425,7 @@ public class RmfRegistrationToolTests
     public async Task DefineBoundary_MissingSystemId_ReturnsError()
     {
         var tool = new DefineBoundaryTool(
-            Mock.Of<IBoundaryService>(),
+            Mock.Of<IBoundaryService>(), Mock.Of<IServiceScopeFactory>(),
             Mock.Of<ILogger<DefineBoundaryTool>>());
 
         var result = await tool.ExecuteAsync(new Dictionary<string, object?>
@@ -439,7 +441,7 @@ public class RmfRegistrationToolTests
     public async Task DefineBoundary_EmptyResources_ReturnsError()
     {
         var tool = new DefineBoundaryTool(
-            Mock.Of<IBoundaryService>(),
+            Mock.Of<IBoundaryService>(), Mock.Of<IServiceScopeFactory>(),
             Mock.Of<ILogger<DefineBoundaryTool>>());
 
         var result = await tool.ExecuteAsync(new Dictionary<string, object?>
@@ -460,7 +462,7 @@ public class RmfRegistrationToolTests
         mock.Setup(s => s.DefineBoundaryAsync("non-existent", It.IsAny<IEnumerable<BoundaryResourceInput>>(), "mcp-user", It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("System 'non-existent' not found."));
 
-        var tool = new DefineBoundaryTool(mock.Object, Mock.Of<ILogger<DefineBoundaryTool>>());
+        var tool = new DefineBoundaryTool(mock.Object, Mock.Of<IServiceScopeFactory>(), Mock.Of<ILogger<DefineBoundaryTool>>());
         var result = await tool.ExecuteAsync(new Dictionary<string, object?>
         {
             ["system_id"] = "non-existent",
@@ -559,7 +561,7 @@ public class RmfRegistrationToolTests
                 IsActive = true
             });
 
-        var tool = new AssignRmfRoleTool(mock.Object, Mock.Of<ILogger<AssignRmfRoleTool>>());
+        var tool = new AssignRmfRoleTool(mock.Object, Mock.Of<IProfileNotificationService>(), Mock.Of<ILogger<AssignRmfRoleTool>>());
         var result = await tool.ExecuteAsync(new Dictionary<string, object?>
         {
             ["system_id"] = "sys-1",
@@ -579,6 +581,7 @@ public class RmfRegistrationToolTests
     {
         var tool = new AssignRmfRoleTool(
             Mock.Of<IBoundaryService>(),
+            Mock.Of<IProfileNotificationService>(),
             Mock.Of<ILogger<AssignRmfRoleTool>>());
 
         var result = await tool.ExecuteAsync(new Dictionary<string, object?>
@@ -598,6 +601,7 @@ public class RmfRegistrationToolTests
     {
         var tool = new AssignRmfRoleTool(
             Mock.Of<IBoundaryService>(),
+            Mock.Of<IProfileNotificationService>(),
             Mock.Of<ILogger<AssignRmfRoleTool>>());
 
         var result = await tool.ExecuteAsync(new Dictionary<string, object?>
@@ -618,7 +622,7 @@ public class RmfRegistrationToolTests
         mock.Setup(s => s.AssignRmfRoleAsync("non-existent", RmfRole.AuthorizingOfficial, "user-1", null, "mcp-user", It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("System 'non-existent' not found."));
 
-        var tool = new AssignRmfRoleTool(mock.Object, Mock.Of<ILogger<AssignRmfRoleTool>>());
+        var tool = new AssignRmfRoleTool(mock.Object, Mock.Of<IProfileNotificationService>(), Mock.Of<ILogger<AssignRmfRoleTool>>());
         var result = await tool.ExecuteAsync(new Dictionary<string, object?>
         {
             ["system_id"] = "non-existent",
@@ -651,7 +655,7 @@ public class RmfRegistrationToolTests
                 IsActive = true
             });
 
-        var tool = new AssignRmfRoleTool(mock.Object, Mock.Of<ILogger<AssignRmfRoleTool>>());
+        var tool = new AssignRmfRoleTool(mock.Object, Mock.Of<IProfileNotificationService>(), Mock.Of<ILogger<AssignRmfRoleTool>>());
         var result = await tool.ExecuteAsync(new Dictionary<string, object?>
         {
             ["system_id"] = "sys-1",
@@ -745,7 +749,7 @@ public class RmfRegistrationToolTests
     [Fact]
     public void DefineBoundaryTool_HasCorrectName()
     {
-        var tool = new DefineBoundaryTool(Mock.Of<IBoundaryService>(), Mock.Of<ILogger<DefineBoundaryTool>>());
+        var tool = new DefineBoundaryTool(Mock.Of<IBoundaryService>(), Mock.Of<IServiceScopeFactory>(), Mock.Of<ILogger<DefineBoundaryTool>>());
         tool.Name.Should().Be("compliance_define_boundary");
     }
 
@@ -759,7 +763,7 @@ public class RmfRegistrationToolTests
     [Fact]
     public void AssignRmfRoleTool_HasCorrectName()
     {
-        var tool = new AssignRmfRoleTool(Mock.Of<IBoundaryService>(), Mock.Of<ILogger<AssignRmfRoleTool>>());
+        var tool = new AssignRmfRoleTool(Mock.Of<IBoundaryService>(), Mock.Of<IProfileNotificationService>(), Mock.Of<ILogger<AssignRmfRoleTool>>());
         tool.Name.Should().Be("compliance_assign_rmf_role");
     }
 

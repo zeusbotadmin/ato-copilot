@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Ato.Copilot.Core.Data.Context;
 using Ato.Copilot.Core.Interfaces.Compliance;
+using Ato.Copilot.Core.Interfaces.Onboarding;
 using Ato.Copilot.Core.Models.Compliance;
 
 namespace Ato.Copilot.Agents.Compliance.Services;
@@ -63,6 +64,36 @@ public class RmfLifecycleService : IRmfLifecycleService
             "Registered system {SystemName} ({SystemId}) by {CreatedBy} | Type: {SystemType}",
             system.Name, system.Id, createdBy, systemType);
 
+        // FR-024 — copy organization-level role assignments to per-system rows
+        // (T068, Feature 047 onboarding wizard). Best-effort: failure here MUST NOT
+        // fail system registration. Tenancy is single-tenant in dev/test today; we
+        // resolve via the singleton OrganizationContext row.
+        try
+        {
+            var snapshotter = scope.ServiceProvider
+                .GetService<IRegisteredSystemRoleSnapshotter>();
+            if (snapshotter is not null)
+            {
+                var orgContext = await context.OrganizationContexts
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(cancellationToken);
+                if (orgContext is not null)
+                {
+                    var actorGuid = Guid.TryParse(createdBy, out var parsed)
+                        ? parsed
+                        : Guid.Empty;
+                    await snapshotter.SnapshotAsync(
+                        orgContext.TenantId, system.Id, actorGuid, Guid.NewGuid(), cancellationToken);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Failed to snapshot org-level role assignments to system {SystemId}; system registration succeeded.",
+                system.Id);
+        }
+
         return system;
     }
 
@@ -80,7 +111,8 @@ public class RmfLifecycleService : IRmfLifecycleService
             .Include(s => s.SecurityCategorization)
                 .ThenInclude(sc => sc!.InformationTypes)
             .Include(s => s.ControlBaseline)
-            .Include(s => s.AuthorizationBoundaries)
+            .Include(s => s.AuthorizationBoundaryDefinitions)
+                .ThenInclude(d => d.ComponentAssignments)
             .Include(s => s.RmfRoleAssignments)
             .AsSplitQuery()
             .FirstOrDefaultAsync(s => s.Id == systemId, cancellationToken);
@@ -132,7 +164,8 @@ public class RmfLifecycleService : IRmfLifecycleService
             .Include(s => s.SecurityCategorization)
                 .ThenInclude(sc => sc!.InformationTypes)
             .Include(s => s.ControlBaseline)
-            .Include(s => s.AuthorizationBoundaries)
+            .Include(s => s.AuthorizationBoundaryDefinitions)
+                .ThenInclude(d => d.ComponentAssignments)
             .Include(s => s.RmfRoleAssignments)
             .Include(s => s.PrivacyThresholdAnalysis)
             .Include(s => s.PrivacyImpactAssessment)
@@ -172,7 +205,7 @@ public class RmfLifecycleService : IRmfLifecycleService
         var gateResults = new List<GateCheckResult>();
         if (isForward)
         {
-            gateResults = CheckForwardGates(system, previousStep, targetStep);
+            gateResults = await CheckForwardGatesAsync(system, previousStep, targetStep, context, cancellationToken);
             var hasFailures = gateResults.Any(g => !g.Passed && g.Severity == "Error");
 
             if (hasFailures && !force)
@@ -249,7 +282,8 @@ public class RmfLifecycleService : IRmfLifecycleService
             .Include(s => s.SecurityCategorization)
                 .ThenInclude(sc => sc!.InformationTypes)
             .Include(s => s.ControlBaseline)
-            .Include(s => s.AuthorizationBoundaries)
+            .Include(s => s.AuthorizationBoundaryDefinitions)
+                .ThenInclude(d => d.ComponentAssignments)
             .Include(s => s.RmfRoleAssignments)
             .Include(s => s.PrivacyThresholdAnalysis)
             .Include(s => s.PrivacyImpactAssessment)
@@ -272,7 +306,7 @@ public class RmfLifecycleService : IRmfLifecycleService
             };
         }
 
-        return CheckForwardGates(system, system.CurrentRmfStep, targetStep);
+        return await CheckForwardGatesAsync(system, system.CurrentRmfStep, targetStep, context, cancellationToken);
     }
 
     // ─── Private Implementation ──────────────────────────────────────────
@@ -280,10 +314,12 @@ public class RmfLifecycleService : IRmfLifecycleService
     /// <summary>
     /// Check gate conditions for all intermediate steps from current to target.
     /// </summary>
-    private static List<GateCheckResult> CheckForwardGates(
+    private async Task<List<GateCheckResult>> CheckForwardGatesAsync(
         RegisteredSystem system,
         RmfPhase currentStep,
-        RmfPhase targetStep)
+        RmfPhase targetStep,
+        AtoCopilotContext context,
+        CancellationToken cancellationToken)
     {
         var results = new List<GateCheckResult>();
 
@@ -291,7 +327,7 @@ public class RmfLifecycleService : IRmfLifecycleService
         for (var step = currentStep; step < targetStep; step++)
         {
             var nextStep = step + 1;
-            results.AddRange(GetGateChecksForTransition(system, step, nextStep));
+            results.AddRange(await GetGateChecksForTransitionAsync(system, step, nextStep, context, cancellationToken));
         }
 
         return results;
@@ -300,27 +336,34 @@ public class RmfLifecycleService : IRmfLifecycleService
     /// <summary>
     /// Get specific gate checks for a single step transition.
     /// </summary>
-    private static IEnumerable<GateCheckResult> GetGateChecksForTransition(
+    private async Task<IEnumerable<GateCheckResult>> GetGateChecksForTransitionAsync(
         RegisteredSystem system,
         RmfPhase fromStep,
-        RmfPhase toStep)
+        RmfPhase toStep,
+        AtoCopilotContext context,
+        CancellationToken cancellationToken)
     {
         return (fromStep, toStep) switch
         {
-            (RmfPhase.Prepare, RmfPhase.Categorize) => CheckPrepareToCategorize(system),
+            (RmfPhase.Prepare, RmfPhase.Categorize) => await CheckPrepareToCategorizeAsync(system, context, cancellationToken),
             (RmfPhase.Categorize, RmfPhase.Select) => CheckCategorizeToSelect(system),
             (RmfPhase.Select, RmfPhase.Implement) => CheckSelectToImplement(system),
-            (RmfPhase.Implement, RmfPhase.Assess) => CheckImplementToAssess(system),
-            (RmfPhase.Assess, RmfPhase.Authorize) => CheckAssessToAuthorize(system),
-            (RmfPhase.Authorize, RmfPhase.Monitor) => CheckAuthorizeToMonitor(system),
+            (RmfPhase.Implement, RmfPhase.Assess) => await CheckImplementToAssessAsync(system, context, cancellationToken),
+            (RmfPhase.Assess, RmfPhase.Authorize) => await CheckAssessToAuthorizeAsync(system, context, cancellationToken),
+            (RmfPhase.Authorize, RmfPhase.Monitor) => await CheckAuthorizeToMonitorAsync(system, context, cancellationToken),
             _ => Array.Empty<GateCheckResult>()
         };
     }
 
-    /// <summary>Prepare → Categorize: Must have ≥1 role and ≥1 boundary resource.</summary>
-    private static IEnumerable<GateCheckResult> CheckPrepareToCategorize(RegisteredSystem system)
+    /// <summary>Prepare → Categorize: Must have ≥1 role and ≥1 component in a boundary.</summary>
+    private static async Task<IEnumerable<GateCheckResult>> CheckPrepareToCategorizeAsync(
+        RegisteredSystem system,
+        AtoCopilotContext context,
+        CancellationToken cancellationToken)
     {
-        yield return new GateCheckResult
+        var results = new List<GateCheckResult>();
+
+        results.Add(new GateCheckResult
         {
             GateName = "RMF Roles Assigned",
             Passed = system.RmfRoleAssignments.Any(r => r.IsActive),
@@ -328,17 +371,32 @@ public class RmfLifecycleService : IRmfLifecycleService
                 ? $"{system.RmfRoleAssignments.Count(r => r.IsActive)} role(s) assigned."
                 : "At least 1 RMF role must be assigned before categorization.",
             Severity = "Error"
-        };
+        });
 
-        yield return new GateCheckResult
+        // Feature 040 introduced BoundaryComponentAssignments as the source of truth
+        // for boundary composition. Keep a legacy fallback count for older rows that
+        // still rely on ComponentSystemAssignments.AuthorizationBoundaryDefinitionId.
+        var inScopeBoundaryComponents = await context.BoundaryComponentAssignments
+            .CountAsync(bca => bca.AuthorizationBoundaryDefinition!.RegisteredSystemId == system.Id
+                            && bca.IsInScope,
+                        cancellationToken);
+
+        var legacyInScopeComponents = await context.ComponentSystemAssignments
+            .CountAsync(csa => csa.RegisteredSystemId == system.Id
+                            && csa.AuthorizationBoundaryDefinitionId != null,
+                        cancellationToken);
+
+        var inScopeComponents = inScopeBoundaryComponents + legacyInScopeComponents;
+
+        results.Add(new GateCheckResult
         {
             GateName = "Authorization Boundary Defined",
-            Passed = system.AuthorizationBoundaries.Any(b => b.IsInBoundary),
-            Message = system.AuthorizationBoundaries.Any(b => b.IsInBoundary)
-                ? $"{system.AuthorizationBoundaries.Count(b => b.IsInBoundary)} resource(s) in boundary."
-                : "At least 1 resource must be in the authorization boundary.",
+            Passed = inScopeComponents > 0,
+            Message = inScopeComponents > 0
+                ? $"{inScopeComponents} component(s) in boundary."
+                : "At least 1 component must be assigned to the authorization boundary.",
             Severity = "Error"
-        };
+        });
 
         // ─── Gate 3: Privacy Readiness (Feature 021) ─────────────────────
         var pta = system.PrivacyThresholdAnalysis;
@@ -351,7 +409,7 @@ public class RmfLifecycleService : IRmfLifecycleService
             _ => false // PendingConfirmation or no PTA
         };
 
-        yield return new GateCheckResult
+        results.Add(new GateCheckResult
         {
             GateName = "Privacy Readiness",
             Passed = privacyPassed,
@@ -365,7 +423,7 @@ public class RmfLifecycleService : IRmfLifecycleService
                         ? "PTA determination is pending confirmation. Resolve ambiguous PII info types."
                         : "PTA indicates PIA required, but PIA is not yet approved.",
             Severity = "Error"
-        };
+        });
 
         // ─── Gate 4: Interconnection Documentation (Feature 021) ─────────
         var activeInterconnections = system.SystemInterconnections
@@ -400,13 +458,15 @@ public class RmfLifecycleService : IRmfLifecycleService
                 "Register interconnections or certify no external interconnections.";
         }
 
-        yield return new GateCheckResult
+        results.Add(new GateCheckResult
         {
             GateName = "Interconnection Documentation",
             Passed = interconnectionPassed,
             Message = interconnectionMessage,
             Severity = "Error"
-        };
+        });
+
+        return results;
     }
 
     /// <summary>Categorize → Select: SecurityCategorization must exist with ≥1 info type.</summary>
@@ -452,41 +512,96 @@ public class RmfLifecycleService : IRmfLifecycleService
         };
     }
 
-    /// <summary>Implement → Assess: ≥80% controls should have narratives (warning, not blocking).</summary>
-    private static IEnumerable<GateCheckResult> CheckImplementToAssess(RegisteredSystem system)
+    /// <summary>Implement → Assess: ≥80% of baseline controls should have implementation narratives.</summary>
+    private async Task<List<GateCheckResult>> CheckImplementToAssessAsync(
+        RegisteredSystem system,
+        AtoCopilotContext context,
+        CancellationToken cancellationToken)
     {
-        // This is advisory — narrative progress check. Without ControlImplementation
-        // data loaded, we issue a warning instead of a hard fail.
-        yield return new GateCheckResult
+        var results = new List<GateCheckResult>();
+
+        var totalControls = system.ControlBaseline?.TotalControls ?? 0;
+        if (totalControls == 0)
+        {
+            results.Add(new GateCheckResult
+            {
+                GateName = "Implementation Narratives",
+                Passed = false,
+                Message = "No control baseline found. Select a baseline before assessment.",
+                Severity = "Error"
+            });
+            return results;
+        }
+
+        var narrativeCount = await context.Set<ControlImplementation>()
+            .CountAsync(ci => ci.RegisteredSystemId == system.Id
+                && !string.IsNullOrEmpty(ci.Narrative), cancellationToken);
+
+        var coverage = (double)narrativeCount / totalControls;
+        var passed = coverage >= 0.80;
+
+        results.Add(new GateCheckResult
         {
             GateName = "Implementation Narratives",
-            Passed = true,
-            Message = "Ensure ≥80% of controls have implementation narratives before assessment.",
-            Severity = "Warning"
-        };
+            Passed = passed,
+            Message = passed
+                ? $"{narrativeCount}/{totalControls} controls have narratives ({coverage:P0} coverage)."
+                : $"Only {narrativeCount}/{totalControls} controls have narratives ({coverage:P0}). ≥80% required.",
+            Severity = "Error"
+        });
+
+        return results;
     }
 
-    /// <summary>Assess → Authorize: Assessment should be complete (advisory).</summary>
-    private static IEnumerable<GateCheckResult> CheckAssessToAuthorize(RegisteredSystem system)
+    /// <summary>Assess → Authorize: At least one completed assessment must exist for this system.</summary>
+    private async Task<List<GateCheckResult>> CheckAssessToAuthorizeAsync(
+        RegisteredSystem system,
+        AtoCopilotContext context,
+        CancellationToken cancellationToken)
     {
-        yield return new GateCheckResult
+        var results = new List<GateCheckResult>();
+
+        var hasCompletedAssessment = await context.Set<ComplianceAssessment>()
+            .AnyAsync(a => a.RegisteredSystemId == system.Id
+                && a.Status == AssessmentStatus.Completed, cancellationToken);
+
+        results.Add(new GateCheckResult
         {
             GateName = "Assessment Complete",
-            Passed = true,
-            Message = "Ensure all controls have been assessed and SAR generated.",
-            Severity = "Warning"
-        };
+            Passed = hasCompletedAssessment,
+            Message = hasCompletedAssessment
+                ? "At least one completed compliance assessment exists."
+                : "No completed assessment found. Run an assessment before authorization.",
+            Severity = "Error"
+        });
+
+        return results;
     }
 
-    /// <summary>Authorize → Monitor: Authorization decision should exist (advisory).</summary>
-    private static IEnumerable<GateCheckResult> CheckAuthorizeToMonitor(RegisteredSystem system)
+    /// <summary>Authorize → Monitor: An active authorization decision must exist.</summary>
+    private async Task<List<GateCheckResult>> CheckAuthorizeToMonitorAsync(
+        RegisteredSystem system,
+        AtoCopilotContext context,
+        CancellationToken cancellationToken)
     {
-        yield return new GateCheckResult
+        var results = new List<GateCheckResult>();
+
+        var activeDecision = await context.Set<AuthorizationDecision>()
+            .FirstOrDefaultAsync(d => d.RegisteredSystemId == system.Id
+                && d.IsActive, cancellationToken);
+
+        var passed = activeDecision != null;
+
+        results.Add(new GateCheckResult
         {
             GateName = "Authorization Decision",
-            Passed = true,
-            Message = "Ensure an active authorization decision (ATO/ATOwC/IATT) exists.",
-            Severity = "Warning"
-        };
+            Passed = passed,
+            Message = passed
+                ? $"Active {activeDecision!.DecisionType} authorization issued on {activeDecision.DecisionDate:yyyy-MM-dd}."
+                : "No active authorization decision found. Issue ATO/ATOwC/IATT before entering Monitor.",
+            Severity = "Error"
+        });
+
+        return results;
     }
 }

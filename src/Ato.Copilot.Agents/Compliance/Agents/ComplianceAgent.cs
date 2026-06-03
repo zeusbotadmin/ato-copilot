@@ -8,6 +8,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Azure.AI.Agents.Persistent;
 using Ato.Copilot.Agents.Common;
 using Ato.Copilot.Agents.Compliance.Tools;
 using Ato.Copilot.Core.Configuration;
@@ -220,8 +221,9 @@ public class ComplianceAgent : BaseAgent
         ISystemIdResolver systemIdResolver,
         ILogger<ComplianceAgent> logger,
         IChatClient? chatClient = null,
-        IOptions<AzureOpenAIGatewayOptions>? aiOptions = null)
-        : base(logger, chatClient, aiOptions?.Value)
+        PersistentAgentsClient? foundryClient = null,
+        IOptions<AzureAiOptions>? azureAiOptions = null)
+        : base(logger, chatClient, foundryClient, azureAiOptions?.Value)
     {
         _systemIdResolver = systemIdResolver;
         _assessmentTool = assessmentTool;
@@ -415,6 +417,10 @@ public class ComplianceAgent : BaseAgent
         {
             tool.SystemIdResolver = _systemIdResolver;
         }
+
+        // Provision Foundry agent in background when enabled
+        if (_azureAiOptions?.IsFoundry == true)
+            _ = Task.Run(async () => await ProvisionFoundryAgentAsync());
     }
 
     /// <inheritdoc />
@@ -513,6 +519,25 @@ public class ComplianceAgent : BaseAgent
             }
         }
 
+        // Word-level action + entity combination — catches natural phrasing
+        // like "list open poams" or "show me the assessment findings"
+        if (score < 0.9)
+        {
+            string[] actionWords = ["list", "show", "get", "create", "update", "delete",
+                "run", "check", "view", "open", "find", "query", "search", "generate",
+                "export", "import", "assign", "set", "add", "remove", "compare"];
+            string[] entityWords = ["poam", "poa&m", "finding", "assessment", "boundary",
+                "narrative", "control", "baseline", "system", "ato", "conmon", "sar",
+                "role", "categorization", "ssp", "snapshot", "capability", "component",
+                "risk", "authorization", "remediation", "package"];
+            bool hasAction = false;
+            bool hasEntity = false;
+            foreach (var w in actionWords) { if (lower.Contains(w)) { hasAction = true; break; } }
+            foreach (var w in entityWords) { if (lower.Contains(w)) { hasEntity = true; break; } }
+            if (hasAction && hasEntity)
+                score = Math.Max(score, 0.85);
+        }
+
         // Framework mentions — moderate
         if ((lower.Contains("nist") || lower.Contains("fedramp") || lower.Contains("dod") || lower.Contains("rmf")) && score < 0.4)
             score = Math.Max(score, 0.4);
@@ -587,7 +612,7 @@ public class ComplianceAgent : BaseAgent
             progress?.Report("Routing to ATO Copilot agent...");
 
             // ── AI-powered processing path (Feature 011) ────────────────────
-            var aiResponse = await TryProcessWithAiAsync(message, context, cancellationToken, progress);
+            var aiResponse = await TryProcessWithBackendAsync(message, context, cancellationToken, progress);
             if (aiResponse != null)
             {
                 progress?.Report("Generating response...");
@@ -1294,6 +1319,18 @@ public class ComplianceAgent : BaseAgent
             }, cancellationToken);
         }
 
+        if (ContainsAny(lowerMessage, "show findings", "open findings", "view findings", "list findings", "show open findings"))
+        {
+            var showFindingsTool = Tools.FirstOrDefault(t => t.Name == "compliance_show_findings");
+            if (showFindingsTool != null)
+            {
+                return await showFindingsTool.ExecuteAsync(new Dictionary<string, object?>
+                {
+                    ["system_id"] = GetContextValue(context, "system_id")
+                }, cancellationToken);
+            }
+        }
+
         if (ContainsAny(lowerMessage, "compliance status", "current status", "posture"))
         {
             return await _statusTool.ExecuteAsync(new Dictionary<string, object?>
@@ -1662,6 +1699,7 @@ public class ComplianceAgent : BaseAgent
             if (resolvedId != null)
             {
                 context.WorkflowState["system_id"] = resolvedId;
+                context.WorkflowState["systemId"] = resolvedId;
             }
             else if (_pendingSystemChoices is { Count: > 0 })
             {
@@ -2355,8 +2393,79 @@ public class ComplianceAgent : BaseAgent
         keywords.Any(k => text.Contains(k, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>Retrieves a context value from the agent conversation workflow state.</summary>
-    private static string? GetContextValue(AgentConversationContext context, string key) =>
-        context.WorkflowState.TryGetValue(key, out var value) ? value?.ToString() : null;
+    private static string? GetContextValue(AgentConversationContext context, string key)
+    {
+        if (context.WorkflowState.TryGetValue(key, out var value))
+            return value?.ToString();
+
+        // Dashboard context commonly uses camelCase (e.g., systemId) while
+        // tools may request snake_case (e.g., system_id). Try both forms.
+        var alternateKey = key.Contains('_', StringComparison.Ordinal)
+            ? SnakeToCamel(key)
+            : CamelToSnake(key);
+
+        if (!string.IsNullOrEmpty(alternateKey) && context.WorkflowState.TryGetValue(alternateKey, out value))
+            return value?.ToString();
+
+        return null;
+    }
+
+    private static string SnakeToCamel(string key)
+    {
+        var parts = key.Split('_', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0)
+            return key;
+
+        var sb = new StringBuilder(parts[0]);
+        for (var i = 1; i < parts.Length; i++)
+        {
+            var part = parts[i];
+            if (part.Length == 0)
+                continue;
+            sb.Append(char.ToUpperInvariant(part[0]));
+            if (part.Length > 1)
+                sb.Append(part[1..]);
+        }
+
+        return sb.ToString();
+    }
+
+    private static string CamelToSnake(string key)
+    {
+        if (string.IsNullOrEmpty(key))
+            return key;
+
+        var sb = new StringBuilder(key.Length + 4);
+        for (var i = 0; i < key.Length; i++)
+        {
+            var ch = key[i];
+            if (char.IsUpper(ch) && i > 0)
+                sb.Append('_');
+            sb.Append(char.ToLowerInvariant(ch));
+        }
+
+        return sb.ToString();
+    }
+
+    private static string? ExtractSystemNameFromForClauses(string message)
+    {
+        // Capture each "for <candidate>" chunk and prefer the last one.
+        // This handles prompts like: "... for this system for Eagle Eye".
+        var matches = Regex.Matches(message, @"\bfor\s+([^,.;!?]+?)(?=\s+for\s+|$)", RegexOptions.IgnoreCase);
+        if (matches.Count == 0)
+            return null;
+
+        var candidate = matches[^1].Groups[1].Value.Trim();
+        if (string.IsNullOrEmpty(candidate))
+            return null;
+
+        // Remove common filler wording from suggestion templates.
+        if (candidate.Equals("this system", StringComparison.OrdinalIgnoreCase) ||
+            candidate.Equals("system", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        return candidate;
+    }
 
     /// <summary>Extracts the NIST control family abbreviation from the user message.</summary>
     private static string ExtractControlFamily(string message)
@@ -2441,9 +2550,7 @@ public class ComplianceAgent : BaseAgent
         // 2. Try "for <SystemName>" pattern (case-insensitive)
         if (string.IsNullOrEmpty(name))
         {
-            var forMatch = Regex.Match(message, @"\bfor\s+(.+?)(?:\s*$)", RegexOptions.IgnoreCase);
-            if (forMatch.Success)
-                name = forMatch.Groups[1].Value.Trim();
+            name = ExtractSystemNameFromForClauses(message);
         }
 
         try

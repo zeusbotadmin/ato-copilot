@@ -43,6 +43,20 @@ public interface IAtoComplianceEngine
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Streams compliance findings incrementally as each control family completes.
+    /// Yields individual <see cref="ComplianceFinding"/> items without buffering the entire result set.
+    /// Use when the expected finding count exceeds the streaming threshold (default 50).
+    /// </summary>
+    /// <param name="subscriptionId">Azure subscription ID (valid GUID format).</param>
+    /// <param name="resourceGroup">Optional resource group constraint.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Async enumerable of compliance findings yielded per family scan.</returns>
+    IAsyncEnumerable<ComplianceFinding> StreamAssessmentFindingsAsync(
+        string subscriptionId,
+        string? resourceGroup = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Run a multi-subscription environment assessment.
     /// Pre-warms caches for all subscriptions, aggregates results.
     /// </summary>
@@ -1311,6 +1325,18 @@ public interface IAlertNotificationService
 
     /// <summary>Get the audit trail of notifications sent for a specific alert.</summary>
     Task<List<AlertNotification>> GetNotificationsForAlertAsync(Guid alertId, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Broadcasts notifications to connected clients in real-time (e.g., via SignalR).
+/// </summary>
+public interface INotificationBroadcaster
+{
+    /// <summary>Push a notification to a specific user's connected clients.</summary>
+    Task BroadcastToUserAsync(string userId, AlertNotification notification, CancellationToken cancellationToken = default);
+
+    /// <summary>Push an unread count update to a specific user's connected clients.</summary>
+    Task BroadcastUnreadCountAsync(string userId, int unreadCount, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

@@ -63,9 +63,34 @@ ATO Copilot is where you DO the work, eMASS is where you SUBMIT the work.
 
 ### Prerequisites
 
-- [.NET 9.0 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
+- [.NET 9.0 SDK](https://dotnet.microsoft.com/download/dotnet/9.0) — pinned by [`global.json`](global.json)
 - [Docker](https://www.docker.com/) (recommended for full deployment)
+- Node.js 20 LTS (for VS Code/M365 extensions and React SPAs)
 - Azure subscription (Azure Government preferred)
+
+### Set up your dev machine
+
+**macOS / Linux**
+
+```bash
+./scripts/bootstrap.sh           # installs prerequisites + restores all dependencies
+./scripts/bootstrap.sh --check   # verify prerequisites without installing
+```
+
+**Windows (PowerShell)**
+
+```powershell
+.\scripts\bootstrap.ps1
+.\scripts\bootstrap.ps1 -Check
+```
+
+**Codespaces / Dev Container** — open the repo in VS Code and choose
+**"Reopen in Container"**. The container ([`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json))
+runs `bootstrap.sh` automatically and pre-installs the recommended extensions.
+
+The bootstrap script verifies/installs .NET 9 SDK, Node 20, Docker, Azure CLI,
+Python 3.11, and `dotnet-ef`, then runs `dotnet restore` and `npm ci` for every
+sub-project. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for details.
 
 ### Docker (Recommended)
 
@@ -255,19 +280,28 @@ ATO_CONNECTIONSTRINGS__DEFAULTCONNECTION="Server=localhost,1433;..."
 
 | Section | Description |
 |---------|-------------|
-| `Gateway:AzureOpenAI` | Azure OpenAI endpoint, model, temperature (0.3), max tool rounds (5) |
-| `AzureAd` | Azure AD / Entra ID with CAC/MFA toggle |
-| `Gateway:Azure` | Subscription, managed identity, Gov cloud |
-| `ConnectionStrings` | SQLite (dev) / SQL Server (prod) |
-| `NistCatalog` | NIST SP 800-53 Rev 5 OSCAL source with 30-day cache |
-| `Agents:Compliance` | Default framework, impact level, 20 control families |
+| `Server` | Kestrel `Urls` binding (HTTP mode) |
+| `Gateway:AzureOpenAI` | Azure OpenAI endpoint, model, temperature, max tool rounds |
+| `AzureAi` | Foundry/OpenAI client wiring (tenant, deployment, run timeout) |
+| `AzureAd` | Azure AD / Entra ID (`TenantId`, `ClientId`, `ClientSecret`, `CloudEnvironment`, `RequireCac`) |
+| `Gateway:Azure` | Subscription, managed identity, Gov cloud, request timeouts |
+| `ConnectionStrings` | SQLite (dev) / SQL Server (prod) — `DefaultConnection`, `ChatDb` |
+| `Database` | EF Core `Provider`, `CommandTimeoutSeconds`, `MaxRetryCount`, `MaxRetryDelay`, `EnableSensitiveDataLogging` |
+| `Resilience` | Polly HTTP pipelines (`Name`, `MaxRetryAttempts`, `BaseDelaySeconds`, `UseJitter`, `RequestTimeoutSeconds`) |
+| `RateLimiting` | Per-endpoint rate-limit policies (Feature 029) |
+| `Caching` | `IMemoryCache` defaults |
+| `Pagination` / `Streaming` | Default page sizes and SSE flush intervals |
+| `OpenTelemetry` | OTLP exporter + Prometheus toggle |
+| `Cors` | Allowed origins for Chat + Dashboard |
+| `Serilog` | Structured logging — bound directly via `ReadFrom.Configuration` |
+| `Agents:Compliance` | Compliance agent (`DefaultFramework`, `DefaultBaseline`, `HighRiskFamilies`, `NistControls`, `Boundary`, `EnableAutomatedRemediation`) |
 | `Agents:KnowledgeBaseAgent` | Token limits, confidence threshold |
-| `Agents:Kanban` | SLA tiers (24h–90d), notification channels |
+| `Agents:Kanban` | `OverdueScan:IntervalMinutes` (hosted-service scan cadence) |
 | `Pim` | Activation durations, high-privilege role definitions |
-| `CacAuth` | Session timeout (8h / 24h max) |
+| `CacAuth` | Session timeout (8h / 24h max), simulation mode |
 | `Retention` | Assessments 3yr, audit logs 7yr |
-| `FeatureFlags` | 8 toggles for scans, evidence, remediation, docs |
-| `Performance` | 10 concurrent ops, 512MB budget, 300s timeout |
+| `KeyVault` | `VaultUri` (non-Dev secrets provider) |
+| `Onboarding` | First-run bootstrap configuration |
 
 ## Compliance Frameworks
 

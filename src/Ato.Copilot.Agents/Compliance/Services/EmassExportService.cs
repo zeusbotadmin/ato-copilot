@@ -23,6 +23,7 @@ public class EmassExportService : IEmassExportService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<EmassExportService> _logger;
+    private readonly IOscalSspExportService _oscalSspExportService;
 
     private static readonly JsonSerializerOptions OscalJsonOpts = new()
     {
@@ -56,15 +57,18 @@ public class EmassExportService : IEmassExportService
         "Scheduled Completion Date", "Planned Milestones", "Milestone Changes",
         "Resources Required", "Cost Estimate",
         "Status", "Completion Date", "Comments", "Is Active",
-        "Created Date", "Last Updated Date", "Last Updated By"
+        "Created Date", "Last Updated Date", "Last Updated By",
+        "Deviation Justification", "Deviation Type", "Deviation Expiration"
     ];
 
     public EmassExportService(
         IServiceScopeFactory scopeFactory,
-        ILogger<EmassExportService> logger)
+        ILogger<EmassExportService> logger,
+        IOscalSspExportService oscalSspExportService)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _oscalSspExportService = oscalSspExportService;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -149,7 +153,15 @@ public class EmassExportService : IEmassExportService
             .Where(p => p.RegisteredSystemId == registeredSystemId)
             .ToListAsync(cancellationToken);
 
-        var rows = BuildPoamRows(system, poamItems);
+        // Load approved deviations linked to POA&M items (Feature 035)
+        var deviationByPoamId = await db.Deviations
+            .AsNoTracking()
+            .Where(d => d.RegisteredSystemId == registeredSystemId
+                && d.PoamEntryId != null
+                && d.Status == DeviationStatus.Approved)
+            .ToDictionaryAsync(d => d.PoamEntryId!, d => d, cancellationToken);
+
+        var rows = BuildPoamRows(system, poamItems, deviationByPoamId);
 
         return GenerateExcel("POAM", PoamHeaders, rows);
     }
@@ -332,7 +344,8 @@ public class EmassExportService : IEmassExportService
 
     private static List<EmassPoamExportRow> BuildPoamRows(
         RegisteredSystem system,
-        List<PoamItem> poamItems)
+        List<PoamItem> poamItems,
+        Dictionary<string, Deviation> deviationByPoamId)
     {
         return poamItems.Select(p =>
         {
@@ -348,6 +361,8 @@ public class EmassExportService : IEmassExportService
                 ? string.Join("; ", p.Milestones.OrderBy(m => m.Sequence)
                     .Select(m => $"{m.Description} (Target: {m.TargetDate:MM/dd/yyyy})"))
                 : null;
+
+            deviationByPoamId.TryGetValue(p.Id, out var deviation);
 
             return new EmassPoamExportRow(
                 SystemName: system.Name,
@@ -374,7 +389,10 @@ public class EmassExportService : IEmassExportService
                 IsActive: p.Status != PoamStatus.Completed && p.Status != PoamStatus.RiskAccepted,
                 CreatedDate: p.CreatedAt,
                 LastUpdatedDate: p.ModifiedAt,
-                LastUpdatedBy: null
+                LastUpdatedBy: null,
+                DeviationJustification: deviation?.Justification,
+                DeviationTypeName: deviation?.DeviationType.ToString(),
+                DeviationExpiration: deviation?.ExpirationDate.ToString("yyyy-MM-dd")
             );
         }).ToList();
     }
@@ -474,6 +492,9 @@ public class EmassExportService : IEmassExportService
         ws.Cell(row, 23).SetValue(r.CreatedDate);
         ws.Cell(row, 24).SetValue(r.LastUpdatedDate);
         ws.Cell(row, 25).Value = r.LastUpdatedBy ?? "";
+        ws.Cell(row, 26).Value = r.DeviationJustification ?? "";
+        ws.Cell(row, 27).Value = r.DeviationTypeName ?? "";
+        ws.Cell(row, 28).Value = r.DeviationExpiration ?? "";
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -606,69 +627,10 @@ public class EmassExportService : IEmassExportService
         RegisteredSystem system,
         CancellationToken cancellationToken)
     {
-        var implementations = await db.ControlImplementations
-            .AsNoTracking()
-            .Where(ci => ci.RegisteredSystemId == system.Id)
-            .ToListAsync(cancellationToken);
-
-        var baseline = await db.ControlBaselines
-            .AsNoTracking()
-            .FirstOrDefaultAsync(b => b.RegisteredSystemId == system.Id,
-                cancellationToken);
-
-        var oscal = new Dictionary<string, object>
-        {
-            ["system-security-plan"] = new Dictionary<string, object>
-            {
-                ["uuid"] = Guid.NewGuid().ToString(),
-                ["metadata"] = new Dictionary<string, object>
-                {
-                    ["title"] = $"{system.Name} System Security Plan",
-                    ["last-modified"] = DateTime.UtcNow.ToString("o"),
-                    ["version"] = "1.0",
-                    ["oscal-version"] = "1.0.6"
-                },
-                ["system-characteristics"] = new Dictionary<string, object>
-                {
-                    ["system-name"] = system.Name,
-                    ["system-id"] = system.Id,
-                    ["description"] = system.Description ?? "",
-                    ["security-sensitivity-level"] = baseline?.BaselineLevel ?? "moderate",
-                    ["system-information"] = BuildOscalSystemInfo(system),
-                    ["security-impact-level"] = BuildOscalImpactLevel(system)
-                },
-                ["control-implementation"] = new Dictionary<string, object>
-                {
-                    ["description"] = "Control implementation narratives for " + system.Name,
-                    ["implemented-requirements"] = implementations.Select(impl =>
-                        new Dictionary<string, object>
-                        {
-                            ["uuid"] = Guid.NewGuid().ToString(),
-                            ["control-id"] = impl.ControlId.ToLowerInvariant(),
-                            ["description"] = impl.Narrative ?? "Not documented",
-                            ["props"] = new[]
-                            {
-                                new Dictionary<string, string>
-                                {
-                                    ["name"] = "implementation-status",
-                                    ["value"] = impl.ImplementationStatus switch
-                                    {
-                                        ImplementationStatus.Implemented => "implemented",
-                                        ImplementationStatus.PartiallyImplemented =>
-                                            "partial",
-                                        ImplementationStatus.Planned => "planned",
-                                        ImplementationStatus.NotApplicable =>
-                                            "not-applicable",
-                                        _ => "planned"
-                                    }
-                                }
-                            }
-                        }).ToList()
-                }
-            }
-        };
-
-        return JsonSerializer.Serialize(oscal, OscalJsonOpts);
+        // Delegate to the dedicated OSCAL 1.1.2 SSP export service
+        var result = await _oscalSspExportService.ExportAsync(
+            system.Id, includeBackMatter: true, prettyPrint: true, cancellationToken);
+        return result.OscalJson;
     }
 
     private async Task<string> BuildOscalAssessmentResults(
@@ -681,49 +643,84 @@ public class EmassExportService : IEmassExportService
             .Where(ce => ce.RegisteredSystemId == system.Id)
             .ToListAsync(cancellationToken);
 
-        var oscal = new Dictionary<string, object>
+        // Gather distinct control IDs for reviewed-controls section
+        var controlIds = effectivenessRecords
+            .Select(e => e.ControlId.ToLowerInvariant())
+            .Distinct()
+            .OrderBy(id => id)
+            .ToList();
+
+        // Look up SAP for import-ap reference
+        var sap = await db.SecurityAssessmentPlans
+            .AsNoTracking()
+            .Where(s => s.RegisteredSystemId == system.Id && s.Status == SapStatus.Finalized)
+            .OrderByDescending(s => s.GeneratedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var resultDict = new Dictionary<string, object>
         {
-            ["assessment-results"] = new Dictionary<string, object>
+            ["uuid"] = Guid.NewGuid().ToString(),
+            ["title"] = "Security Assessment Results",
+            ["description"] = $"Assessment results for {system.Name}",
+            ["start"] = effectivenessRecords.Any()
+                ? effectivenessRecords.Min(e => e.AssessedAt).ToString("o")
+                : DateTime.UtcNow.ToString("o"),
+            ["reviewed-controls"] = new Dictionary<string, object>
             {
-                ["uuid"] = Guid.NewGuid().ToString(),
-                ["metadata"] = new Dictionary<string, object>
-                {
-                    ["title"] = $"{system.Name} Assessment Results",
-                    ["last-modified"] = DateTime.UtcNow.ToString("o"),
-                    ["version"] = "1.0",
-                    ["oscal-version"] = "1.0.6"
-                },
-                ["results"] = new[]
+                ["control-selections"] = new[]
                 {
                     new Dictionary<string, object>
                     {
-                        ["uuid"] = Guid.NewGuid().ToString(),
-                        ["title"] = "Security Assessment Results",
-                        ["description"] = $"Assessment results for {system.Name}",
-                        ["start"] = effectivenessRecords.Any()
-                            ? effectivenessRecords.Min(e => e.AssessedAt).ToString("o")
-                            : DateTime.UtcNow.ToString("o"),
-                        ["findings"] = effectivenessRecords.Select(e =>
-                            new Dictionary<string, object>
-                            {
-                                ["uuid"] = Guid.NewGuid().ToString(),
-                                ["title"] = $"Assessment of {e.ControlId}",
-                                ["description"] = e.Notes ?? "",
-                                ["target"] = new Dictionary<string, object>
-                                {
-                                    ["type"] = "objective-id",
-                                    ["target-id"] = e.ControlId.ToLowerInvariant(),
-                                    ["status"] = new Dictionary<string, string>
-                                    {
-                                        ["state"] = e.Determination ==
-                                            EffectivenessDetermination.Satisfied
-                                            ? "satisfied" : "not-satisfied"
-                                    }
-                                }
-                            }).ToList()
+                        ["include-controls"] = controlIds.Select(id =>
+                            new Dictionary<string, string> { ["control-id"] = id }).ToList()
                     }
                 }
-            }
+            },
+            ["findings"] = effectivenessRecords.Select(e =>
+                new Dictionary<string, object>
+                {
+                    ["uuid"] = Guid.NewGuid().ToString(),
+                    ["title"] = $"Assessment of {e.ControlId}",
+                    ["description"] = e.Notes ?? "",
+                    ["target"] = new Dictionary<string, object>
+                    {
+                        ["type"] = "objective-id",
+                        ["target-id"] = e.ControlId.ToLowerInvariant(),
+                        ["status"] = new Dictionary<string, string>
+                        {
+                            ["state"] = e.Determination ==
+                                EffectivenessDetermination.Satisfied
+                                ? "satisfied" : "not-satisfied"
+                        }
+                    }
+                }).ToList()
+        };
+
+        var arRoot = new Dictionary<string, object>
+        {
+            ["uuid"] = Guid.NewGuid().ToString(),
+            ["metadata"] = new Dictionary<string, object>
+            {
+                ["title"] = $"{system.Name} Assessment Results",
+                ["last-modified"] = DateTime.UtcNow.ToString("o"),
+                ["version"] = "1.0",
+                ["oscal-version"] = "1.1.2"
+            },
+            ["results"] = new[] { resultDict }
+        };
+
+        // Add import-ap reference if a finalized SAP exists
+        if (sap != null)
+        {
+            arRoot["import-ap"] = new Dictionary<string, string>
+            {
+                ["href"] = $"#sap-{sap.Id}"
+            };
+        }
+
+        var oscal = new Dictionary<string, object>
+        {
+            ["assessment-results"] = arRoot
         };
 
         return JsonSerializer.Serialize(oscal, OscalJsonOpts);
@@ -740,56 +737,62 @@ public class EmassExportService : IEmassExportService
             .Where(p => p.RegisteredSystemId == system.Id)
             .ToListAsync(cancellationToken);
 
+        var poamRoot = new Dictionary<string, object>
+        {
+            ["uuid"] = Guid.NewGuid().ToString(),
+            ["metadata"] = new Dictionary<string, object>
+            {
+                ["title"] = $"{system.Name} Plan of Action and Milestones",
+                ["last-modified"] = DateTime.UtcNow.ToString("o"),
+                ["version"] = "1.0",
+                ["oscal-version"] = "1.1.2"
+            },
+            ["import-ssp"] = new Dictionary<string, string>
+            {
+                ["href"] = $"#ssp-{system.Id}"
+            },
+            ["poam-items"] = poamItems.Select(p =>
+                new Dictionary<string, object>
+                {
+                    ["uuid"] = Guid.NewGuid().ToString(),
+                    ["title"] = p.Weakness,
+                    ["description"] = p.Comments ?? p.Weakness,
+                    ["props"] = new object[]
+                    {
+                        new Dictionary<string, string>
+                        {
+                            ["name"] = "POAM-ID",
+                            ["value"] = p.Id
+                        },
+                        new Dictionary<string, string>
+                        {
+                            ["name"] = "weakness-source",
+                            ["value"] = p.WeaknessSource
+                        },
+                        new Dictionary<string, string>
+                        {
+                            ["name"] = "cat-severity",
+                            ["value"] = p.CatSeverity.ToString()
+                        },
+                        new Dictionary<string, string>
+                        {
+                            ["name"] = "status",
+                            ["value"] = p.Status.ToString()
+                        }
+                    },
+                    ["related-findings"] = new[]
+                    {
+                        new Dictionary<string, string>
+                        {
+                            ["finding-uuid"] = Guid.NewGuid().ToString()
+                        }
+                    }
+                }).ToList()
+        };
+
         var oscal = new Dictionary<string, object>
         {
-            ["plan-of-action-and-milestones"] = new Dictionary<string, object>
-            {
-                ["uuid"] = Guid.NewGuid().ToString(),
-                ["metadata"] = new Dictionary<string, object>
-                {
-                    ["title"] = $"{system.Name} Plan of Action and Milestones",
-                    ["last-modified"] = DateTime.UtcNow.ToString("o"),
-                    ["version"] = "1.0",
-                    ["oscal-version"] = "1.0.6"
-                },
-                ["poam-items"] = poamItems.Select(p =>
-                    new Dictionary<string, object>
-                    {
-                        ["uuid"] = Guid.NewGuid().ToString(),
-                        ["title"] = p.Weakness,
-                        ["description"] = p.Comments ?? p.Weakness,
-                        ["props"] = new object[]
-                        {
-                            new Dictionary<string, string>
-                            {
-                                ["name"] = "POAM-ID",
-                                ["value"] = p.Id
-                            },
-                            new Dictionary<string, string>
-                            {
-                                ["name"] = "weakness-source",
-                                ["value"] = p.WeaknessSource
-                            },
-                            new Dictionary<string, string>
-                            {
-                                ["name"] = "cat-severity",
-                                ["value"] = p.CatSeverity.ToString()
-                            },
-                            new Dictionary<string, string>
-                            {
-                                ["name"] = "status",
-                                ["value"] = p.Status.ToString()
-                            }
-                        },
-                        ["related-observations"] = new[]
-                        {
-                            new Dictionary<string, string>
-                            {
-                                ["observation-uuid"] = Guid.NewGuid().ToString()
-                            }
-                        }
-                    }).ToList()
-            }
+            ["plan-of-action-and-milestones"] = poamRoot
         };
 
         return JsonSerializer.Serialize(oscal, OscalJsonOpts);

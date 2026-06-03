@@ -51,6 +51,14 @@ The `@ato` participant routes messages to the MCP server's ComplianceAgent and r
 | `show findings` | `compliance_status` | Compliance status |
 | `pim activate` | `pim_activate_role` | PIM elevation |
 | `show dashboard` | `compliance_multi_system_dashboard` | Portfolio dashboard |
+| `generate package` | `compliance_generate_package` | eMASS authorization package |
+| `package status` | `compliance_package_status` | Package generation status |
+| `validate package` | `compliance_validate_package` | Pre-submission readiness check |
+| `package history` | `compliance_list_packages` | List generated packages |
+| `validate oscal` | `compliance_validate_oscal_schema` | OSCAL schema validation |
+| `generate sar` | `compliance_generate_sar` | Security Assessment Report |
+| `edit sar` | `compliance_edit_sar_section` | Edit SAR section |
+| `review sar` | `compliance_review_sar` | SAR review/approval |
 
 ---
 
@@ -218,3 +226,18 @@ VS Code Extension
 - **VS Code CSS variables** — All theming uses CSS custom properties for automatic light/dark mode support
 - **XSS escaping** — All user-provided text is HTML-escaped via `escapeHtml()` before rendering
 - **Message-based communication** — Webview ↔ extension communication via `postMessage` / `onDidReceiveMessage`
+
+---
+
+## Boundary-Aware Chat Queries (Feature 033)
+
+The `@ato` chat participant supports boundary-aware queries:
+
+| Query Pattern | Description |
+|---------------|-------------|
+| `@ato list boundary definitions for [system]` | List all boundaries |
+| `@ato create a logical boundary named "Production"` | Create boundary |
+| `@ato delete boundary [name/id]` | Delete boundary (reassigns to Primary) |
+| `@ato run boundary gap analysis for [system]` | Gap analysis with comparison |
+| `@ato gap analysis for Production boundary` | Filtered to one boundary |
+| `@ato compare boundary coverage` | Compare coverage across boundaries |

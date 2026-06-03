@@ -10,7 +10,9 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Ato.Copilot.Agents.Common;
 using Ato.Copilot.Agents.Compliance.Agents;
+using Ato.Copilot.Agents.Compliance.Services;
 using Ato.Copilot.Agents.Compliance.Tools;
+using Ato.Copilot.Agents.Compliance.Tools.Poam;
 using Ato.Copilot.Agents.Configuration.Agents;
 using Ato.Copilot.Agents.Configuration.Tools;
 using Ato.Copilot.Agents.KnowledgeBase.Agents;
@@ -39,9 +41,9 @@ public class McpServerAiIntegrationTests
     private readonly IServiceScopeFactory _scopeFactory = Mock.Of<IServiceScopeFactory>();
 
     private McpServer CreateMcpServer(IChatClient? chatClient = null,
-        AzureOpenAIGatewayOptions? aiOptions = null)
+        AzureAiOptions? aiOptions = null)
     {
-        IOptions<AzureOpenAIGatewayOptions>? optionsWrapper =
+        IOptions<AzureAiOptions>? optionsWrapper =
             aiOptions != null ? Options.Create(aiOptions) : null;
 
         // ── ConfigurationAgent (simplest, used as primary test agent) ────────
@@ -53,7 +55,7 @@ public class McpServerAiIntegrationTests
             .Returns(Task.CompletedTask);
 
         var configTool = new ConfigurationTool(_stateManagerMock.Object, Mock.Of<ILogger<ConfigurationTool>>());
-        var configAgent = new ConfigurationAgent(configTool, Mock.Of<ILogger<ConfigurationAgent>>(), chatClient, optionsWrapper);
+        var configAgent = new ConfigurationAgent(configTool, Mock.Of<ILogger<ConfigurationAgent>>(), chatClient, null, optionsWrapper);
 
         // ── ComplianceAgent (required for McpServer constructor) ─────────────
         var complianceAgent = CreateComplianceAgent(chatClient, optionsWrapper);
@@ -78,13 +80,21 @@ public class McpServerAiIntegrationTests
             orchestrator,
             Enumerable.Empty<BaseTool>(),
             Mock.Of<IHttpContextAccessor>(),
+            Mock.Of<Ato.Copilot.Core.Interfaces.IPathSanitizationService>(),
+            new Ato.Copilot.Core.Services.ResponseCacheService(
+                new Microsoft.Extensions.Caching.Memory.MemoryCache(new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions()),
+                new Ato.Copilot.Core.Observability.HttpMetrics(),
+                Microsoft.Extensions.Options.Options.Create(new Ato.Copilot.Core.Models.CachingOptions()),
+                Mock.Of<ILogger<Ato.Copilot.Core.Services.ResponseCacheService>>()),
+            Microsoft.Extensions.Options.Options.Create(new Ato.Copilot.Core.Models.PaginationOptions()),
+            new Ato.Copilot.Core.Services.OfflineModeService(new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build(), Mock.Of<ILogger<Ato.Copilot.Core.Services.OfflineModeService>>()),
             Mock.Of<ILogger<McpServer>>());
     }
 
-    private static AzureOpenAIGatewayOptions CreateEnabledOptions() => new()
+    private static AzureAiOptions CreateEnabledOptions() => new()
     {
-        AgentAIEnabled = true,
-        MaxToolCallRounds = 5,
+        Enabled = true,
+        MaxToolIterations = 5,
         Temperature = 0.3,
         Endpoint = "https://test.openai.azure.us/"
     };
@@ -181,7 +191,7 @@ public class McpServerAiIntegrationTests
 
     // ── Factory helpers ──────────────────────────────────────────────────────
 
-    private ComplianceAgent CreateComplianceAgent(IChatClient? chatClient, IOptions<AzureOpenAIGatewayOptions>? aiOptions)
+    private ComplianceAgent CreateComplianceAgent(IChatClient? chatClient, IOptions<AzureAiOptions>? aiOptions)
     {
         var e = Mock.Of<IAtoComplianceEngine>();
         var r = Mock.Of<IRemediationEngine>();
@@ -280,10 +290,11 @@ public class McpServerAiIntegrationTests
             Mock.Of<ISystemIdResolver>(),
             Mock.Of<ILogger<ComplianceAgent>>(),
             chatClient,
+            null,
             aiOptions);
     }
 
-    private KnowledgeBaseAgent CreateKnowledgeBaseAgent(IChatClient? chatClient, IOptions<AzureOpenAIGatewayOptions>? aiOptions)
+    private KnowledgeBaseAgent CreateKnowledgeBaseAgent(IChatClient? chatClient, IOptions<AzureAiOptions>? aiOptions)
     {
         var cache = new MemoryCache(new MemoryCacheOptions());
         var opts = Options.Create(new KnowledgeBaseAgentOptions());
@@ -306,6 +317,7 @@ public class McpServerAiIntegrationTests
             new GetFedRampTemplateGuidanceTool(fr, cache, opts, Mock.Of<ILogger<GetFedRampTemplateGuidanceTool>>()),
             Mock.Of<ILogger<KnowledgeBaseAgent>>(),
             chatClient,
+            null,
             aiOptions);
     }
 
@@ -407,10 +419,14 @@ public class McpServerAiIntegrationTests
             new ListSystemsTool(Mock.Of<IRmfLifecycleService>(), Mock.Of<ILogger<ListSystemsTool>>()),
             new GetSystemTool(Mock.Of<IRmfLifecycleService>(), Mock.Of<ILogger<GetSystemTool>>()),
             new AdvanceRmfStepTool(Mock.Of<IRmfLifecycleService>(), Mock.Of<ILogger<AdvanceRmfStepTool>>()),
-            new DefineBoundaryTool(Mock.Of<IBoundaryService>(), Mock.Of<ILogger<DefineBoundaryTool>>()),
+            new DefineBoundaryTool(Mock.Of<IBoundaryService>(), sf, Mock.Of<ILogger<DefineBoundaryTool>>()),
             new ExcludeFromBoundaryTool(Mock.Of<IBoundaryService>(), Mock.Of<ILogger<ExcludeFromBoundaryTool>>()),
-            new AssignRmfRoleTool(Mock.Of<IBoundaryService>(), Mock.Of<ILogger<AssignRmfRoleTool>>()),
+            new AssignRmfRoleTool(Mock.Of<IBoundaryService>(), Mock.Of<IProfileNotificationService>(), Mock.Of<ILogger<AssignRmfRoleTool>>()),
             new ListRmfRolesTool(Mock.Of<IBoundaryService>(), Mock.Of<ILogger<ListRmfRolesTool>>()),
+            new ListBoundaryDefinitionsTool(sf, Mock.Of<ILogger<ListBoundaryDefinitionsTool>>()),
+            new CreateBoundaryDefinitionTool(sf, Mock.Of<ILogger<CreateBoundaryDefinitionTool>>()),
+            new DeleteBoundaryDefinitionTool(sf, Mock.Of<ILogger<DeleteBoundaryDefinitionTool>>()),
+            new BoundaryGapAnalysisTool(sf, Mock.Of<ILogger<BoundaryGapAnalysisTool>>()),
             new CategorizeSystemTool(Mock.Of<ICategorizationService>(), Mock.Of<ILogger<CategorizeSystemTool>>()),
             new GetCategorizationTool(Mock.Of<ICategorizationService>(), Mock.Of<ILogger<GetCategorizationTool>>()),
             new SuggestInfoTypesTool(Mock.Of<ICategorizationService>(), Mock.Of<ILogger<SuggestInfoTypesTool>>()),
@@ -423,7 +439,7 @@ public class McpServerAiIntegrationTests
             new WriteNarrativeTool(Mock.Of<ISspService>(), Mock.Of<ILogger<WriteNarrativeTool>>()),
             new SuggestNarrativeTool(Mock.Of<ISspService>(), Mock.Of<ILogger<SuggestNarrativeTool>>()),
             new BatchPopulateNarrativesTool(Mock.Of<ISspService>(), Mock.Of<ILogger<BatchPopulateNarrativesTool>>()),
-            new NarrativeProgressTool(Mock.Of<ISspService>(), Mock.Of<ILogger<NarrativeProgressTool>>()),
+            new NarrativeProgressTool(Mock.Of<ISspService>(), Mock.Of<INarrativeGovernanceService>(), Mock.Of<ILogger<NarrativeProgressTool>>()),
             new GenerateSspTool(Mock.Of<ISspService>(), Mock.Of<ILogger<GenerateSspTool>>()),
             new AssessControlTool(Mock.Of<IAssessmentArtifactService>(), Mock.Of<ILogger<AssessControlTool>>()),
             new TakeSnapshotTool(Mock.Of<IAssessmentArtifactService>(), Mock.Of<ILogger<TakeSnapshotTool>>()),
@@ -432,10 +448,18 @@ public class McpServerAiIntegrationTests
             new CheckEvidenceCompletenessTool(Mock.Of<IAssessmentArtifactService>(), Mock.Of<ILogger<CheckEvidenceCompletenessTool>>()),
             new GenerateSarTool(Mock.Of<IAssessmentArtifactService>(), Mock.Of<ILogger<GenerateSarTool>>()),
             new IssueAuthorizationTool(Mock.Of<IAuthorizationService>(), Mock.Of<ILogger<IssueAuthorizationTool>>()),
-            new AcceptRiskTool(Mock.Of<IAuthorizationService>(), Mock.Of<ILogger<AcceptRiskTool>>()),
+            new AcceptRiskTool(Mock.Of<IDeviationService>(), Mock.Of<ILogger<AcceptRiskTool>>()),
             new ShowRiskRegisterTool(Mock.Of<IAuthorizationService>(), Mock.Of<ILogger<ShowRiskRegisterTool>>()),
             new CreatePoamTool(Mock.Of<IAuthorizationService>(), Mock.Of<ILogger<CreatePoamTool>>()),
             new ListPoamTool(Mock.Of<IAuthorizationService>(), Mock.Of<ILogger<ListPoamTool>>()),
+            new GetPoamTool(sf, Mock.Of<ILogger<GetPoamTool>>()),
+            new UpdatePoamTool(sf, Mock.Of<ILogger<UpdatePoamTool>>()),
+            new ClosePoamTool(sf, Mock.Of<ILogger<ClosePoamTool>>()),
+            new UpdatePoamMilestoneTool(sf, Mock.Of<ILogger<UpdatePoamMilestoneTool>>()),
+            new BulkUpdatePoamTool(sf, Mock.Of<ILogger<BulkUpdatePoamTool>>()),
+            new LinkPoamTaskTool(sf, Mock.Of<ILogger<LinkPoamTaskTool>>()),
+            new UnlinkPoamTaskTool(sf, Mock.Of<ILogger<UnlinkPoamTaskTool>>()),
+            new CreateTaskFromPoamTool(sf, Mock.Of<ILogger<CreateTaskFromPoamTool>>()),
             new GenerateRarTool(Mock.Of<IAuthorizationService>(), Mock.Of<ILogger<GenerateRarTool>>()),
             new BundleAuthorizationPackageTool(Mock.Of<IAuthorizationService>(), Mock.Of<ILogger<BundleAuthorizationPackageTool>>()),
             // US9: Continuous Monitoring tools
@@ -449,7 +473,7 @@ public class McpServerAiIntegrationTests
             // US10: eMASS & OSCAL tools
             new ExportEmassTool(Mock.Of<IEmassExportService>(), Mock.Of<ILogger<ExportEmassTool>>()),
             new ImportEmassTool(Mock.Of<IEmassExportService>(), Mock.Of<ILogger<ImportEmassTool>>()),
-            new ExportOscalTool(Mock.Of<IEmassExportService>(), Mock.Of<ILogger<ExportOscalTool>>()),
+            new ExportOscalTool(Mock.Of<IEmassExportService>(), Mock.Of<IOscalSapExportService>(), Mock.Of<ILogger<ExportOscalTool>>()),
             // US11: Document Templates & PDF Export tools
             new UploadTemplateTool(Mock.Of<IDocumentTemplateService>(), Mock.Of<ILogger<UploadTemplateTool>>()),
             new ListTemplatesTool(Mock.Of<IDocumentTemplateService>(), Mock.Of<ILogger<ListTemplatesTool>>()),

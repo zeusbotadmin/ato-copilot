@@ -17,15 +17,18 @@ public class BaselineService : IBaselineService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IReferenceDataService _referenceData;
     private readonly ILogger<BaselineService> _logger;
+    private readonly IOrgInheritanceService _orgInheritanceService;
 
     public BaselineService(
         IServiceScopeFactory scopeFactory,
         IReferenceDataService referenceData,
-        ILogger<BaselineService> logger)
+        ILogger<BaselineService> logger,
+        IOrgInheritanceService orgInheritanceService)
     {
         _scopeFactory = scopeFactory;
         _referenceData = referenceData;
         _logger = logger;
+        _orgInheritanceService = orgInheritanceService;
     }
 
     /// <inheritdoc />
@@ -102,6 +105,11 @@ public class BaselineService : IBaselineService
             .Include(b => b.Inheritances)
             .FirstOrDefaultAsync(b => b.RegisteredSystemId == systemId, cancellationToken);
 
+        // Snapshot existing inheritance designations before removing
+        var inheritanceSnapshot = existing?.Inheritances
+            .Select(i => new { i.ControlId, i.InheritanceType, i.Provider, i.CustomerResponsibility, i.SetBy })
+            .ToList() ?? [];
+
         if (existing != null)
         {
             context.ControlTailorings.RemoveRange(existing.Tailorings);
@@ -126,9 +134,163 @@ public class BaselineService : IBaselineService
         system.ModifiedAt = DateTime.UtcNow;
         await context.SaveChangesAsync(cancellationToken);
 
+        // Auto-populate ControlImplementation records with AI-generated narrative templates
+        var existingControlIds = await context.ControlImplementations
+            .Where(ci => ci.RegisteredSystemId == systemId)
+            .Select(ci => ci.ControlId)
+            .ToListAsync(cancellationToken);
+
+        // Use case-insensitive lookup (SQL Server collation is CI, but C# Contains is CS)
+        var existingSet = new HashSet<string>(existingControlIds, StringComparer.OrdinalIgnoreCase);
+
+        // Look up capability mappings for new controls so we can set SecurityCapabilityId
+        var newControlIds = controlIds.Where(c => !existingSet.Contains(c)).ToList();
+        var capabilityMappings = newControlIds.Count > 0
+            ? await context.CapabilityControlMappings
+                .Where(m => newControlIds.Contains(m.ControlId)
+                    && (m.RegisteredSystemId == null || m.RegisteredSystemId == systemId))
+                .GroupBy(m => m.ControlId)
+                .ToDictionaryAsync(
+                    g => g.Key,
+                    g => g.First().SecurityCapabilityId,
+                    StringComparer.OrdinalIgnoreCase,
+                    cancellationToken)
+            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        var newImplementations = new List<ControlImplementation>();
+        var now = DateTime.UtcNow;
+
+        foreach (var controlId in controlIds)
+        {
+            if (existingSet.Contains(controlId))
+                continue;
+
+            var family = controlId.Contains('-')
+                ? controlId[..controlId.IndexOf('-')]
+                : controlId.Length >= 2 ? controlId[..2] : controlId;
+
+            capabilityMappings.TryGetValue(controlId, out var capabilityId);
+
+            newImplementations.Add(new ControlImplementation
+            {
+                ControlId = controlId,
+                RegisteredSystemId = systemId,
+                SecurityCapabilityId = capabilityId,
+                ImplementationStatus = ImplementationStatus.Planned,
+                ApprovalStatus = SspSectionStatus.NotStarted,
+                Narrative = SspService.GenerateCustomerNarrativeTemplate(family, controlId, system),
+                IsAutoPopulated = true,
+                AiSuggested = true,
+                AuthoredBy = selectedBy,
+                AuthoredAt = now,
+                CurrentVersion = 1,
+            });
+        }
+
+        if (newImplementations.Count > 0)
+        {
+            context.ControlImplementations.AddRange(newImplementations);
+            await context.SaveChangesAsync(cancellationToken);
+            _logger.LogInformation(
+                "Auto-populated {Count} control implementations with AI narrative templates for system '{SystemId}'",
+                newImplementations.Count, systemId);
+        }
+
+        // ─── Reapply snapshotted inheritance designations ───────────────────
+        var newControlSet = new HashSet<string>(controlIds, StringComparer.OrdinalIgnoreCase);
+        var reappliedCount = 0;
+
+        foreach (var snap in inheritanceSnapshot)
+        {
+            if (!newControlSet.Contains(snap.ControlId))
+                continue;
+
+            var inheritance = new ControlInheritance
+            {
+                ControlBaselineId = baseline.Id,
+                ControlId = snap.ControlId,
+                InheritanceType = snap.InheritanceType,
+                Provider = snap.Provider,
+                CustomerResponsibility = snap.CustomerResponsibility,
+                SetBy = snap.SetBy,
+                SetAt = DateTime.UtcNow
+            };
+            context.ControlInheritances.Add(inheritance);
+            reappliedCount++;
+        }
+
+        if (reappliedCount > 0)
+        {
+            // Recalculate baseline inheritance counts
+            baseline.InheritedControls = inheritanceSnapshot.Count(s => newControlSet.Contains(s.ControlId) && s.InheritanceType == InheritanceType.Inherited);
+            baseline.SharedControls = inheritanceSnapshot.Count(s => newControlSet.Contains(s.ControlId) && s.InheritanceType == InheritanceType.Shared);
+            baseline.CustomerControls = inheritanceSnapshot.Count(s => newControlSet.Contains(s.ControlId) && s.InheritanceType == InheritanceType.Customer);
+            await context.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation(
+                "Reapplied {Count} inheritance designations to new baseline for system '{SystemId}'",
+                reappliedCount, systemId);
+
+            // Auto-update narrative statuses based on reapplied inheritance
+            var inheritedIds = inheritanceSnapshot
+                .Where(s => newControlSet.Contains(s.ControlId) && s.InheritanceType == InheritanceType.Inherited)
+                .Select(s => s.ControlId).ToList();
+            var sharedIds = inheritanceSnapshot
+                .Where(s => newControlSet.Contains(s.ControlId) && s.InheritanceType == InheritanceType.Shared)
+                .Select(s => s.ControlId).ToList();
+
+            var affectedIds = inheritedIds.Concat(sharedIds).ToList();
+            if (affectedIds.Count > 0)
+            {
+                var narratives = await context.ControlImplementations
+                    .Where(ci => ci.RegisteredSystemId == systemId && affectedIds.Contains(ci.ControlId))
+                    .ToListAsync(cancellationToken);
+
+                var narrativesUpdated = 0;
+                foreach (var narrative in narratives)
+                {
+                    ImplementationStatus targetStatus;
+                    if (inheritedIds.Contains(narrative.ControlId))
+                        targetStatus = ImplementationStatus.Implemented;
+                    else if (sharedIds.Contains(narrative.ControlId))
+                        targetStatus = ImplementationStatus.PartiallyImplemented;
+                    else
+                        continue;
+
+                    if (narrative.ImplementationStatus != targetStatus)
+                    {
+                        narrative.ImplementationStatus = targetStatus;
+                        narrative.IsAutoPopulated = true;
+                        narrative.ModifiedAt = DateTime.UtcNow;
+                        narrativesUpdated++;
+                    }
+                }
+
+                if (narrativesUpdated > 0)
+                {
+                    await context.SaveChangesAsync(cancellationToken);
+                    _logger.LogInformation(
+                        "Auto-updated {Count} narrative statuses based on inheritance for system '{SystemId}'",
+                        narrativesUpdated, systemId);
+                }
+            }
+        }
+
+        // ─── Feature 044: Propagate org-level inheritance defaults ─────────
+        var baselineControlIdSet = new HashSet<string>(controlIds, StringComparer.OrdinalIgnoreCase);
+        var propagation = await _orgInheritanceService.PropagateToSystemAsync(
+            systemId, baseline.Id, baselineControlIdSet, selectedBy, cancellationToken);
+
+        if (propagation.PropagatedCount > 0)
+        {
+            _logger.LogInformation(
+                "Propagated {Count} org-level defaults to system '{SystemId}' during baseline selection, {Skipped} existing overrides preserved",
+                propagation.PropagatedCount, systemId, propagation.SkippedCount);
+        }
+
         _logger.LogInformation(
-            "Selected {Level} baseline for system '{SystemId}': {Count} controls, overlay={Overlay}",
-            baselineLevel, systemId, controlIds.Count, appliedOverlay ?? "none");
+            "Selected {Level} baseline for system '{SystemId}': {Count} controls, overlay={Overlay}, {Reapplied} inheritances reapplied",
+            baselineLevel, systemId, controlIds.Count, appliedOverlay ?? "none", reappliedCount);
 
         return baseline;
     }
@@ -287,6 +449,7 @@ public class BaselineService : IBaselineService
         string systemId,
         IEnumerable<InheritanceInput> inheritanceMappings,
         string setBy = "mcp-user",
+        InheritanceChangeSource changeSource = InheritanceChangeSource.Manual,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(systemId, nameof(systemId));
@@ -334,11 +497,28 @@ public class BaselineService : IBaselineService
             var existing = baseline.Inheritances
                 .FirstOrDefault(i => i.ControlId == mapping.ControlId);
 
+            // Capture previous values for audit
+            var prevType = existing?.InheritanceType.ToString();
+            var prevProvider = existing?.Provider;
+            var prevResponsibility = existing?.CustomerResponsibility;
+            var prevOrgDefaultId = existing?.OrgInheritanceDefaultId;
+
             if (existing != null)
             {
                 context.ControlInheritances.Remove(existing);
                 baseline.Inheritances.Remove(existing);
             }
+
+            // Feature 044: Determine designation source and preserve org default reference
+            var designationSource = changeSource switch
+            {
+                InheritanceChangeSource.OrgDerived => "OrgDerived",
+                InheritanceChangeSource.OrgPropagation => "OrgDerived",
+                InheritanceChangeSource.ProfileApply => "ProfileApply",
+                InheritanceChangeSource.CrmImport => "CrmImport",
+                InheritanceChangeSource.BulkUpdate => "Manual",
+                _ => "Manual",
+            };
 
             var inheritance = new ControlInheritance
             {
@@ -347,11 +527,32 @@ public class BaselineService : IBaselineService
                 InheritanceType = inheritanceType,
                 Provider = mapping.Provider,
                 CustomerResponsibility = mapping.CustomerResponsibility,
+                DesignationSource = designationSource,
+                OrgInheritanceDefaultId = prevOrgDefaultId, // Preserve "diverged from" reference
                 SetBy = setBy,
                 SetAt = DateTime.UtcNow
             };
 
             context.ControlInheritances.Add(inheritance);
+            baseline.Inheritances.Add(inheritance);
+
+            // Create audit entry for the change
+            context.InheritanceAuditEntries.Add(new InheritanceAuditEntry
+            {
+                ControlInheritanceId = inheritance.Id,
+                ControlId = mapping.ControlId,
+                ControlBaselineId = baseline.Id,
+                Actor = setBy,
+                PreviousInheritanceType = prevType,
+                NewInheritanceType = inheritanceType.ToString(),
+                PreviousProvider = prevProvider,
+                NewProvider = mapping.Provider,
+                PreviousCustomerResponsibility = prevResponsibility,
+                NewCustomerResponsibility = mapping.CustomerResponsibility,
+                ChangeSource = changeSource,
+                Timestamp = DateTime.UtcNow
+            });
+
             result.ControlsUpdated++;
         }
 
@@ -365,11 +566,52 @@ public class BaselineService : IBaselineService
         result.SharedCount = baseline.SharedControls;
         result.CustomerCount = baseline.CustomerControls;
 
+        // ─── Auto-update narrative implementation status based on inheritance type ───
+        // Inherited → Implemented, Shared → PartiallyImplemented
+        var inheritedControlIds = mappings
+            .Where(m => Enum.TryParse<InheritanceType>(m.InheritanceType, true, out var t) && t == InheritanceType.Inherited
+                        && baseline.ControlIds.Contains(m.ControlId))
+            .Select(m => m.ControlId)
+            .ToList();
+
+        var sharedControlIds = mappings
+            .Where(m => Enum.TryParse<InheritanceType>(m.InheritanceType, true, out var t) && t == InheritanceType.Shared
+                        && baseline.ControlIds.Contains(m.ControlId))
+            .Select(m => m.ControlId)
+            .ToList();
+
+        var affectedControlIds = inheritedControlIds.Concat(sharedControlIds).ToList();
+        if (affectedControlIds.Count > 0)
+        {
+            var narratives = await context.ControlImplementations
+                .Where(ci => ci.RegisteredSystemId == systemId && affectedControlIds.Contains(ci.ControlId))
+                .ToListAsync(cancellationToken);
+
+            foreach (var narrative in narratives)
+            {
+                ImplementationStatus targetStatus;
+                if (inheritedControlIds.Contains(narrative.ControlId))
+                    targetStatus = ImplementationStatus.Implemented;
+                else if (sharedControlIds.Contains(narrative.ControlId))
+                    targetStatus = ImplementationStatus.PartiallyImplemented;
+                else
+                    continue;
+
+                if (narrative.ImplementationStatus != targetStatus)
+                {
+                    narrative.ImplementationStatus = targetStatus;
+                    narrative.IsAutoPopulated = true;
+                    narrative.ModifiedAt = DateTime.UtcNow;
+                    result.NarrativesAutoUpdated++;
+                }
+            }
+        }
+
         await context.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation(
-            "Set inheritance for system '{SystemId}': {Updated} updated, {Skipped} skipped. I={I} S={S} C={C}",
-            systemId, result.ControlsUpdated, result.SkippedControls.Count,
+            "Set inheritance for system '{SystemId}': {Updated} updated, {Skipped} skipped, {NarrativesUpdated} narratives auto-updated. I={I} S={S} C={C}",
+            systemId, result.ControlsUpdated, result.SkippedControls.Count, result.NarrativesAutoUpdated,
             result.InheritedCount, result.SharedCount, result.CustomerCount);
 
         return result;
@@ -436,9 +678,18 @@ public class BaselineService : IBaselineService
 
         var baseline = await context.ControlBaselines
             .Include(b => b.Inheritances)
+            .AsNoTracking()
             .FirstOrDefaultAsync(b => b.RegisteredSystemId == systemId, cancellationToken)
             ?? throw new InvalidOperationException(
                 $"No baseline found for system '{systemId}'. Run select_baseline first.");
+        
+        // Ensure ControlIds list is populated; if empty, log warning
+        if (baseline.ControlIds == null || baseline.ControlIds.Count == 0)
+        {
+            _logger.LogWarning(
+                "Baseline for system '{SystemId}' has no ControlIds. TotalControls={Total}",
+                systemId, baseline.TotalControls);
+        }
 
         var system = await context.RegisteredSystems
             .FirstOrDefaultAsync(s => s.Id == systemId, cancellationToken);
@@ -447,8 +698,13 @@ public class BaselineService : IBaselineService
         var inheritanceLookup = baseline.Inheritances
             .ToDictionary(i => i.ControlId, i => i);
 
+        // Fallback: if ControlIds is empty or null, reconstruct from Inheritances + get all baseline controls
+        var controlIdsList = baseline.ControlIds?.Count > 0 
+            ? baseline.ControlIds 
+            : await ReconstructControlIdsAsync(baseline, context, cancellationToken);
+
         // Group controls by family
-        var familyGroups = baseline.ControlIds
+        var familyGroups = controlIdsList
             .GroupBy(c => ComplianceFrameworks.ExtractControlFamily(c))
             .OrderBy(g => g.Key)
             .Select(g =>
@@ -470,7 +726,8 @@ public class BaselineService : IBaselineService
                                     ControlId = controlId,
                                     InheritanceType = inheritance.InheritanceType.ToString(),
                                     Provider = inheritance.Provider,
-                                    CustomerResponsibility = inheritance.CustomerResponsibility
+                                    CustomerResponsibility = inheritance.CustomerResponsibility,
+                                    DesignationSource = MapDesignationSourceForCrm(inheritance.DesignationSource)
                                 };
                             }
 
@@ -508,6 +765,60 @@ public class BaselineService : IBaselineService
             InheritancePercentage = inheritancePercentage,
             FamilyGroups = familyGroups
         };
+    }
+
+    private static string? MapDesignationSourceForCrm(string? source) => source switch
+    {
+        "OrgDerived" => "Org Default",
+        "Manual" => "System Override",
+        "ProfileApply" => "CSP Profile",
+        "CrmImport" => "CRM Import",
+        "BulkUpdate" => "Bulk Update",
+        _ => source
+    };
+
+    // ─── Reconstruction helper ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Reconstructs control IDs from baseline data if ControlIds JSON column is empty.
+    /// Falls back to: (1) All Inheritance control IDs, (2) All controls by baseline level.
+    /// </summary>
+    private async Task<List<string>> ReconstructControlIdsAsync(
+        ControlBaseline baseline,
+        AtoCopilotContext context,
+        CancellationToken cancellationToken)
+    {
+        // First try: Get all control IDs from Inheritances for this baseline
+        var inheritanceControlIds = await context.ControlInheritances
+            .Where(i => i.ControlBaselineId == baseline.Id)
+            .Select(i => i.ControlId)
+            .ToListAsync(cancellationToken);
+
+        if (inheritanceControlIds.Count > 0)
+        {
+            inheritanceControlIds.Sort(ControlIdComparer.Instance);
+            _logger.LogWarning(
+                "Reconstructed {Count} control IDs for baseline '{SystemId}' from Inheritances",
+                inheritanceControlIds.Count, baseline.RegisteredSystemId);
+            return inheritanceControlIds;
+        }
+
+        // Second try: Get all controls by baseline level from reference data
+        var levelControls = _referenceData.GetBaselineControlIds(baseline.BaselineLevel).ToList();
+        if (levelControls.Count > 0)
+        {
+            _logger.LogWarning(
+                "Reconstructed {Count} control IDs for baseline '{SystemId}' from baseline level '{Level}'",
+                levelControls.Count, baseline.RegisteredSystemId, baseline.BaselineLevel);
+            return levelControls;
+        }
+
+        // Last resort: return empty list and log critical error
+        _logger.LogError(
+            "Failed to reconstruct control IDs for baseline '{SystemId}'. ControlIds was empty, " +
+            "no Inheritances found, and baseline level '{Level}' returned no controls.",
+            baseline.RegisteredSystemId, baseline.BaselineLevel);
+        return [];
     }
 
     // ─── Control ID comparer ─────────────────────────────────────────────────

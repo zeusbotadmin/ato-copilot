@@ -17,10 +17,10 @@ This checklist must be completed **before** any persona test case execution begi
 | 1.1 | Solution builds | `dotnet build Ato.Copilot.sln` | Build succeeded, 0 errors | ⬜ | |
 | 1.2 | MCP server starts | `dotnet run --project src/Ato.Copilot.Mcp` | Server listening on configured port | ⬜ | Port: ___ |
 | 1.3 | Health endpoint responds | `curl http://localhost:{port}/health` | 200 OK within 5s | ⬜ | |
-| 1.4 | Tool count ≥ 118 | Query `/tools/list` endpoint | Returns ≥ 118 registered tools | ⬜ | Actual: ___ |
-| 1.5 | All 88 spec tools present | Cross-reference `/tools/list` against research.md tool list | 0 missing tools | ⬜ | Missing: ___ |
+| 1.4 | Tool count ≥ 145 | Query `/tools/list` endpoint | Returns ≥ 145 registered tools | ⬜ | Actual: ___ |
+| 1.5 | All 106 spec tools present | Cross-reference `/tools/list` against research.md tool list | 0 missing tools | ⬜ | Missing: ___ |
 
-### 88 Spec-Referenced Tools
+### 106 Spec-Referenced Tools
 
 Verify each tool is in the `/tools/list` response:
 
@@ -52,6 +52,16 @@ Verify each tool is in the `/tools/list` response:
 - [ ] `compliance_batch_populate_narratives`
 - [ ] `compliance_generate_ssp`
 - [ ] `compliance_collect_evidence`
+
+**Narrative Governance (8)**
+- [ ] `compliance_narrative_history`
+- [ ] `compliance_narrative_diff`
+- [ ] `compliance_rollback_narrative`
+- [ ] `compliance_submit_narrative`
+- [ ] `compliance_review_narrative`
+- [ ] `compliance_batch_review_narratives`
+- [ ] `compliance_narrative_approval_progress`
+- [ ] `compliance_batch_submit_narratives`
 
 **Assessment (7)**
 - [ ] `compliance_take_snapshot`
@@ -108,17 +118,45 @@ Verify each tool is in the `/tools/list` response:
 - [ ] `watch_alert_history`
 - [ ] `watch_compliance_trend`
 
-**Import (6)**
+**Import (8)**
 - [ ] `compliance_import_ckl`
 - [ ] `compliance_import_xccdf`
 - [ ] `compliance_list_imports`
 - [ ] `compliance_get_import_summary`
 - [ ] `compliance_import_prisma_csv`
 - [ ] `compliance_import_prisma_api`
+- [ ] `compliance_import_nessus`
+- [ ] `compliance_list_nessus_imports`
 
 **Prisma (2)**
 - [ ] `compliance_list_prisma_policies`
 - [ ] `compliance_prisma_trend`
+
+**Privacy Analysis (4)** — F021
+- [ ] `compliance_create_pta`
+- [ ] `compliance_generate_pia`
+- [ ] `compliance_review_pia`
+- [ ] `compliance_check_privacy_compliance`
+
+**Interconnection Management (8)** — F021
+- [ ] `compliance_add_interconnection`
+- [ ] `compliance_list_interconnections`
+- [ ] `compliance_update_interconnection`
+- [ ] `compliance_generate_isa`
+- [ ] `compliance_register_agreement`
+- [ ] `compliance_update_agreement`
+- [ ] `compliance_validate_agreements`
+- [ ] `compliance_certify_no_interconnections`
+
+**SSP Authoring & OSCAL (5)** — F022
+- [ ] `compliance_write_ssp_section`
+- [ ] `compliance_review_ssp_section`
+- [ ] `compliance_ssp_completeness`
+- [ ] `compliance_export_oscal_ssp`
+- [ ] `compliance_validate_oscal_ssp`
+
+**CKL Export (1)** — F017
+- [ ] `compliance_export_ckl`
 
 **Kanban (9)**
 - [ ] `kanban_create_board`
@@ -145,7 +183,20 @@ Verify each tool is in the `/tools/list` response:
 - [ ] `pim_deny_request`
 - [ ] `jit_request_access`
 
-**Tool Count**: 88 tools | **Verified**: ___/88
+**Tool Count**: 106 tools | **Verified**: ___/106
+
+**HW/SW Inventory (9)** — F025
+- [ ] `inventory_add_item`
+- [ ] `inventory_update_item`
+- [ ] `inventory_decommission_item`
+- [ ] `inventory_list`
+- [ ] `inventory_get`
+- [ ] `inventory_export`
+- [ ] `inventory_import`
+- [ ] `inventory_completeness`
+- [ ] `inventory_auto_seed`
+
+**Inventory Tool Count**: 9 tools | **Verified**: ___/9
 
 </details>
 
@@ -204,6 +255,7 @@ Verify each tool is in the `/tools/list` response:
 | 6.3 | Prisma API JSON available | Locate in test data directory | JSON with alertRules, resourceConfig, remediationCli | ⬜ | Path: ___ |
 | 6.4 | CKL checklist file available | Locate in test data directory | `.ckl` with STIG evaluation results | ⬜ | Path: ___ |
 | 6.5 | XCCDF results file available | Locate in test data directory | `.xml` SCAP scan results with benchmark scores | ⬜ | Path: ___ |
+| 6.6 | Nessus scan file available | Locate in test data directory | `.nessus` XML with ≥ 2 hosts and ≥ 20 plugins | ⬜ | Path: ___ |
 
 ---
 
@@ -211,7 +263,7 @@ Verify each tool is in the `/tools/list` response:
 
 | # | Check | Details | Status |
 |---|-------|---------|--------|
-| 7.1 | Estimated duration | 4–6 hours for full suite (147 tests + 3 scenarios) | ⬜ Scheduled |
+| 7.1 | Estimated duration | 5–7 hours for full suite (172 tests + 4 scenarios) | ⬜ Scheduled |
 | 7.2 | Execution order confirmed | ISSM → ISSO → SCA → AO → Engineer → Cross-Persona | ⬜ Understood |
 | 7.3 | Results template ready | `specs/020-persona-test-cases/results-template.md` | ⬜ Available |
 | 7.4 | Spec open for reference | `specs/020-persona-test-cases/spec.md` | ⬜ Open |
@@ -228,9 +280,9 @@ Verify each tool is in the `/tools/list` response:
 | Microsoft Teams | 3 | ___ | ⬜ |
 | Azure Government | 3 | ___ | ⬜ |
 | PIM Roles | 5 | ___ | ⬜ |
-| Test Data | 5 | ___ | ⬜ |
+| Test Data | 6 | ___ | ⬜ |
 | Logistics | 5 | ___ | ⬜ |
-| **Total** | **29** | **___** | ⬜ |
+| **Total** | **30** | **___** | ⬜ |
 
 ### Gate Decision
 

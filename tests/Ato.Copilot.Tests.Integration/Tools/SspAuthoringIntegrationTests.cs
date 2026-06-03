@@ -46,7 +46,7 @@ public class SspAuthoringIntegrationTests : IDisposable
         var lifecycleSvc = new RmfLifecycleService(scopeFactory, Mock.Of<ILogger<RmfLifecycleService>>());
         var categorizationSvc = new CategorizationService(scopeFactory, Mock.Of<ILogger<CategorizationService>>(), Mock.Of<IPrivacyService>());
         var referenceDataSvc = new ReferenceDataService(Mock.Of<ILogger<ReferenceDataService>>());
-        var baselineSvc = new BaselineService(scopeFactory, referenceDataSvc, Mock.Of<ILogger<BaselineService>>());
+        var baselineSvc = new BaselineService(scopeFactory, referenceDataSvc, Mock.Of<ILogger<BaselineService>>(), Mock.Of<IOrgInheritanceService>());
         var sspSvc = new SspService(scopeFactory, Mock.Of<ILogger<SspService>>());
 
         _registerTool = new RegisterSystemTool(lifecycleSvc, Mock.Of<ILogger<RegisterSystemTool>>());
@@ -56,7 +56,7 @@ public class SspAuthoringIntegrationTests : IDisposable
         _writeNarrativeTool = new WriteNarrativeTool(sspSvc, Mock.Of<ILogger<WriteNarrativeTool>>());
         _suggestNarrativeTool = new SuggestNarrativeTool(sspSvc, Mock.Of<ILogger<SuggestNarrativeTool>>());
         _batchPopulateNarrativesTool = new BatchPopulateNarrativesTool(sspSvc, Mock.Of<ILogger<BatchPopulateNarrativesTool>>());
-        _narrativeProgressTool = new NarrativeProgressTool(sspSvc, Mock.Of<ILogger<NarrativeProgressTool>>());
+        _narrativeProgressTool = new NarrativeProgressTool(sspSvc, Mock.Of<INarrativeGovernanceService>(), Mock.Of<ILogger<NarrativeProgressTool>>());
         _generateSspTool = new GenerateSspTool(sspSvc, Mock.Of<ILogger<GenerateSspTool>>());
     }
 
@@ -181,7 +181,7 @@ public class SspAuthoringIntegrationTests : IDisposable
         sspData.GetProperty("controls_with_narratives").GetInt32().Should().BeGreaterOrEqualTo(2); // 1 manual + at least 1 batch
         sspData.GetProperty("content").GetString().Should().Contain("System Security Plan");
         sspData.GetProperty("content").GetString().Should().Contain("SSP Integration System");
-        sspData.GetProperty("sections").GetArrayLength().Should().Be(5);
+        sspData.GetProperty("sections").GetArrayLength().Should().Be(13);
     }
 
     /// <summary>
@@ -304,7 +304,7 @@ public class SspAuthoringIntegrationTests : IDisposable
         sspJson.RootElement.GetProperty("status").GetString().Should().Be("success");
         var sspData = sspJson.RootElement.GetProperty("data");
         sspData.GetProperty("sections").GetArrayLength().Should().Be(2);
-        sspData.GetProperty("content").GetString().Should().Contain("System Information");
+        sspData.GetProperty("content").GetString().Should().Contain("System Identification");
         sspData.GetProperty("content").GetString().Should().Contain("Security Categorization");
     }
 

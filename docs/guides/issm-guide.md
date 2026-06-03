@@ -21,11 +21,15 @@ This guide walks an Information System Security Manager (ISSM) through the syste
 
 ```
 1. Register System
-2. Define Authorization Boundary
-3. Assign RMF Roles
-4. Advance to Categorize Phase
-5. (Continue through RMF lifecycle...)
+2. Identify System Components (People, Places, Things)
+3. Define Authorization Boundary
+4. Assign RMF Roles
+5. Advance to Categorize Phase
+6. (Continue through RMF lifecycle...)
 ```
+
+!!! info "NIST SP 800-37 Rev 2 Task Order"
+    Per Tasks P-16 and P-17, asset identification (Components) precedes authorization boundary definition. Populate your component inventory first, then define the boundary around those identified assets.
 
 ---
 
@@ -55,7 +59,22 @@ The system starts in the **Prepare** phase. Note the returned `id` — you'll ne
 
 ---
 
-## Step 2: Define the Authorization Boundary
+## Step 2: Identify System Components
+
+Before defining the authorization boundary, inventory the system's components using the **People, Places, and Things** model. Navigate to the system-level **Components** page in the dashboard or use MCP tools:
+
+- **People** — Security roles and personnel (ISSM, ISSO, SCA, System Admin)
+- **Places** — Locations where system components reside (Azure Gov East, Data Center)
+- **Things** — Technical assets and tools (Entra ID, Defender, Key Vault, SQL Database)
+
+Add components via the dashboard at `/systems/{systemId}/components` or use the MCP API. For Azure-hosted systems, use **Discover from Azure** to auto-import cloud resources as "Thing" components.
+
+!!! tip "Component-Assessment Linkage"
+    Azure-backed components automatically link to compliance findings by matching Azure resource IDs. Per-component risk summaries (open finding count, severity, overdue remediations) appear on the **Assessment detail view** and **Remediation page** — not on the Components page itself.
+
+---
+
+## Step 3: Define the Authorization Boundary
 
 Add Azure resources to the system's authorization boundary:
 
@@ -84,7 +103,7 @@ Parameters:
 
 ---
 
-## Step 3: Assign RMF Roles
+## Step 4: Assign RMF Roles
 
 Assign required personnel roles:
 
@@ -116,7 +135,7 @@ Parameters:
 
 ---
 
-## Step 4: Advance to Categorize
+## Step 5: Advance to Categorize
 
 Once the system has at least one role assigned and at least one boundary resource, you can advance to the Categorize phase:
 
@@ -170,7 +189,7 @@ Parameters:
 
 ---
 
-## Step 5: View System Status
+## Step 6: View System Status
 
 At any time, retrieve the full system status:
 
@@ -327,6 +346,24 @@ Parameters:
 ---
 
 ## Step 7: Set Control Inheritance
+
+### Option A: Apply Org-Level Defaults (Recommended)
+
+If your organization has defined security capabilities with NIST control mappings, use **Derive Org Defaults** to automatically set inheritance designations across all systems:
+
+1. Navigate to the **[Security Capabilities Hub](/capabilities)** and import a CSP profile or CRM spreadsheet (see the [Capabilities Hub guide](security-capabilities.md)).
+2. Navigate to the **Control Inheritance** page for any system.
+3. Click **Derive Org Defaults** — this scans org-wide capability-control mappings and creates inheritance defaults.
+4. All systems receive `OrgDerived` designations for mapped controls.
+5. Review the results: the summary bar shows Org Defaults and Overrides counts.
+
+Org defaults cascade automatically — when you add or update capabilities in the Security Capabilities Hub, defaults are re-derived and propagated to all system baselines.
+
+To override an org default for a specific system, use the inline editor or bulk update — the designation source changes to Manual.
+
+To restore an org default after overriding, select the control(s) and click **Revert to Org Defaults**.
+
+### Option B: Manual Inheritance Setting
 
 Use `compliance_set_inheritance` to map controls to their inheritance provider (e.g., a FedRAMP-authorized CSP):
 
@@ -919,6 +956,544 @@ Lists all unique Prisma policies observed, with NIST control mappings, open/reso
 
 ---
 
+## Security Assessment Plan Review
+
+> Feature 018: SAP Generation
+
+As ISSM, you review and verify SAP scope before the SCA finalizes it.
+
+### Review SAP Status
+
+Check if a SAP exists and its current status:
+
+```
+Tool: compliance_list_saps
+Parameters:
+  system_id: "<system-guid>"
+```
+
+### Review SAP Content
+
+Retrieve the full SAP document to verify scope, team assignments, and assessment methods:
+
+```
+Tool: compliance_get_sap
+Parameters:
+  system_id: "<system-guid>"
+```
+
+Review:
+
+- **Schedule**: Assessment window is realistic and coordinated with stakeholders
+- **Team composition**: All required roles are assigned (SCA, ISSO, ISSM, AO representative)
+- **Scope notes**: Assessment scope covers all applicable controls
+- **Method overrides**: Any non-standard assessment methods have documented rationale
+
+### Request SAP Updates
+
+If changes are needed before finalization, update the Draft SAP:
+
+```
+Tool: compliance_update_sap
+Parameters:
+  system_id: "<system-guid>"
+  schedule_start: "2026-04-01T00:00:00Z"
+  schedule_end: "2026-04-30T00:00:00Z"
+  scope_notes: "Include interconnection controls per ISA review findings"
+```
+
+### Confirm Finalization
+
+After the SCA finalizes the SAP, verify the integrity hash:
+
+```
+Tool: compliance_get_sap
+Parameters:
+  system_id: "<system-guid>"
+```
+
+A finalized SAP will have `status: "Finalized"` and a `content_hash` (SHA-256) for tamper detection. Finalized SAPs are immutable.
+
+---
+
+## Privacy Oversight
+
+> Feature 021: Privacy & Interconnection
+
+### PTA Determination Review
+
+After an ISSO conducts the Privacy Threshold Analysis, review the determination:
+
+```
+Tool: compliance_check_privacy_compliance
+Parameters:
+  system_id: "<system-guid>"
+```
+
+Check `pta_determination` — if `PiaRequired`, verify the PIA has been generated and submitted for your review.
+
+### PIA Approval/Rejection
+
+Review and approve (or request revision) on the Privacy Impact Assessment:
+
+```
+Tool: compliance_review_pia
+Parameters:
+  system_id: "<system-guid>"
+  decision: "Approved"
+  reviewer_comments: "All 8 sections adequately address PII handling, retention, and disposal."
+```
+
+To request revisions:
+
+```
+Tool: compliance_review_pia
+Parameters:
+  system_id: "<system-guid>"
+  decision: "RequestRevision"
+  reviewer_comments: "Section 3 lacks specificity on PII retention periods."
+  deficiencies: '["Section 3: Missing retention period details", "Section 5: No data sharing agreements referenced"]'
+```
+
+!!! note "PIA Expiration"
+    Approved PIAs expire annually. Track expiration via `compliance_check_privacy_compliance` — the `expiring_within_90_days` field alerts you to upcoming renewals.
+
+---
+
+## Interconnection Agreement Management
+
+> Feature 021: Privacy & Interconnection
+
+### Validate Agreement Compliance
+
+Check that all active interconnections have signed, current agreements:
+
+```
+Tool: compliance_validate_agreements
+Parameters:
+  system_id: "<system-guid>"
+```
+
+Review:
+
+- `isFullyCompliant`: Must be `true` for Gate 4 (Interconnection Documentation) to pass
+- `expiringWithin90DaysCount`: Schedule renewal before expiration
+- `missingAgreementCount`: Any interconnection without an agreement blocks authorization
+
+### Generate ISA for New Interconnections
+
+When a new interconnection is registered, generate the ISA document:
+
+```
+Tool: compliance_generate_isa
+Parameters:
+  interconnection_id: "<interconnection-guid>"
+```
+
+Review the AI-drafted ISA for completeness, then register it:
+
+```
+Tool: compliance_register_agreement
+Parameters:
+  interconnection_id: "<interconnection-guid>"
+  agreement_type: "isa"
+  title: "ISA — Eagle Eye ↔ JIRA Cloud"
+  status: "pending_signature"
+  expiration_date: "2027-06-01T00:00:00Z"
+```
+
+### Agreement Lifecycle
+
+Update agreement status as signatures are obtained:
+
+```
+Tool: compliance_update_agreement
+Parameters:
+  agreement_id: "<agreement-guid>"
+  status: "signed"
+  signed_by_local: "Jane Smith, ISSM"
+  signed_by_local_date: "2026-03-15T00:00:00Z"
+  signed_by_remote: "Bob Jones, External ISSM"
+  signed_by_remote_date: "2026-03-18T00:00:00Z"
+```
+
+### Certify No Interconnections
+
+If a system has no external interconnections, certify to satisfy the gate:
+
+```
+Tool: compliance_certify_no_interconnections
+Parameters:
+  system_id: "<system-guid>"
+  certify: true
+```
+
+### ISA/MOU Expiration Monitoring
+
+Include agreement expiration tracking in your ConMon routine:
+
+```
+1. compliance_validate_agreements (system_id)        ← Check all agreements
+2. Review expiringWithin90DaysCount                  ← Identify upcoming renewals
+3. compliance_update_agreement (status: "expired")   ← Mark expired agreements
+4. compliance_generate_isa (interconnection_id)      ← Draft renewal ISA
+5. compliance_register_agreement                     ← Register renewed agreement
+```
+
+---
+
+## SSP Section Review
+
+> Feature 022: SSP Authoring & OSCAL Export
+
+### Check SSP Completeness
+
+Monitor the overall SSP readiness:
+
+```
+Tool: compliance_ssp_completeness
+Parameters:
+  system_id: "<system-guid>"
+```
+
+Review:
+
+- `overall_readiness_percent`: Target 100% before authorization
+- `blocking_issues`: Lists sections still in Draft or not yet authored
+- Per-section status: `Draft` → `UnderReview` → `Approved`
+
+### Review SSP Sections
+
+When ISSOs or Engineers submit sections for review, approve or request revision:
+
+```
+Tool: compliance_review_ssp_section
+Parameters:
+  system_id: "<system-guid>"
+  section_number: 5
+  decision: "approve"
+  reviewer: "jane.smith@agency.gov"
+  comments: "Section accurately describes the system environment and deployment topology."
+```
+
+To request revision:
+
+```
+Tool: compliance_review_ssp_section
+Parameters:
+  system_id: "<system-guid>"
+  section_number: 12
+  decision: "request_revision"
+  reviewer: "jane.smith@agency.gov"
+  comments: "Personnel screening requirements need to reference agency-specific policy."
+```
+
+### SSP Section Review Workflow
+
+```
+1. compliance_ssp_completeness (system_id)              ← Check overall status
+2. Identify sections in "UnderReview" status
+3. compliance_write_ssp_section (read section content)   ← Read current content
+4. compliance_review_ssp_section (approve/revise)        ← Make decision
+5. Repeat until overall_readiness_percent = 100%
+```
+
+---
+
+## Narrative Governance — Approval Workflow
+
+> Feature 024: Version Control + Approval Workflow
+
+ISSMs are responsible for reviewing and approving control implementation narratives before they are included in the SSP.
+
+### Reviewing a Single Narrative
+
+When an ISSO or Engineer submits a narrative for review, approve or request revision:
+
+```
+Tool: compliance_review_narrative
+Parameters:
+  system_id: "<system-guid>"
+  control_id: "AC-1"
+  decision: "approve"
+```
+
+```
+Tool: compliance_review_narrative
+Parameters:
+  system_id: "<system-guid>"
+  control_id: "AC-2"
+  decision: "request_revision"
+  comments: "Section 2 needs more detail on audit log retention periods."
+```
+
+### Batch Review by Family
+
+Approve all UnderReview narratives in a control family at once:
+
+```
+Tool: compliance_batch_review_narratives
+Parameters:
+  system_id: "<system-guid>"
+  family_filter: "AC"
+  decision: "approve"
+```
+
+### Checking Approval Progress
+
+```
+@ato What is the narrative approval progress for Eagle Eye?
+```
+
+Tool: `compliance_narrative_approval_progress` — shows overall %, per-family breakdown, review queue, and staleness warnings.
+
+### Viewing Version History
+
+```
+@ato Show me the version history for AC-1 in Eagle Eye
+```
+
+Tool: `compliance_narrative_history` — review all versions before making a decision.
+
+### ISSM Narrative Governance Workflow
+
+```
+1. compliance_narrative_approval_progress               ← Check review queue
+2. compliance_narrative_history (control_id)             ← Review version history
+3. compliance_narrative_diff (from/to versions)          ← Compare changes
+4. compliance_review_narrative (approve/request_revision) ← Make decision
+5. compliance_batch_review_narratives (family)           ← Batch approve family
+6. Repeat until approval_percentage = 100%
+```
+
+---
+
+## OSCAL Export for Authorization Package
+
+> Feature 022: SSP Authoring & OSCAL Export
+
+### Export OSCAL SSP
+
+Generate the OSCAL 1.1.2 SSP JSON for inclusion in the authorization package:
+
+```
+Tool: compliance_export_oscal_ssp
+Parameters:
+  system_id: "<system-guid>"
+  include_back_matter: true
+  pretty_print: true
+```
+
+### Validate Before Submission
+
+Always validate the OSCAL output before including in the authorization package:
+
+```
+Tool: compliance_validate_oscal_ssp
+Parameters:
+  system_id: "<system-guid>"
+```
+
+Check:
+
+- `is_valid`: Must be `true`
+- `errors`: Must be empty
+- `warnings`: Review and address if possible (e.g., missing back-matter references)
+
+### Pre-Authorization Checklist
+
+Before submitting the authorization package, verify:
+
+```
+1. compliance_ssp_completeness    ← 100% readiness
+2. compliance_validate_oscal_ssp  ← Valid OSCAL output
+3. compliance_check_privacy_compliance ← Privacy gate satisfied
+4. compliance_validate_agreements ← Interconnection gate satisfied
+5. compliance_list_saps           ← SAP finalized
+6. compliance_bundle_authorization_package ← Package everything
+```
+
+---
+
+## HW/SW Inventory Management
+
+> **Feature 025** — Register, manage, import/export, and verify completeness of hardware and software inventory items for eMASS and SSP §11.
+
+### Quick-Start: Auto-Seed from Boundary
+
+If the system already has an authorization boundary defined, auto-seed creates inventory items from boundary resources:
+
+```
+Tool: inventory_auto_seed
+Parameters: { "system_id": "{system-id}" }
+```
+
+The tool maps Azure resource types to hardware functions (VMs → Server, NSGs → NetworkDevice, Storage → Storage) and links each item back to its boundary resource for traceability.
+
+### Registering Inventory Items
+
+```
+Tool: inventory_add_item
+Parameters: {
+  "system_id": "{system-id}",
+  "item_name": "web-server-01",
+  "type": "hardware",
+  "function": "Server",
+  "manufacturer": "Dell",
+  "ip_address": "10.0.0.1"
+}
+```
+
+For software installed on hardware:
+
+```
+Tool: inventory_add_item
+Parameters: {
+  "system_id": "{system-id}",
+  "item_name": "RHEL 9.2",
+  "type": "software",
+  "function": "OperatingSystem",
+  "vendor": "Red Hat",
+  "version": "9.2",
+  "parent_hardware_id": "{hw-item-id}"
+}
+```
+
+### Completeness Check
+
+Before exporting to eMASS, verify inventory completeness:
+
+```
+Tool: inventory_completeness
+Parameters: { "system_id": "{system-id}" }
+```
+
+The tool checks three dimensions:
+1. **Missing required fields** — items lacking manufacturer, IP (for servers), vendor (for software)
+2. **Unmatched boundary resources** — boundary resources with no corresponding inventory entry
+3. **Hardware without software** — servers/workstations with no installed software registered
+
+### Export to eMASS Excel
+
+```
+Tool: inventory_export
+Parameters: { "system_id": "{system-id}" }
+```
+
+Produces an Excel workbook with separate Hardware and Software worksheets matching the eMASS format.
+
+### Import from Excel
+
+```
+Tool: inventory_import
+Parameters: {
+  "system_id": "{system-id}",
+  "file_base64": "{base64-encoded-xlsx}",
+  "dry_run": true
+}
+```
+
+Use `dry_run: true` to preview the import before persisting. Row-level errors are reported with worksheet name, row number, and error detail.
+
+### Decommissioning
+
+```
+Tool: inventory_decommission_item
+Parameters: {
+  "item_id": "{item-id}",
+  "rationale": "End of life — replaced by web-server-02"
+}
+```
+
+Decommissioning a hardware item automatically cascades to all installed software.
+
+### ISSM Inventory Workflow
+
+```
+1. inventory_auto_seed                ← Quick-start from boundary
+2. inventory_add_item (repeat)        ← Add items not in boundary
+3. inventory_completeness             ← Verify coverage
+4. inventory_export                   ← Export for eMASS
+5. compliance_generate_ssp            ← §11 includes HW/SW tables
+```
+
+---
+
+## Implementation Roadmap Workflow
+
+> Feature 031: Implementation Roadmap
+
+The Implementation Roadmap feature generates a phased action plan for closing compliance gaps, with AI-driven clustering, effort estimates, risk projections, and Kanban integration.
+
+### Generate a Roadmap
+
+```
+Tool: compliance_generate_roadmap
+Parameters:
+  system_id: "<system-guid>"
+```
+
+The system must have a selected baseline and at least one unmapped control (gap). The tool generates a multi-phase roadmap with:
+
+- **AI-driven clustering** of controls into phases (falls back to severity-based grouping if AI is unavailable)
+- **Effort estimates** informed by historical Kanban task completion data
+- **Risk reduction projections** using weighted severity scores (CAT I=10, CAT II=5, CAT III=1)
+- **NIST dependency ordering** ensuring prerequisites precede dependent controls
+
+### View the Roadmap
+
+```
+Tool: compliance_get_roadmap
+Parameters:
+  system_id: "<system-guid>"
+  include_items: true
+```
+
+Or view in the dashboard at `/systems/<id>/roadmap` with timeline visualization, risk reduction curve, and expandable phase tables.
+
+### Track Progress
+
+```
+Tool: compliance_get_roadmap_progress
+Parameters:
+  system_id: "<system-guid>"
+```
+
+Shows overall completion %, per-phase progress, overdue detection, and actual vs. projected risk reduction.
+
+### Bridge to Kanban
+
+```
+Tool: compliance_create_board_from_roadmap
+Parameters:
+  system_id: "<system-guid>"
+```
+
+Creates a pre-populated Kanban board with one task per roadmap item. Status changes on Kanban tasks automatically sync back to the roadmap.
+
+### Update and Reassign
+
+```
+Tool: compliance_update_roadmap
+Parameters:
+  system_id: "<system-guid>"
+  move_item: { "item_id": "<id>", "target_phase_id": "<id>" }
+```
+
+Supports moving items between phases, updating effort estimates, reassigning roles, merging phases, and splitting phases. Changes propagate to linked Kanban tasks.
+
+### Export PDF
+
+```
+Tool: compliance_export_roadmap_pdf
+Parameters:
+  system_id: "<system-guid>"
+```
+
+Generates a PDF report with summary metrics, phase timeline, and detailed control tables.
+
+---
+
 ## See Also
 
 - [ISSM Getting Started](../getting-started/issm.md) — First-time setup and first 3 commands
@@ -927,3 +1502,26 @@ Lists all unique Prisma policies observed, with NIST control mappings, open/reso
 - [ISSO Guide](../personas/isso.md) — ISSO workflows for day-to-day operations
 - [Compliance Watch Guide](compliance-watch.md) — Detailed continuous monitoring documentation
 - [Quick Reference Card](../reference/quick-reference-cards.md) — Printable ISSM cheat sheet
+
+---
+
+## Boundary Oversight (Feature 033)
+
+ISSMs can review and manage authorization boundaries for systems under their purview:
+
+- **Boundary Review**: View boundary definitions, resource assignments, and coverage metrics on the Boundary Management page
+- **Gap Analysis**: Use the boundary selector to compare compliance coverage across different security perimeters
+- **SSP §11 Verification**: The SSP Authorization Boundary section auto-generates with per-boundary resource tables and component inventories
+- **Boundary Comparison**: The gap analysis page shows a comparison table when "All Boundaries" is selected, highlighting coverage differences
+
+---
+
+## POA&M Oversight (Feature 039)
+
+ISSMs have full oversight of POA&M items across systems:
+
+- **Dashboard Review**: Navigate to `/systems/{systemId}/poam` for the POA&M management dashboard with summary metrics, severity heatbar, and item table
+- **Trend Analysis**: Use the Trends tab to review open-over-time, closure rates, aging breakdown, and time-to-close distributions
+- **eMASS Export**: Export POA&M data in eMASS Excel format for submission to authorization systems
+- **Ticketing Management**: Configure Jira/ServiceNow integration from the Ticketing tab and monitor sync status
+- **Chat Commands**: Use `compliance_poam_metrics` for quick status checks and `compliance_export_poam` for on-demand exports

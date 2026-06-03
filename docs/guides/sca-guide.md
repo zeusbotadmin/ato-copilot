@@ -27,6 +27,8 @@ As an SCA, you record per-control effectiveness determinations, map findings to 
 | `compliance_compare_snapshots` | ✅ Allowed | Trend analysis |
 | `compliance_generate_sar` | ✅ Allowed | SAR generation |
 | `compliance_generate_rar` | ✅ Allowed | RAR generation |
+| `compliance_import_nessus` | ✅ Allowed | ACAS/Nessus vulnerability scan import |
+| `compliance_list_nessus_imports` | ✅ Allowed | Nessus import history |
 | `compliance_write_narrative` | ❌ Denied | SCA cannot modify SSP |
 | `compliance_remediate` | ❌ Denied | SCA cannot fix findings |
 | `compliance_issue_authorization` | ❌ Denied | Only AO can authorize |
@@ -141,6 +143,9 @@ The report shows:
 - Overall completeness percentage
 - Per-control status: `verified`, `unverified`, or `missing`
 - Controls lacking any evidence
+
+!!! tip "Dashboard Evidence Repository"
+    The **Evidence** page in the Compliance Dashboard provides a complementary visual interface for reviewing evidence. Navigate to a system's Evidence page to browse all uploaded and automated evidence artifacts, verify SHA-256 hashes, filter by control family or category, and review version history — without using MCP commands.
 
 ---
 
@@ -325,9 +330,193 @@ The exported CKL file is compatible with DISA STIG Viewer and eMASS.
 
 ---
 
+## SAP Generation & Finalization
+
+> Feature 018: SAP Generation
+
+SCAs generate and finalize the Security Assessment Plan before beginning control assessments.
+
+### Generating a SAP
+
+```
+Tool: compliance_generate_sap
+Parameters:
+  system_id: "<system-guid>"
+```
+
+The generated SAP includes assessment scope, methodology, schedule, and team composition derived from system metadata and baseline controls.
+
+### Reviewing and Updating
+
+```
+Tool: compliance_get_sap
+Parameters:
+  sap_id: "<sap-guid>"
+```
+
+If changes are needed:
+
+```
+Tool: compliance_update_sap
+Parameters:
+  sap_id: "<sap-guid>"
+  updates: { "methodology": "updated text..." }
+```
+
+### Finalizing the SAP
+
+```
+Tool: compliance_finalize_sap
+Parameters:
+  sap_id: "<sap-guid>"
+```
+
+Finalization locks the SAP — no further edits are allowed. This is required before assessment can begin.
+
+### SCA Assessment Workflow with SAP
+
+```
+1. compliance_generate_sap        ← Create SAP from system metadata
+2. compliance_update_sap           ← Refine scope/methodology
+3. compliance_finalize_sap         ← Lock SAP for assessment
+4. compliance_assess_control       ← Begin control assessments
+5. compliance_generate_sar         ← SAR references finalized SAP
+```
+
+---
+
+## Privacy Compliance Check
+
+> Feature 021: Privacy & Interconnections
+
+SCAs can verify that privacy artifacts (PTA, PIA) are complete and consistent as part of the authorization package review.
+
+### Checking Privacy Compliance
+
+```
+Tool: compliance_check_privacy_compliance
+Parameters:
+  system_id: "<system-guid>"
+```
+
+Returns a checklist of privacy requirements with pass/fail status:
+- PTA completed
+- PIA required and submitted (if PTA indicates PII)
+- PIA reviewed and approved by ISSM
+- Privacy controls addressed in SSP
+
+---
+
+## SSP Completeness Verification
+
+> Feature 022: SSP Authoring & OSCAL Export
+
+SCAs can review SSP completeness before generating the SAR and authorization package.
+
+### Checking SSP Completeness
+
+```
+Tool: compliance_ssp_completeness
+Parameters:
+  system_id: "<system-guid>"
+```
+
+Returns a per-section breakdown of the 13-section NIST 800-18 SSP:
+- Section status: Draft, InReview, Approved, or NotStarted
+- Overall completeness percentage
+- Sections requiring attention before authorization
+- **Staleness warnings** for unapproved narratives (Feature 024)
+
+### Narrative Approval Progress
+
+SCAs can review narrative governance status to verify control narratives are approved before assessment:
+
+```
+Tool: compliance_narrative_approval_progress
+Parameters:
+  system_id: "<system-guid>"
+```
+
+Returns overall approval percentage, per-family breakdown, review queue of controls awaiting ISSM review, and staleness warnings for unapproved narratives.
+
+### OSCAL Validation
+
+After ISSM exports the OSCAL SSP, SCAs can validate the output:
+
+```
+Tool: compliance_validate_oscal_ssp
+Parameters:
+  system_id: "<system-guid>"
+```
+
+Validates the OSCAL SSP document against the NIST OSCAL schema and reports any structural or content issues.
+
+### Pre-Authorization Package Checklist
+
+Before generating the SAR, verify:
+
+```
+1. compliance_ssp_completeness     ← All 13 sections Approved
+2. compliance_check_privacy_compliance ← Privacy artifacts complete
+3. compliance_validate_agreements  ← Interconnections validated (ISSM)
+4. compliance_generate_sar         ← SAR includes all evidence sources
+```
+
+---
+
+## Inventory Verification
+
+> **Feature 025** — Before assessment, verify that the HW/SW inventory is complete and accurate.
+
+### Check Inventory Completeness
+
+```
+Tool: inventory_completeness
+Parameters: { "system_id": "{system-id}" }
+```
+
+Review the completeness report for:
+- Items with missing required fields
+- Boundary resources without corresponding inventory entries
+- Hardware items without any registered software
+
+### Review Inventory List
+
+```
+Tool: inventory_list
+Parameters: {
+  "system_id": "{system-id}",
+  "type": "hardware"
+}
+```
+
+Cross-reference against the authorization boundary to verify all in-scope resources are registered.
+
+### Pre-Assessment Inventory Checklist
+
+```
+1. inventory_completeness             ← Verify is_complete = true
+2. inventory_list (type=hardware)     ← Verify HW entries match boundary
+3. inventory_list (type=software)     ← Verify SW entries with versions
+4. inventory_export                   ← Archive inventory snapshot
+```
+
+---
+
 ## See Also
 
 - [SCA Getting Started](../getting-started/sca.md) — First-time setup and first 3 commands
 - [Persona Overview](../personas/index.md) — All personas, RACI matrix, and role definitions
 - [RMF Phase Reference](../rmf-phases/index.md) — Phase-by-phase workflow details
 - [Quick Reference Card](../reference/quick-reference-cards.md) — Printable SCA cheat sheet
+
+---
+
+## Assessment-Driven POA&M Creation (Feature 039)
+
+After completing security control assessments, SCAs can trigger automatic POA&M generation:
+
+- **Auto-Create from Findings**: After importing scan results, use the post-import prompt or `compliance_bulk_create_poam_from_findings` to auto-generate POA&M items
+- **Deduplication**: Items are not created for findings that already have POA&M entries
+- **Severity Mapping**: CAT severity is mapped from finding severity to POA&M category
+- **Component Linkage**: Auto-generated POA&M items inherit component associations from the originating findings

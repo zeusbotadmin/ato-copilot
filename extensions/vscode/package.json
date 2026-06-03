@@ -51,6 +51,21 @@
         "category": "ATO Copilot"
       },
       {
+        "command": "ato.signIn",
+        "title": "ATO Copilot: Sign In",
+        "category": "ATO Copilot"
+      },
+      {
+        "command": "ato.signOut",
+        "title": "ATO Copilot: Sign Out",
+        "category": "ATO Copilot"
+      },
+      {
+        "command": "ato.switchTenant",
+        "title": "ATO Copilot: Switch Tenant",
+        "category": "ATO Copilot"
+      },
+      {
         "command": "ato.analyzeCurrentFile",
         "title": "ATO Copilot: Analyze Current File for Compliance",
         "category": "ATO Copilot"
@@ -64,8 +79,22 @@
         "command": "ato.followUpSuggestion",
         "title": "ATO Copilot: Follow-Up Suggestion",
         "category": "ATO Copilot"
+      },
+      {
+        "command": "ato.requestFalsePositive",
+        "title": "ATO Copilot: Request False Positive",
+        "category": "ATO Copilot"
       }
     ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "ato.requestFalsePositive",
+          "when": "editorTextFocus",
+          "group": "ATO Copilot"
+        }
+      ]
+    },
     "configuration": {
       "title": "ATO Copilot",
       "properties": {
@@ -88,6 +117,16 @@
           "type": "boolean",
           "default": false,
           "description": "Enable debug logging to output channel"
+        },
+        "ato-copilot.tenantId": {
+          "type": "string",
+          "default": "",
+          "description": "Caller's home tenant id (Guid). Surfaced on the ATO Copilot status bar and forwarded on outbound MCP requests so server-side tools see the correct tenant scope."
+        },
+        "ato-copilot.impersonatedTenantId": {
+          "type": "string",
+          "default": "",
+          "description": "Optional impersonated tenant id (Guid). When set, the status bar shows an Impersonating: <id> badge and outbound MCP requests carry the impersonation scope (CSP-Admin only)."
         }
       }
     }
@@ -115,6 +154,7 @@
     "typescript": "^5.3.3"
   },
   "dependencies": {
+    "@azure/msal-node": "^2.16.3",
     "axios": "^1.6.5"
   }
 }

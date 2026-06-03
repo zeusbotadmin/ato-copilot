@@ -13,12 +13,15 @@ public interface ISspService
     /// <summary>
     /// Write or update the implementation narrative for a control in a system's SSP.
     /// If a narrative already exists for this (systemId, controlId), it is updated.
+    /// Creates an immutable NarrativeVersion record on every write.
     /// </summary>
     /// <param name="systemId">RegisteredSystem ID.</param>
     /// <param name="controlId">NIST 800-53 control ID (e.g., "AC-1").</param>
     /// <param name="narrative">Implementation narrative text.</param>
     /// <param name="status">Implementation status (Implemented, PartiallyImplemented, Planned, NotApplicable).</param>
     /// <param name="authoredBy">Identity of the user.</param>
+    /// <param name="expectedVersion">Optimistic concurrency check (null skips check).</param>
+    /// <param name="changeReason">Reason for the edit (stored on NarrativeVersion).</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The created or updated ControlImplementation.</returns>
     /// <exception cref="InvalidOperationException">System not found or control not in baseline.</exception>
@@ -28,6 +31,8 @@ public interface ISspService
         string narrative,
         string? status = null,
         string authoredBy = "mcp-user",
+        int? expectedVersion = null,
+        string? changeReason = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -89,5 +94,70 @@ public interface ISspService
         string format = "markdown",
         IEnumerable<string>? sections = null,
         IProgress<string>? progress = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Streams SSP document sections incrementally, yielding each section's content
+    /// independently without buffering the entire document. Useful for large SSP generation
+    /// where clients can render sections as they arrive via SSE.
+    /// </summary>
+    /// <param name="systemId">RegisteredSystem ID.</param>
+    /// <param name="sections">Specific sections to include (null for all).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Async enumerable of (sectionNumber, content) tuples.</returns>
+    IAsyncEnumerable<(int SectionNumber, string Content)> StreamSspSectionsAsync(
+        string systemId,
+        IEnumerable<string>? sections = null,
+        CancellationToken cancellationToken = default);
+
+    // ─── SSP Section Management (Feature 022) ───────────────────────────────
+
+    /// <summary>
+    /// Write or update an individual SSP section (NIST 800-18 §1–§13).
+    /// Creates a new section if none exists; updates and resets status on subsequent writes.
+    /// </summary>
+    /// <param name="registeredSystemId">RegisteredSystem ID.</param>
+    /// <param name="sectionNumber">Section number (1–13).</param>
+    /// <param name="content">Markdown content (required for authored sections).</param>
+    /// <param name="authoredBy">Identity of the user.</param>
+    /// <param name="expectedVersion">Optimistic concurrency check (null skips check).</param>
+    /// <param name="submitForReview">If true, transitions Draft→UnderReview after writing.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The created or updated SspSection.</returns>
+    Task<SspSection> WriteSspSectionAsync(
+        string registeredSystemId,
+        int sectionNumber,
+        string? content,
+        string authoredBy,
+        int? expectedVersion = null,
+        bool submitForReview = false,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Review (approve or request revision) an SSP section currently in UnderReview status.
+    /// </summary>
+    /// <param name="registeredSystemId">RegisteredSystem ID.</param>
+    /// <param name="sectionNumber">Section number (1–13).</param>
+    /// <param name="decision">"approve" or "request_revision".</param>
+    /// <param name="reviewer">Identity of the reviewer.</param>
+    /// <param name="comments">Reviewer comments (required for request_revision).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The updated SspSection.</returns>
+    Task<SspSection> ReviewSspSectionAsync(
+        string registeredSystemId,
+        int sectionNumber,
+        string decision,
+        string reviewer,
+        string? comments = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Get SSP section completeness status for a system across all 13 NIST 800-18 sections.
+    /// </summary>
+    /// <param name="registeredSystemId">RegisteredSystem ID.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Completeness report with per-section summaries and blocking issues.</returns>
+    Task<SspCompletenessReport> GetSspCompletenessAsync(
+        string registeredSystemId,
         CancellationToken cancellationToken = default);
 }

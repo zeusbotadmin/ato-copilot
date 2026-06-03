@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using Ato.Copilot.Agents.Compliance.Tools;
+using Ato.Copilot.Agents.Compliance.Tools.Poam;
 
 namespace Ato.Copilot.Mcp.Tools;
 
@@ -128,6 +129,12 @@ public class ComplianceMcpTools
     private readonly AssignRmfRoleTool _assignRmfRoleTool;
     private readonly ListRmfRolesTool _listRmfRolesTool;
 
+    // Boundary Definition tools (Feature 033)
+    private readonly ListBoundaryDefinitionsTool _listBoundaryDefinitionsTool;
+    private readonly CreateBoundaryDefinitionTool _createBoundaryDefinitionTool;
+    private readonly DeleteBoundaryDefinitionTool _deleteBoundaryDefinitionTool;
+    private readonly BoundaryGapAnalysisTool _boundaryGapAnalysisTool;
+
     // RMF Categorization tools (Feature 015 - US2)
     private readonly CategorizeSystemTool _categorizeSystemTool;
     private readonly GetCategorizationTool _getCategorizationTool;
@@ -164,6 +171,14 @@ public class ComplianceMcpTools
     private readonly ShowRiskRegisterTool _showRiskRegisterTool;
     private readonly CreatePoamTool _createPoamTool;
     private readonly ListPoamTool _listPoamTool;
+    private readonly GetPoamTool _getPoamTool;
+    private readonly UpdatePoamTool _updatePoamTool;
+    private readonly ClosePoamTool _closePoamTool;
+    private readonly UpdatePoamMilestoneTool _updatePoamMilestoneTool;
+    private readonly BulkUpdatePoamTool _bulkUpdatePoamTool;
+    private readonly LinkPoamTaskTool _linkPoamTaskTool;
+    private readonly UnlinkPoamTaskTool _unlinkPoamTaskTool;
+    private readonly CreateTaskFromPoamTool _createTaskFromPoamTool;
     private readonly GenerateRarTool _generateRarTool;
     private readonly BundleAuthorizationPackageTool _bundleAuthorizationPackageTool;
 
@@ -288,6 +303,10 @@ public class ComplianceMcpTools
         ExcludeFromBoundaryTool excludeFromBoundaryTool,
         AssignRmfRoleTool assignRmfRoleTool,
         ListRmfRolesTool listRmfRolesTool,
+        ListBoundaryDefinitionsTool listBoundaryDefinitionsTool,
+        CreateBoundaryDefinitionTool createBoundaryDefinitionTool,
+        DeleteBoundaryDefinitionTool deleteBoundaryDefinitionTool,
+        BoundaryGapAnalysisTool boundaryGapAnalysisTool,
         CategorizeSystemTool categorizeSystemTool,
         GetCategorizationTool getCategorizationTool,
         SuggestInfoTypesTool suggestInfoTypesTool,
@@ -313,6 +332,14 @@ public class ComplianceMcpTools
         ShowRiskRegisterTool showRiskRegisterTool,
         CreatePoamTool createPoamTool,
         ListPoamTool listPoamTool,
+        GetPoamTool getPoamTool,
+        UpdatePoamTool updatePoamTool,
+        ClosePoamTool closePoamTool,
+        UpdatePoamMilestoneTool updatePoamMilestoneTool,
+        BulkUpdatePoamTool bulkUpdatePoamTool,
+        LinkPoamTaskTool linkPoamTaskTool,
+        UnlinkPoamTaskTool unlinkPoamTaskTool,
+        CreateTaskFromPoamTool createTaskFromPoamTool,
         GenerateRarTool generateRarTool,
         BundleAuthorizationPackageTool bundleAuthorizationPackageTool,
         // US9: Continuous Monitoring tools
@@ -430,6 +457,10 @@ public class ComplianceMcpTools
         _excludeFromBoundaryTool = excludeFromBoundaryTool;
         _assignRmfRoleTool = assignRmfRoleTool;
         _listRmfRolesTool = listRmfRolesTool;
+        _listBoundaryDefinitionsTool = listBoundaryDefinitionsTool;
+        _createBoundaryDefinitionTool = createBoundaryDefinitionTool;
+        _deleteBoundaryDefinitionTool = deleteBoundaryDefinitionTool;
+        _boundaryGapAnalysisTool = boundaryGapAnalysisTool;
         _categorizeSystemTool = categorizeSystemTool;
         _getCategorizationTool = getCategorizationTool;
         _suggestInfoTypesTool = suggestInfoTypesTool;
@@ -455,6 +486,14 @@ public class ComplianceMcpTools
         _showRiskRegisterTool = showRiskRegisterTool;
         _createPoamTool = createPoamTool;
         _listPoamTool = listPoamTool;
+        _getPoamTool = getPoamTool;
+        _updatePoamTool = updatePoamTool;
+        _closePoamTool = closePoamTool;
+        _updatePoamMilestoneTool = updatePoamMilestoneTool;
+        _bulkUpdatePoamTool = bulkUpdatePoamTool;
+        _linkPoamTaskTool = linkPoamTaskTool;
+        _unlinkPoamTaskTool = unlinkPoamTaskTool;
+        _createTaskFromPoamTool = createTaskFromPoamTool;
         _generateRarTool = generateRarTool;
         _bundleAuthorizationPackageTool = bundleAuthorizationPackageTool;
 
@@ -1641,6 +1680,52 @@ public class ComplianceMcpTools
         return await _listRmfRolesTool.ExecuteAsync(args, cancellationToken);
     }
 
+    // ─── Boundary Definitions (Feature 033) ─────────────────────────────────
+
+    [Description("List all authorization boundary definitions for a system.")]
+    public async Task<string> ListBoundaryDefinitionsAsync(
+        string systemId,
+        CancellationToken cancellationToken = default)
+    {
+        var args = new Dictionary<string, object?> { ["system_id"] = systemId };
+        return await _listBoundaryDefinitionsTool.ExecuteAsync(args, cancellationToken);
+    }
+
+    [Description("Create a new authorization boundary definition for a system (e.g., Dev/Test, DMZ, Production).")]
+    public async Task<string> CreateBoundaryDefinitionAsync(
+        string systemId,
+        string name,
+        string boundaryType,
+        string? description = null,
+        CancellationToken cancellationToken = default)
+    {
+        var args = new Dictionary<string, object?>
+        {
+            ["system_id"] = systemId, ["name"] = name,
+            ["boundary_type"] = boundaryType, ["description"] = description
+        };
+        return await _createBoundaryDefinitionTool.ExecuteAsync(args, cancellationToken);
+    }
+
+    [Description("Delete a boundary definition. Orphaned resources and mappings are reassigned to the Primary boundary.")]
+    public async Task<string> DeleteBoundaryDefinitionAsync(
+        string boundaryId,
+        CancellationToken cancellationToken = default)
+    {
+        var args = new Dictionary<string, object?> { ["boundary_id"] = boundaryId };
+        return await _deleteBoundaryDefinitionTool.ExecuteAsync(args, cancellationToken);
+    }
+
+    [Description("Run gap analysis scoped to a specific authorization boundary, or compare all boundaries side-by-side.")]
+    public async Task<string> BoundaryGapAnalysisAsync(
+        string systemId,
+        string? boundaryId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var args = new Dictionary<string, object?> { ["system_id"] = systemId, ["boundary_id"] = boundaryId };
+        return await _boundaryGapAnalysisTool.ExecuteAsync(args, cancellationToken);
+    }
+
     // ─── RMF Categorization (Feature 015 - US2) ─────────────────────────────
 
     [Description("Perform FIPS 199 / SP 800-60 security categorization for a system. Provide info types with C/I/A impacts.")]
@@ -2028,6 +2113,8 @@ public class ComplianceMcpTools
         string? findingId = null,
         string? resourcesRequired = null,
         string? milestones = null,
+        string? componentIds = null,
+        string? remediationTaskId = null,
         CancellationToken cancellationToken = default)
     {
         var args = new Dictionary<string, object?>
@@ -2040,17 +2127,22 @@ public class ComplianceMcpTools
             ["scheduled_completion"] = scheduledCompletion,
             ["finding_id"] = findingId,
             ["resources_required"] = resourcesRequired,
-            ["milestones"] = milestones
+            ["milestones"] = milestones,
+            ["component_ids"] = componentIds,
+            ["remediation_task_id"] = remediationTaskId
         };
         return await _createPoamTool.ExecuteAsync(args, cancellationToken);
     }
 
-    [Description("List POA&M items for a system with status, severity, and overdue-only filters.")]
+    [Description("List POA&M items for a system with status, severity, overdue-only, component, and source filters.")]
     public async Task<string> ListPoamAsync(
         string systemId,
         string? statusFilter = null,
         string? severityFilter = null,
         string? overdueOnly = null,
+        string? componentId = null,
+        string? source = null,
+        string? includeMetrics = null,
         CancellationToken cancellationToken = default)
     {
         var args = new Dictionary<string, object?>
@@ -2058,9 +2150,150 @@ public class ComplianceMcpTools
             ["system_id"] = systemId,
             ["status_filter"] = statusFilter,
             ["severity_filter"] = severityFilter,
-            ["overdue_only"] = overdueOnly
+            ["overdue_only"] = overdueOnly,
+            ["component_id"] = componentId,
+            ["source"] = source,
+            ["include_metrics"] = includeMetrics
         };
         return await _listPoamTool.ExecuteAsync(args, cancellationToken);
+    }
+
+    [Description("Retrieve a single POA&M item by ID with full detail including milestones, component links, and history.")]
+    public async Task<string> GetPoamAsync(
+        string poamId,
+        string? includeHistory = null,
+        CancellationToken cancellationToken = default)
+    {
+        var args = new Dictionary<string, object?>
+        {
+            ["poam_id"] = poamId,
+            ["include_history"] = includeHistory
+        };
+        return await _getPoamTool.ExecuteAsync(args, cancellationToken);
+    }
+
+    [Description("Update a POA&M item's fields (weakness, control ID, POC, due date, cost estimate) with optimistic concurrency enforcement.")]
+    public async Task<string> UpdatePoamAsync(
+        string poamId,
+        string rowVersion,
+        string? weakness = null,
+        string? controlId = null,
+        string? poc = null,
+        string? scheduledCompletion = null,
+        string? comments = null,
+        CancellationToken cancellationToken = default)
+    {
+        var args = new Dictionary<string, object?>
+        {
+            ["poam_id"] = poamId,
+            ["row_version"] = rowVersion,
+            ["weakness"] = weakness,
+            ["control_id"] = controlId,
+            ["poc"] = poc,
+            ["scheduled_completion"] = scheduledCompletion,
+            ["comments"] = comments
+        };
+        return await _updatePoamTool.ExecuteAsync(args, cancellationToken);
+    }
+
+    [Description("Close a POA&M item by transitioning to Completed status with finding validation and optional cascade to linked remediation task.")]
+    public async Task<string> ClosePoamAsync(
+        string poamId,
+        string rowVersion,
+        string? cascadeToTask = null,
+        string? comments = null,
+        CancellationToken cancellationToken = default)
+    {
+        var args = new Dictionary<string, object?>
+        {
+            ["poam_id"] = poamId,
+            ["row_version"] = rowVersion,
+            ["cascade_to_task"] = cascadeToTask,
+            ["comments"] = comments
+        };
+        return await _closePoamTool.ExecuteAsync(args, cancellationToken);
+    }
+
+    [Description("Update or complete a POA&M milestone with concurrency enforcement.")]
+    public async Task<string> UpdatePoamMilestoneAsync(
+        string poamId,
+        string milestoneId,
+        string rowVersion,
+        string? markComplete = null,
+        string? description = null,
+        string? targetDate = null,
+        CancellationToken cancellationToken = default)
+    {
+        var args = new Dictionary<string, object?>
+        {
+            ["poam_id"] = poamId,
+            ["milestone_id"] = milestoneId,
+            ["row_version"] = rowVersion,
+            ["mark_complete"] = markComplete,
+            ["description"] = description,
+            ["target_date"] = targetDate
+        };
+        return await _updatePoamMilestoneTool.ExecuteAsync(args, cancellationToken);
+    }
+
+    [Description("Bulk update POA&M item statuses with lifecycle enforcement and per-item results.")]
+    public async Task<string> BulkUpdatePoamAsync(
+        string poamIds,
+        string status,
+        string? delayReason = null,
+        string? revisedDate = null,
+        string? comments = null,
+        CancellationToken cancellationToken = default)
+    {
+        var args = new Dictionary<string, object?>
+        {
+            ["poam_ids"] = poamIds,
+            ["status"] = status,
+            ["delay_reason"] = delayReason,
+            ["revised_date"] = revisedDate,
+            ["comments"] = comments
+        };
+        return await _bulkUpdatePoamTool.ExecuteAsync(args, cancellationToken);
+    }
+
+    [Description("Link an existing remediation task to a POA&M item with bidirectional FK setting.")]
+    public async Task<string> LinkPoamTaskAsync(
+        string poamId,
+        string taskId,
+        CancellationToken cancellationToken = default)
+    {
+        var args = new Dictionary<string, object?>
+        {
+            ["poam_id"] = poamId,
+            ["task_id"] = taskId
+        };
+        return await _linkPoamTaskTool.ExecuteAsync(args, cancellationToken);
+    }
+
+    [Description("Unlink a POA&M item from its linked remediation task, clearing both FKs.")]
+    public async Task<string> UnlinkPoamTaskAsync(
+        string poamId,
+        CancellationToken cancellationToken = default)
+    {
+        var args = new Dictionary<string, object?>
+        {
+            ["poam_id"] = poamId
+        };
+        return await _unlinkPoamTaskTool.ExecuteAsync(args, cancellationToken);
+    }
+
+    [Description("Create a remediation task from a POA&M item with field mapping and bidirectional linking.")]
+    public async Task<string> CreateTaskFromPoamAsync(
+        string poamId,
+        string boardId,
+        CancellationToken cancellationToken = default)
+    {
+        var args = new Dictionary<string, object?>
+        {
+            ["poam_id"] = poamId,
+            ["board_id"] = boardId
+        };
+        return await _createTaskFromPoamTool.ExecuteAsync(args, cancellationToken);
     }
 
     [Description("Generate a Risk Assessment Report (RAR) with per-family risk analysis and CAT severity breakdown.")]

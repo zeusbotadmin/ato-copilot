@@ -19,6 +19,7 @@ public class AlertNotificationService : IAlertNotificationService
 {
     private readonly IDbContextFactory<AtoCopilotContext> _dbFactory;
     private readonly IComplianceWatchService _watchService;
+    private readonly INotificationBroadcaster? _broadcaster;
     private readonly ILogger<AlertNotificationService> _logger;
 
     // Rate limiter: max 10 notifications per minute per channel
@@ -27,11 +28,13 @@ public class AlertNotificationService : IAlertNotificationService
     public AlertNotificationService(
         IDbContextFactory<AtoCopilotContext> dbFactory,
         IComplianceWatchService watchService,
-        ILogger<AlertNotificationService> logger)
+        ILogger<AlertNotificationService> logger,
+        INotificationBroadcaster? broadcaster = null)
     {
         _dbFactory = dbFactory;
         _watchService = watchService;
         _logger = logger;
+        _broadcaster = broadcaster;
 
         _rateLimiters = new Dictionary<NotificationChannel, SlidingWindowRateLimiter>
         {
@@ -90,7 +93,24 @@ public class AlertNotificationService : IAlertNotificationService
                 && a.Status == AlertStatus.New)
             .ToListAsync(cancellationToken);
 
-        if (alerts.Count == 0) return;
+        // Deviation digest section (Feature 035)
+        int pendingDeviations;
+        int expiringDeviations;
+        try
+        {
+            pendingDeviations = await db.Deviations
+                .CountAsync(d => d.Status == DeviationStatus.Pending, cancellationToken);
+            expiringDeviations = await db.Deviations
+                .CountAsync(d => d.Status == DeviationStatus.Approved
+                    && d.ExpirationDate <= DateTime.UtcNow.AddDays(30), cancellationToken);
+        }
+        catch (Microsoft.Data.SqlClient.SqlException)
+        {
+            pendingDeviations = 0;
+            expiringDeviations = 0;
+        }
+
+        if (alerts.Count == 0 && pendingDeviations == 0 && expiringDeviations == 0) return;
 
         var subject = $"[Compliance Digest] {alerts.Count} alert(s) for {subscriptionId}";
         var body = JsonSerializer.Serialize(new
@@ -99,13 +119,18 @@ public class AlertNotificationService : IAlertNotificationService
             subscriptionId,
             alertCount = alerts.Count,
             alerts = alerts.Select(a => new { a.AlertId, a.Title, severity = a.Severity.ToString(), a.CreatedAt }),
+            deviations = new
+            {
+                pendingReviews = pendingDeviations,
+                expiringWithin30Days = expiringDeviations,
+            },
             generatedAt = DateTimeOffset.UtcNow
         });
 
         var notification = new AlertNotification
         {
             Id = Guid.NewGuid(),
-            AlertId = alerts.First().Id,
+            AlertId = alerts.Count > 0 ? alerts.First().Id : Guid.Empty,
             Channel = NotificationChannel.Email,
             Recipient = "digest",
             Subject = subject,
@@ -118,7 +143,8 @@ public class AlertNotificationService : IAlertNotificationService
         db.AlertNotifications.Add(notification);
         await db.SaveChangesAsync(cancellationToken);
 
-        _logger.LogInformation("Sent digest with {Count} alerts for {Sub}", alerts.Count, subscriptionId);
+        _logger.LogInformation("Sent digest with {AlertCount} alerts, {PendingDeviations} pending deviations for {Sub}",
+            alerts.Count, pendingDeviations, subscriptionId);
     }
 
     /// <inheritdoc />
@@ -165,6 +191,10 @@ public class AlertNotificationService : IAlertNotificationService
             recommendedAction = alert.RecommendedAction,
             createdAt = alert.CreatedAt
         });
+
+        // TODO: Implement actual SMTP/Teams/Slack delivery when channels are configured.
+        // Currently records notification for audit trail but does not deliver externally.
+        _logger.LogDebug("Notification recorded for channel {Channel} (delivery pending external integration)", channel);
 
         await RecordNotification(alert, channel, recipient,
             isDelivered: true, error: null, cancellationToken, subject, body);
@@ -215,7 +245,8 @@ public class AlertNotificationService : IAlertNotificationService
         string? error,
         CancellationToken cancellationToken,
         string? subject = null,
-        string? body = null)
+        string? body = null,
+        string? userId = null)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
 
@@ -230,11 +261,25 @@ public class AlertNotificationService : IAlertNotificationService
             IsDelivered = isDelivered,
             DeliveryError = error,
             SentAt = DateTimeOffset.UtcNow,
-            DeliveredAt = isDelivered ? DateTimeOffset.UtcNow : null
+            DeliveredAt = isDelivered ? DateTimeOffset.UtcNow : null,
+            UserId = userId ?? recipient,
         };
 
         db.AlertNotifications.Add(notification);
         await db.SaveChangesAsync(cancellationToken);
+
+        // Push real-time notification to connected clients
+        if (_broadcaster != null && notification.UserId != null)
+        {
+            try
+            {
+                await _broadcaster.BroadcastToUserAsync(notification.UserId, notification, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Failed to broadcast notification {Id} — client may not be connected", notification.Id);
+            }
+        }
     }
 
     /// <summary>

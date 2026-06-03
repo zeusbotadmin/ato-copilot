@@ -38,6 +38,27 @@ ATO Copilot supports Common Access Card (CAC) and Personal Identity Verification
 | `cac_set_timeout` | Configure session timeout duration |
 | `cac_map_certificate` | Map certificate to compliance role |
 
+### CAC Simulation Mode
+
+For local development without a physical smart card, `CacAuthenticationMiddleware` supports a simulation mode that synthesizes a `ClaimsPrincipal` from configuration.
+
+**How it works:**
+
+1. `CacAuth:SimulationMode` set to `true` in `appsettings.Development.json`
+2. `CacAuth:SimulatedIdentity` provides UPN, display name, optional thumbprint, and roles
+3. Middleware creates a `ClaimsPrincipal` with claims matching real CAC auth (`NameIdentifier`, `Name`, `preferred_username`, `amr`, `Role`, `x5t`)
+4. `ClientType.Simulated` is set on the request — distinguishable from real sessions
+5. Startup validation ensures identity config is complete before the app starts
+
+**Safety guards:**
+
+- Simulation **only activates** when `ASPNETCORE_ENVIRONMENT=Development`
+- In Production/Staging the flag is silently ignored and a security warning is logged
+- `appsettings.json` (production config) must never contain simulation keys
+- `ClientType.Simulated` sessions are excluded from compliance evidence (FR-014)
+
+See [Getting Started — Engineer](../getting-started/engineer.md#cac-simulation-mode-local-development) for configuration details.
+
 ### Azure Entra ID (Fallback)
 
 When CAC is not available, standard Azure Entra ID authentication is supported via JWT bearer tokens with Microsoft Identity Web.
@@ -279,3 +300,31 @@ Immutable database record for compliance audit trails:
 - Time-limited access (default 3h, max 24h)
 - Revocable via `jit_revoke_access`
 - Sessions tracked in `JitRequests` DbSet
+
+---
+
+## Enterprise Hardening (Feature 029)
+
+### Path Sanitization
+
+All file path parameters in tool actions are validated by `PathSanitizationService`:
+
+- **Canonicalization**: Uses `Path.GetFullPath()` to resolve `.` and `..` segments
+- **Boundary check**: Ensures the canonical path starts with the allowed base directory
+- **Blocked patterns**: Rejects null bytes, shell metacharacters, and URIs in paths
+- Applies to parameters: `filePath`, `path`, `file`, `outputPath`, `inputPath`
+
+### Rate Limiting
+
+Per-endpoint sliding window rate limiting via ASP.NET Core `SlidingWindowRateLimiter`:
+
+- **Default**: 30 requests per 60 seconds, 2 segments per window
+- **Per-client partitioning**: Rate limits partitioned by authenticated user OID
+- **Response**: 429 with `Retry-After` header and structured error JSON
+- Configurable via `RateLimiting:Policies` in appsettings
+
+### Input Validation
+
+- **Request size limit**: `RequestSizeLimitMiddleware` enforces a configurable maximum (default 32KB)
+- **Body validation**: All chat and tool payloads validated before processing
+- **Script sanitization**: `ScriptSanitizationService` validates remediation scripts before execution

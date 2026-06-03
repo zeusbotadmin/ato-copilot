@@ -2,12 +2,19 @@
 bin/
 obj/
 publish/
+*.lscache
 
 # IDE
 .vs/
-.vscode/
 *.user
 *.suo
+
+# VS Code: track shared workspace settings, ignore user-local overrides
+.vscode/*
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/extensions.json
 
 # Environment
 .env
@@ -33,6 +40,12 @@ appsettings.*.local.json
 
 # Docker
 docker-compose.override.yml
+
+# Export data (generated SSP files and templates)
+# NOTE: Leading `/` anchors this to the repo root only. Without it, the rule
+# also matches every `/Data/` subdirectory on case-insensitive filesystems
+# (macOS APFS, Windows NTFS) and silently drops new files there from `git add`.
+/data/
 
 # NuGet
 *.nupkg

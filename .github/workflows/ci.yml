@@ -1,50 +1,91 @@
-name: "🔧 CI"
+name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  lint-and-validate:
-    name: "✅ Lint & Validate"
+  dotnet-build-test:
+    name: Build + Unit Tests
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Detect and Lint
-        run: |
-          # Terraform
-          if ls *.tf 1>/dev/null 2>&1 || find . -name "*.tf" -maxdepth 3 | grep -q .; then
-            echo "::group::Terraform Format Check"
-            terraform fmt -check -recursive -diff || true
-            echo "::endgroup::"
-          fi
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
 
-          # Python
-          if ls *.py 1>/dev/null 2>&1 || find . -name "*.py" -maxdepth 3 | grep -q .; then
-            echo "::group::Python Lint"
-            pip install ruff 2>/dev/null
-            ruff check . || true
-            echo "::endgroup::"
-          fi
+      - name: Restore
+        run: dotnet restore Ato.Copilot.sln
 
-          # Shell scripts
-          if ls *.sh 1>/dev/null 2>&1 || find . -name "*.sh" -maxdepth 3 | grep -q .; then
-            echo "::group::Shell Lint"
-            sudo apt-get install -y shellcheck 2>/dev/null
-            find . -name "*.sh" -maxdepth 3 -exec shellcheck {} + || true
-            echo "::endgroup::"
-          fi
+      - name: Build
+        run: dotnet build Ato.Copilot.sln -c Release --no-restore -nologo
 
-          # Markdown
-          if ls *.md 1>/dev/null 2>&1; then
-            echo "Markdown files found — consider adding markdownlint"
-          fi
+      - name: Run unit tests
+        run: dotnet test tests/Ato.Copilot.Tests.Unit/Ato.Copilot.Tests.Unit.csproj -c Release --no-build -nologo --logger trx
 
-          echo "✅ Linting complete"
+      - name: Upload unit test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: |
+            tests/**/TestResults/*.trx
+          if-no-files-found: ignore
+
+  vscode-extension-compile:
+    name: VS Code Extension Compile
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: extensions/vscode
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: extensions/vscode/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile extension
+        run: npm run compile
+
+  ato-compliance-gate:
+    name: ATO Compliance Gate
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run ATO compliance gate
+        uses: ./.github/actions/ato-compliance-gate
+        with:
+          scan-paths: src,scripts,docs
+          severity-threshold: '2'
+          # Set this repository variable if you host MCP externally.
+          # Defaults to localhost and still produces annotations if unreachable.
+          mcp-server-url: ${{ vars.ATO_MCP_SERVER_URL || 'http://localhost:5000' }}
+          fail-on-error: 'true'

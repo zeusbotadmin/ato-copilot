@@ -1,4 +1,7 @@
 using System.ComponentModel.DataAnnotations;
+using Ato.Copilot.Core.Models.Kanban;
+using Ato.Copilot.Core.Models.Poam;
+using Ato.Copilot.Core.Models.Tenancy.Attributes;
 
 namespace Ato.Copilot.Core.Models.Compliance;
 
@@ -12,8 +15,15 @@ namespace Ato.Copilot.Core.Models.Compliance;
 /// Decision types: ATO, ATOwC, IATT, DATO per DoDI 8510.01.
 /// RBAC: Compliance.AuthorizingOfficial only.
 /// </summary>
+[TenantScoped]
 public class AuthorizationDecision
 {
+    /// <summary>
+    /// FK to <see cref="Ato.Copilot.Core.Models.Tenancy.Tenant"/> — populated by
+    /// <c>TenantStampingSaveChangesInterceptor</c> (Feature 048 FR-021).
+    /// </summary>
+    public Guid TenantId { get; set; }
+
     /// <summary>Unique identifier (GUID string).</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString();
 
@@ -79,8 +89,15 @@ public class AuthorizationDecision
 /// Risk acceptances have expiration dates and can be revoked.
 /// RBAC: Compliance.AuthorizingOfficial only.
 /// </summary>
+[TenantScoped]
 public class RiskAcceptance
 {
+    /// <summary>
+    /// FK to <see cref="Ato.Copilot.Core.Models.Tenancy.Tenant"/> — populated by
+    /// <c>TenantStampingSaveChangesInterceptor</c> (Feature 048 FR-021).
+    /// </summary>
+    public Guid TenantId { get; set; }
+
     /// <summary>Unique identifier (GUID string).</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString();
 
@@ -145,8 +162,15 @@ public class RiskAcceptance
 /// A Plan of Action and Milestones (POA&amp;M) item tracking a weakness
 /// and remediation plan, linked to a ComplianceFinding and optionally to a Kanban RemediationTask.
 /// </summary>
-public class PoamItem
+[TenantScoped]
+public class PoamItem : ConcurrentEntity
 {
+    /// <summary>
+    /// FK to <see cref="Ato.Copilot.Core.Models.Tenancy.Tenant"/> — populated by
+    /// <c>TenantStampingSaveChangesInterceptor</c> (Feature 048 FR-021).
+    /// </summary>
+    public Guid TenantId { get; set; }
+
     /// <summary>Unique identifier (GUID string).</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString();
 
@@ -223,13 +247,45 @@ public class PoamItem
 
     /// <summary>Milestones for this POA&amp;M item.</summary>
     public List<PoamMilestone> Milestones { get; set; } = new();
+
+    // ─── New Properties (Feature 035 — Deviation Management) ──────────────
+
+    /// <summary>FK → Deviation (optional link to active deviation record).</summary>
+    public string? DeviationId { get; set; }
+
+    // ─── New Properties (Feature 039 — POA&M Management) ──────────────────
+
+    /// <summary>Actor who created this POA&amp;M item.</summary>
+    [MaxLength(200)]
+    public string? CreatedBy { get; set; }
+
+    /// <summary>Actor who last modified this POA&amp;M item.</summary>
+    [MaxLength(200)]
+    public string? ModifiedBy { get; set; }
+
+    /// <summary>External ticket reference (e.g., JIRA-123).</summary>
+    [MaxLength(200)]
+    public string? ExternalTicketRef { get; set; }
+
+    /// <summary>Linked system components (many-to-many via junction).</summary>
+    public List<PoamComponentLink> ComponentLinks { get; set; } = new();
+
+    /// <summary>Audit trail history entries.</summary>
+    public List<PoamHistoryEntry> History { get; set; } = new();
 }
 
 /// <summary>
 /// A milestone within a POA&amp;M item tracking incremental progress toward remediation.
 /// </summary>
+[TenantScoped]
 public class PoamMilestone
 {
+    /// <summary>
+    /// FK to <see cref="Ato.Copilot.Core.Models.Tenancy.Tenant"/> — populated by
+    /// <c>TenantStampingSaveChangesInterceptor</c> (Feature 048 FR-021).
+    /// </summary>
+    public Guid TenantId { get; set; }
+
     /// <summary>Unique identifier (GUID string).</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString();
 

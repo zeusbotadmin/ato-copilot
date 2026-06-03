@@ -102,6 +102,63 @@
 
 ---
 
+## ISA/MOU Expiration Monitoring
+
+Interconnection agreements have expiration dates that must be tracked as part of continuous monitoring.
+
+### Monitoring Agreement Status
+
+```
+Tool: compliance_validate_agreements
+Parameters:
+  system_id: "<system-guid>"
+```
+
+Returns the status of all ISA/MOU agreements including:
+- Active agreements with expiration dates
+- Agreements expiring within 90 days (flagged)
+- Expired agreements requiring renewal
+
+### Agreement Expiration Cadence
+
+| Time Remaining | Action |
+|----------------|--------|
+| ≤ 90 days | Begin renewal planning with remote system POC |
+| ≤ 30 days | Escalate to ISSM for agreement renewal |
+| Expired | ISSM must renew or terminate the interconnection |
+
+---
+
+## PIA Annual Review
+
+Privacy Impact Assessments require annual review to confirm continued accuracy.
+
+### Tracking PIA Review Cycles
+
+```
+Tool: compliance_check_privacy_compliance
+Parameters:
+  system_id: "<system-guid>"
+```
+
+Flags PIAs approaching their annual review date. The ISSM uses `compliance_review_pia` to re-approve or request updates.
+
+---
+
+## SSP Section Status Monitoring
+
+Track SSP section status as part of ongoing system maintenance.
+
+```
+Tool: compliance_ssp_completeness
+Parameters:
+  system_id: "<system-guid>"
+```
+
+Monitor for sections that revert from Approved to Draft after significant changes. Any section status regression should trigger ISSM review.
+
+---
+
 ## Prisma Cloud Periodic Re-Import
 
 Prisma Cloud scan data should be re-imported periodically as a ConMon data source to track cloud posture drift.
@@ -211,3 +268,16 @@ This is a continuous phase — there is no outbound transition gate. Reauthoriza
 - [ISSO Guide](../personas/isso.md) — Day-to-day monitoring workflows
 - [Compliance Watch Guide](../guides/compliance-watch.md) — Detailed Watch documentation
 - [AO Guide](../guides/ao-quick-reference.md) — Reauthorization and risk decisions
+- [POA&M Management Guide](../guides/poam-management.md) — POA&M trend tracking and lifecycle
+
+### POA&M Trend Monitoring (Feature 039)
+
+During continuous monitoring, use the POA&M Trends tab or `compliance_poam_trend` to track open-over-time trends, closure rates, aging breakdown, and time-to-close distributions. Export trend reports as PDF for ConMon reporting.
+
+### Package Re-generation for Continuous Authorization (Feature 041)
+
+When significant changes occur during monitoring, re-generate the authorization package:
+
+- `compliance_generate_package` — create an updated package reflecting current system state
+- View **package history** on the Documents page to compare current vs. previous packages
+- Expired packages (>90 days) retain metadata but ZIP files are automatically cleaned up

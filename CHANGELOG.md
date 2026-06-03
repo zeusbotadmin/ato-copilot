@@ -4,6 +4,175 @@ All notable changes to ATO Copilot are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.29.0] - 2026-03-29
+
+### Added
+
+#### Feature 045: Unified Security Capabilities Hub
+
+- **3-Layer Import Model** — Unified CSP profile and CRM import pipeline that creates Components (provider grouping) → Capabilities (security solutions) → Control Mappings (NIST control links) through a single service (`CapabilityImportService`).
+- **CSP Profile Import** — Import pre-built Cloud Service Provider profiles (e.g., Azure Government — FedRAMP High) via the Capabilities Hub. Profiles create `SystemComponent` (Thing) entries per service, `SecurityCapability` entries, and `CapabilityControlMapping` records. Preview mode (`dryRun=true`) shows change summary before committing.
+- **CRM Spreadsheet Import** — Upload CSV or Excel CRM files with automatic column detection and configurable field mapping. Auto-suggest maps source columns to Control ID, Inheritance Type, Provider, and Customer Responsibility. 4-step dialog: upload → column mapping → preview → apply.
+- **Coverage Dashboard** — Per-provider coverage cards showing controlled/total controls, unique capabilities, and components. KPI bar with overall coverage percentage, total capabilities, and gap control count. Expandable gap controls table with family grouping.
+- **Component Linking** — Multi-select `ComponentPickerModal` for linking/unlinking capabilities to components. Search and type filter with pre-selected indicators. "Link Components" button on capability cards with component badges.
+- **Guided Empty State** — Three color-coded action cards (Create Manually, Import CSP Profile, Import CRM) for first-time users on the Capabilities page.
+- **Inheritance Page Simplification** — Removed CSP Profile and CRM Import buttons from Control Inheritance toolbar. Added cross-link banner ("Designations derived from Security Capabilities. [Manage Capabilities →]") and source capability hover tooltips showing capability names and component links.
+- **Component-to-Capability Shortcut** — "+ Capability" button on Thing-type components without capabilities. Navigates to Capabilities page with prefilled name and provider via query params.
+- **REST API Endpoints**:
+  - `GET /api/dashboard/capabilities/coverage` — Compute coverage dashboard (provider cards, KPI, gaps)
+  - `GET /api/dashboard/capabilities/csp-profiles` — List CSP profiles with service counts
+  - `POST /api/dashboard/capabilities/import/csp-profile` — Import CSP profile (preview or apply)
+  - `POST /api/dashboard/capabilities/import/crm` — Import CRM spreadsheet (preview or apply)
+  - `POST /api/dashboard/components/{componentId}/capabilities` — Bulk link capabilities
+  - `DELETE /api/dashboard/components/{componentId}/capabilities/{capabilityId}` — Unlink capability
+- **39 Tests** — 15 unit tests (CapabilityImportService), 5 unit tests (CoverageComputation), 6 unit tests (CspProfileServiceExt), 13 integration tests (CSP import, CRM import, component linking, performance benchmarks).
+
+### Changed
+
+- **ControlInheritance.tsx** — Removed 6 state variables, 5 handler functions, 2 dialog imports; replaced with cross-link banner and source capability tooltips.
+- **CapabilityLibrary.tsx** — Added CRM import dialog, component picker modal, guided empty state, and search params handling for createFrom prefill.
+- **CapabilityCard.tsx** — Added component badges and "Link Components" button.
+- **ComponentSection.tsx** — Added capability count badge and "+ Capability" button for Thing-type components.
+- **ComponentInventory.tsx** — Added `handleCreateCapability` navigation with query params.
+
+### Documentation
+
+- **Security Capabilities Hub Guide** — New comprehensive guide covering 3-layer model, CSP import, CRM import, coverage dashboard, component linking, control inheritance integration, and all API endpoints.
+- **Control Inheritance Guide** — Removed CSP/CRM import sections, added cross-link banner docs, updated source badges and designation sources.
+- **Architecture Overview** — Added Security Capabilities Hub section with architecture diagram and 3-layer model.
+- **Data Model** — Added CspProfile/CspService JSON schemas and import pipeline data flow diagram.
+- **MCP Server API** — Added Feature 045 endpoint table, removed deprecated inheritance import endpoints.
+- **Agent Tool Catalog** — Added Capabilities Hub REST endpoints with request/response examples.
+- **Tool Inventory** — Added 4 new endpoint rows (16d–16g).
+- **Glossary** — Added 3-Layer Model, Capabilities Hub, Coverage %, Gap Controls terms.
+- **ISSM Guide** — Updated Step 7 to reference Capabilities Hub for CSP/CRM import.
+- **AO Quick Reference** — Added Capabilities Coverage KPI section for portfolio risk assessment.
+
+---
+
+## [1.28.0] - 2026-03-22
+
+### Added
+
+#### Feature 044: Org-Level Control Inheritance
+
+- **Org Inheritance Defaults** — Derive org-wide inheritance designations from the Security Capabilities Library. Scans org-wide capability-control mappings to produce `OrgInheritanceDefault` records with correct inheritance type, provider, and source capability references.
+- **Cascade Propagation** — Derived org defaults automatically cascade to every registered system baseline, creating `OrgDerived` designations for unmapped controls. Includes `OrgPropagation` audit entries per affected system.
+- **Automatic Re-derivation Hooks** — Org defaults are re-derived and cascaded when capability-control mappings are created/deleted, capability status changes, or capabilities are removed.
+- **Revert to Org Defaults** — Per-system bulk revert action restores overridden controls to their org-level default designation.
+- **Designation Source Tracking** — Every `ControlInheritance` record tracks how it was set: OrgDerived, OrgPropagation, Manual, BulkUpdate, ProfileApply, or CrmImport.
+- **CRM Designation Source Column** — "Designation Source" column added to all three CRM export layouts (Custom, FedRAMP, eMASS).
+- **Dashboard UI Enhancements**:
+  - Org Defaults and Overrides summary cards in the summary bar
+  - Source filter dropdown (All Sources, Org Defaults, System Overrides, Undesignated)
+  - Source badges on table rows (teal=Org Default, purple=CSP Profile, sky=CRM Import)
+  - Org default tooltip on designated rows (teal checkmark for org-derived, amber warning for overrides)
+  - Org-default coverage banner showing N of M controls with org-level defaults
+  - View Org Defaults modal with search and pagination
+  - "More Actions" dropdown reorganization when org defaults are active
+- **REST API Endpoints**:
+  - `GET /api/dashboard/inheritance/org-defaults` — List org-level defaults (paginated, filterable)
+  - `POST /api/dashboard/inheritance/org-defaults/derive` — Derive and cascade org defaults
+  - `POST /api/dashboard/systems/{systemId}/inheritance/revert-to-org-defaults` — Revert controls to org defaults
+  - Enhanced `GET /systems/{systemId}/inheritance` with `source` filter parameter and `designationSource`/`orgDefault` fields
+  - Enhanced audit trail endpoint with `changeSourceLabel` human-readable labels
+- **Entity Model** — `OrgInheritanceDefault` entity, extended `ControlInheritance` with `DesignationSource` and `OrgInheritanceDefaultId` FK, `OrgDerived`/`OrgPropagation` enum values.
+- **44 Tests** — 17 unit tests (OrgInheritanceService), 19 CRM export tests (including designation source), 10 integration tests (endpoints, audit, performance).
+
+### Documentation
+
+- **Control Inheritance Guide** — Full org-level inheritance defaults section with derive, view, filter, badge, coverage banner, and revert documentation.
+- **Architecture Overview** — Org-Level Control Inheritance section with cascade diagram, key components, and hook descriptions.
+- **Data Model** — `OrgInheritanceDefault` entity and extended `ControlInheritance` fields.
+- **MCP Server API** — Feature 044 endpoint table with request/response examples.
+- **Agent Tool Catalog** — Org-Level Inheritance Defaults section with endpoint reference.
+- **RMF Step Map** — Derive Org Defaults and Revert to Org Defaults in Phase 3 Select.
+- **Tool Inventory** — Three new dashboard REST endpoints listed.
+- **Glossary** — Feature 044 terms: Org Default, Org Propagation, Designation Source, Cascade Propagation, System Override.
+- **ISSM Guide** — Option A (Org Defaults) added to Step 7 as recommended approach.
+- **Select Phase** — Org-Level Inheritance Defaults subsection added.
+
+---
+
+## [1.25.0] - 2026-03-15
+
+### Added
+
+#### Feature 031: Implementation Roadmap
+
+- **Roadmap Generation** (`compliance_generate_roadmap`) — AI-driven clustering of compliance gap analysis data into sequenced, multi-phase implementation roadmaps with effort estimates, risk projections, and dependency ordering. CAT I/critical gaps weighted toward earliest phases. Deterministic fallback clustering (severity-first grouping) when AI is unavailable. Historical Kanban task completion data refines effort estimates when available.
+- **Roadmap Retrieval** (`compliance_get_roadmap`) — Read-only access to the active roadmap for any system with eager-loaded phases and items. Supports `include_items` toggle for summary-only views.
+- **Progress Tracking** (`compliance_get_roadmap_progress`) — Per-phase and overall completion metrics with actual-vs-projected risk reduction comparison, overdue phase detection, and untracked gap alerts.
+- **Roadmap Updates** (`compliance_update_roadmap`) — Move items between phases, reassign roles, update effort estimates, merge phases, and split phases. Changes propagate to linked Kanban tasks. Version counter incremented on each edit.
+- **Kanban Bridge** (`compliance_create_board_from_roadmap`) — One-click conversion of a roadmap into a pre-populated remediation Kanban board. Bi-directional status sync: completing a Kanban task updates the roadmap item, phase progress, and risk reduction metrics.
+- **PDF Export** (`compliance_export_roadmap_pdf`) — QuestPDF-based export with header metrics, phase detail tables, and paginated footer for AO briefings and authorization package supplements.
+- **Dashboard Roadmap Page** — React SPA page at `/systems/:id/roadmap` with summary metric cards (total gaps, effort, risk reduction), phase timeline visualization, dual-line risk reduction curve (projected vs actual), and expandable phase detail tables.
+- **M365 Teams Adaptive Cards** — Roadmap summary card with phase rows, effort totals, risk projections, and "Create Kanban Board"/"Export PDF" action buttons. Phase detail card with per-item table.
+- **Entity Model** — `ImplementationRoadmap`, `RoadmapPhase`, `RoadmapItem` entities with `ConcurrentEntity` base, indexed FKs, and enums (`RoadmapStatus`, `PhaseStatus`, `ItemStatus`, `GapType`, `ItemSeverity`).
+- **Risk Calculation** — Weighted severity scoring (CAT I=10, CAT II=5, CAT III=1) with cumulative risk reduction percentages per phase.
+- **RBAC** — ISSM (Compliance.SecurityLead) required for generate/edit/delete; ISSO, Engineer, AO have read-only access via PIM tier enforcement.
+- **28 Tests** — 23 unit tests (risk calculation, service methods, tool PIM tiers/parameters/execution) + 5 integration tests (endpoint 200/404 responses).
+
+### Changed
+
+- **Service Architecture** — Moved all 6 services (`CapabilityService`, `ComplianceTrendSnapshotService`, `ComponentService`, `DashboardService`, `NarrativeTemplateService`, `RoadmapService`) and 10 DTO files from `Ato.Copilot.Mcp` to `Ato.Copilot.Core` for proper cross-cutting architecture.
+- **QuestPDF** — Consolidated to `Ato.Copilot.Core.csproj` at version 2025.7.0 (removed from Mcp and Agents projects).
+- **KanbanService** — Added `SyncLinkedRoadmapItemAsync` hook for bi-directional roadmap-Kanban status synchronization.
+
+### Documentation
+
+- **MCP Server API** — 6 roadmap tool entries with parameter tables and JSON response examples.
+- **Dashboard REST API** — 3 roadmap endpoints (`/roadmap`, `/roadmap/progress`, `/roadmap/export`).
+- **Agent Tool Catalog** — Implementation Roadmap Tools section with full tool reference.
+- **Data Model** — `ImplementationRoadmap`, `RoadmapPhase`, `RoadmapItem` entity documentation and ER diagram update.
+- **Architecture Overview** — Implementation Roadmap section with service architecture and dashboard integration.
+- **ISSM Guide** — Implementation Roadmap Workflow section with tool examples.
+
+---
+
+## [1.24.0] - 2026-03-14
+
+### Added
+
+#### Feature 028: Azure AI Foundry Agent Integration
+
+- **AI Provider Selection** — Unified `AzureAi:Provider` config switch (`OpenAi`, `Foundry`) with `AzureAi:Enabled` master flag enables operators to choose AI provider without code changes. Configuration bound via `AzureAiOptions` / `AiProvider` enum.
+- **Foundry Agent Client** — `PersistentAgentsClient` from `Azure.AI.Agents.Persistent` 1.1.0 registered via DI with `DefaultAzureCredential` (Gov/Commercial authority host aware via `AzureAi:CloudEnvironment`).
+- **Agent Provisioning** — Each ATO Copilot agent (Compliance, Configuration, KnowledgeBase) auto-provisions a corresponding Foundry agent at startup with system prompt and tool definitions. Idempotent create-or-update by name.
+- **Thread & Run Processing** — Full `TryProcessWithFoundryAsync` implementation: thread creation, user message, run creation, polling, `RequiresAction` tool dispatch (local `BaseTool.ExecuteAsync`), response extraction.
+- **Thread-to-Conversation Mapping** — `ConcurrentDictionary<string, string>` maps conversations to persistent Foundry threads for multi-turn context.
+- **Run Timeout Enforcement** — Configurable `AzureAi:RunTimeoutSeconds` with automatic `CancelRunAsync` on timeout. `MaxToolIterations` (configurable, default 10) prevents infinite tool dispatch loops.
+- **Graceful Fallback Chain** — Foundry failure → IChatClient → deterministic routing. Provisioning failures set `_foundryAgentId=null` without crashing. Terminal run statuses (Failed, Cancelled, Expired) handled gracefully.
+- **12 Unit Tests** — Provider dispatch routing, provisioning guards, thread mapping, constructor defaults, Gov authority host, provider-switch thread isolation (SC-007).
+- **4 Fallback Integration Tests** — Foundry→IChatClient chain, OpenAi-only routing, no-config regression, exception handling (SC-009).
+
+## [1.23.0] - 2026-03-12
+
+### Added
+
+#### Feature 026: ACAS/Nessus Scan Import
+
+- **Nessus Import** (`compliance_import_nessus`) — Import ACAS .nessus XML files with automatic NIST 800-53 control mapping (CVE-CCI-NIST chain + plugin family heuristic fallback), severity-to-CAT mapping (Critical/High → CAT I, Medium → CAT II, Low → CAT III), duplicate detection via Plugin ID + Hostname + Port composite key, configurable conflict resolution (skip/overwrite/merge), dry-run preview mode, and POA&M auto-generation for CAT I/II findings.
+- **Nessus Import History** (`compliance_list_nessus_imports`) — Query import history with filtering by system, date range, and status. Returns scan metadata, finding counts by severity, and SHA-256 evidence hashes.
+- **NessusParser** — XDocument-based .nessus XML parser with multi-host support, extracting hosts, plugins, CVEs, severity, and scan metadata.
+- **NessusControlMapper** — Plugin family to NIST 800-53 control mapping via curated `plugin-family-mappings.json` with heuristic confidence tracking.
+- **ScanImportService.ImportNessusAsync** — 11-step orchestration pipeline: parse, validate, baseline, assessment, dedup, findings, control effectiveness, POA&M auto-generation, SHA-256 evidence, persist.
+- **ScanImportType Expansion** — Added `NessusXml` to `ScanImportType` enum; added `Nessus` to `ScanSourceType` enum.
+- **43 Unit Tests** — Parser, service, tools, severity mapping, dedup, control mapping, conflict resolution, POA&M generation. 19 integration test stubs (Cosmos DB emulator required). 4 test fixtures (single-host, multi-host, malformed, large with 567 plugins/12 hosts).
+
+### Documentation
+
+- **Agent Tool Catalog** — ACAS/Nessus section with tool specifications, parameter tables, and RBAC roles.
+- **MCP Server API** — Feature 026 tool entries with JSON response examples.
+- **Tool Inventory** — Category 10 "ACAS/Nessus Scan Import" (tools #116-117), total tool count updated from 115 to 117.
+- **ISSO Persona** — Nessus import workflows, permissions, and getting-started guide.
+- **SCA Guide** — RBAC table updated with Nessus import roles.
+- **RMF Assess Phase** — ACAS import steps added to assessment tasks.
+- **Glossary** — ACAS and Nessus terms.
+- **Persona Test Cases** — Tool validation, test data setup, environment checklist, test report, and all persona test scripts updated (ISSO-12a/12b/12c, ISSM-23d, cross-persona, unified RMF — 172→176 test cases).
+
+---
+
 ## [1.20.0] - 2026-03-05
 
 ### Added

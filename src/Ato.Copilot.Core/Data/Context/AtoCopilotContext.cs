@@ -181,6 +181,14 @@ public class AtoCopilotContext : DbContext
     /// <summary>ISA/MOU/SLA agreements governing system interconnections.</summary>
     public DbSet<InterconnectionAgreement> InterconnectionAgreements => Set<InterconnectionAgreement>();
 
+    // ─── CSP Capability Lifecycle DbSets (Feature 050 — Epic #124) ──────────
+
+    /// <summary>CSP capabilities with lifecycle status and NeedsReview gate.</summary>
+    public DbSet<CspCapability> CspCapabilities => Set<CspCapability>();
+
+    /// <summary>Immutable audit trail of CSP capability lifecycle events.</summary>
+    public DbSet<CapabilityHistoryEvent> CapabilityHistoryEvents => Set<CapabilityHistoryEvent>();
+
     /// <inheritdoc />
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -1548,6 +1556,36 @@ public class AtoCopilotContext : DbContext
                 .HasDatabaseName("IX_Agreement_Status");
             entity.HasIndex(e => e.ExpirationDate)
                 .HasDatabaseName("IX_Agreement_Expiration");
+        });
+
+        // ─── CspCapability (Feature 050 — Epic #124, Issue #160) ────────────────
+        modelBuilder.Entity<CspCapability>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasMaxLength(36);
+            entity.Property(e => e.Name).HasMaxLength(200).IsRequired();
+            entity.Property(e => e.Description).HasMaxLength(2000);
+            entity.Property(e => e.ParentCapabilityId).HasMaxLength(36);
+            entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(20);
+            entity.Property(e => e.CreatedBy).HasMaxLength(200).IsRequired();
+
+            entity.HasIndex(e => e.Status).HasDatabaseName("IX_CspCapability_Status");
+            entity.HasIndex(e => e.ParentCapabilityId).HasDatabaseName("IX_CspCapability_ParentId");
+        });
+
+        // ─── CapabilityHistoryEvent (Feature 050 — Epic #124, Issue #158) ───────
+        modelBuilder.Entity<CapabilityHistoryEvent>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.CapabilityId).HasMaxLength(450).IsRequired();
+            entity.Property(e => e.PreviousValue);
+            entity.Property(e => e.NewValue);
+            entity.Property(e => e.Notes).HasMaxLength(2000);
+            entity.Property(e => e.ActorId).HasMaxLength(200).IsRequired();
+            entity.Property(e => e.ActorName).HasMaxLength(200).IsRequired();
+
+            entity.HasIndex(e => e.CapabilityId).HasDatabaseName("IX_CapabilityHistoryEvent_CapabilityId");
+            entity.HasIndex(e => e.OccurredAt).HasDatabaseName("IX_CapabilityHistoryEvent_OccurredAt");
         });
     }
 

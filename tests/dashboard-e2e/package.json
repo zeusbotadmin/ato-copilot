@@ -1,0 +1,12 @@
+{
+  "name": "dashboard-e2e",
+  "version": "1.0.0",
+  "description": "Playwright E2E smoke tests for the ATO Copilot dashboard stack",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.44.0"
+  }
+}

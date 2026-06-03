@@ -114,3 +114,27 @@ jobs:
       - name: Run M365 Extension Tests
         working-directory: extensions/m365
         run: npm test
+
+  dashboard-e2e-smoke:
+    name: "🎭 Dashboard E2E Smoke Tests"
+    runs-on: ubuntu-latest
+    # TODO: Full E2E requires docker-compose stack with Azure credentials.
+    # Enable this job once secrets (AZURE_OPENAI_KEY, etc.) are wired in GitHub Secrets.
+    # To run locally: docker compose -f docker-compose.mcp.yml up -d --wait
+    if: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright and dependencies
+        working-directory: tests/dashboard-e2e
+        run: npm ci && npx playwright install --with-deps chromium
+
+      - name: Run Playwright Smoke Tests
+        working-directory: tests/dashboard-e2e
+        run: npx playwright test

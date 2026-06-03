@@ -71,3 +71,26 @@ jobs:
             --no-build \
             --logger "github" \
             --filter 'Category!=RequiresExternalService'
+
+  vscode-extension-test:
+    name: "🔌 VSCode Extension Tests"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install xvfb
+        run: sudo apt-get install -y xvfb
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: extensions/vscode
+        run: npm ci
+
+      - name: Run VSCode Extension Tests (headless)
+        working-directory: extensions/vscode
+        run: xvfb-run -a npm test

@@ -76,14 +76,18 @@ nav:
     - Authorize: rmf-phases/authorize.md
     - Monitor: rmf-phases/monitor.md
   - Guides:
+    - End-to-End Demo: guides/end-to-end-demo.md
+    - Compliance Dashboard: guides/compliance-dashboard.md
     - Compliance Watch: guides/compliance-watch.md
     - Remediation Kanban: guides/remediation-kanban.md
+    - POA&M Management: guides/poam-management.md
     - Portfolio Management: guides/portfolio-management.md
     - Document Catalog: guides/document-catalog.md
     - NL Query Reference: guides/nl-query-reference.md
     - Teams Bot: guides/teams-bot-guide.md
     - Chat App: guides/chat-app.md
     - Knowledge Base: guides/knowledgebase.md
+    - eMASS Authorization Package: guides/emass-package.md
   - Reference:
     - Glossary: reference/glossary.md
     - Tool Inventory: reference/tool-inventory.md
@@ -110,4 +114,15 @@ nav:
   - API:
     - MCP Server: api/mcp-server.md
     - VS Code Extension: api/vscode-extension.md
+  - Release Notes:
+    - v1.21.0: release-notes/v1.21.0.md
+    - v1.20.0: release-notes/v1.20.0.md
+    - v1.19.0: release-notes/v1.19.0.md
+    - v1.18.0: release-notes/v1.18.0.md
+  - Persona Test Cases:
+    - Environment Checklist: persona-test-cases/environment-checklist.md
+    - Test Data Setup: persona-test-cases/test-data-setup.md
+    - Tool Validation: persona-test-cases/tool-validation.md
+    - Test Report: persona-test-cases/test-report.md
+    - Results Template: persona-test-cases/results-template.md
   - Deployment: deployment.md

@@ -1,3 +1,5 @@
+using Ato.Copilot.Core.Configuration.Auth;
+
 namespace Ato.Copilot.Core.Configuration;
 
 /// <summary>
@@ -19,19 +21,22 @@ public class AzureAdOptions
 }
 
 /// <summary>
-/// Gateway connection configuration for Azure, OpenAI, and GitHub
+/// Gateway connection configuration for Azure and GitHub
 /// </summary>
 public class GatewayOptions
 {
     public const string SectionName = "Gateway";
 
     public AzureGatewayOptions Azure { get; set; } = new();
-    public AzureOpenAIGatewayOptions AzureOpenAI { get; set; } = new();
     public GitHubGatewayOptions GitHub { get; set; } = new();
     public int ConnectionTimeoutSeconds { get; set; } = 60;
     public int RequestTimeoutSeconds { get; set; } = 300;
 }
 
+/// <summary>
+/// Azure subscription and identity configuration.
+/// Bound from the "Gateway:Azure" configuration section.
+/// </summary>
 public class AzureGatewayOptions
 {
     public string TenantId { get; set; } = string.Empty;
@@ -44,46 +49,83 @@ public class AzureGatewayOptions
     public bool EnableUserTokenPassthrough { get; set; }
 }
 
-/// <summary>
-/// Azure OpenAI service configuration for agent AI processing.
-/// Bound from the "Gateway:AzureOpenAI" configuration section.
-/// </summary>
-public class AzureOpenAIGatewayOptions
-{
-    /// <summary>API key for Azure OpenAI authentication (used when UseManagedIdentity is false).</summary>
-    public string ApiKey { get; set; } = string.Empty;
-
-    /// <summary>Azure OpenAI service endpoint URL (e.g., https://my-service.openai.azure.us/).</summary>
-    public string Endpoint { get; set; } = string.Empty;
-
-    /// <summary>Default deployment name for backward compatibility.</summary>
-    public string DeploymentName { get; set; } = "gpt-4o";
-
-    /// <summary>Whether to use DefaultAzureCredential instead of API key.</summary>
-    public bool UseManagedIdentity { get; set; }
-
-    /// <summary>Chat completion deployment name used for agent AI processing.</summary>
-    public string ChatDeploymentName { get; set; } = "gpt-4o";
-
-    /// <summary>Embedding deployment name for vector operations.</summary>
-    public string EmbeddingDeploymentName { get; set; } = "text-embedding-ada-002";
-
-    /// <summary>Master feature flag — when false, all agents skip AI processing and use deterministic tool routing.</summary>
-    public bool AgentAIEnabled { get; set; }
-
-    /// <summary>Maximum number of LLM ↔ tool-call round-trips before terminating with a summary response.</summary>
-    public int MaxToolCallRounds { get; set; } = 5;
-
-    /// <summary>LLM sampling temperature (0.0–1.0). Lower values produce more deterministic responses.</summary>
-    public double Temperature { get; set; } = 0.3;
-}
-
 public class GitHubGatewayOptions
 {
     public string AccessToken { get; set; } = string.Empty;
     public string ApiBaseUrl { get; set; } = "https://api.github.com";
     public string DefaultOwner { get; set; } = string.Empty;
     public bool Enabled { get; set; }
+}
+
+/// <summary>
+/// Unified AI backend configuration. Bound from the top-level "AzureAi" configuration section.
+/// </summary>
+public class AzureAiOptions
+{
+    public const string SectionName = "AzureAi";
+
+    /// <summary>Master AI feature flag. When false, all agents use deterministic tool routing.</summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>AI provider: OpenAi (direct Azure OpenAI) or Foundry (Azure AI Foundry Agents).</summary>
+    public AiProvider Provider { get; set; } = AiProvider.OpenAi;
+
+    /// <summary>Azure OpenAI service endpoint URL (e.g., https://my-service.openai.azure.us/).</summary>
+    public string Endpoint { get; set; } = string.Empty;
+
+    /// <summary>Model deployment name (e.g., gpt-4o). Used for both direct and Foundry paths.</summary>
+    public string DeploymentName { get; set; } = "gpt-4o";
+
+    /// <summary>API key for Azure OpenAI authentication (when UseManagedIdentity is false).</summary>
+    public string? ApiKey { get; set; }
+
+    /// <summary>Whether to use DefaultAzureCredential instead of API key.</summary>
+    public bool UseManagedIdentity { get; set; } = true;
+
+    /// <summary>Azure cloud environment: AzurePublicCloud or AzureGovernment.</summary>
+    public string CloudEnvironment { get; set; } = "AzurePublicCloud";
+
+    /// <summary>Maximum completion tokens per AI response.</summary>
+    public int MaxCompletionTokens { get; set; } = 4096;
+
+    /// <summary>Maximum number of LLM ↔ tool-call round-trips before terminating.</summary>
+    public int MaxToolIterations { get; set; } = 10;
+
+    /// <summary>Number of recent messages to include as conversation context.</summary>
+    public int ConversationWindowSize { get; set; } = 20;
+
+    /// <summary>LLM sampling temperature (0.0–1.0). Lower values produce more deterministic responses.</summary>
+    public double Temperature { get; set; } = 0.3;
+
+    /// <summary>Azure AI Foundry project endpoint (required when Provider is Foundry).</summary>
+    public string? FoundryProjectEndpoint { get; set; }
+
+    /// <summary>Maximum seconds to poll a Foundry run before cancelling and triggering fallback.</summary>
+    public int RunTimeoutSeconds { get; set; } = 60;
+
+    /// <summary>Custom system prompt template. When set, overrides the agent's default prompt resource.</summary>
+    public string? SystemPromptTemplate { get; set; }
+
+    // ── Computed helpers ─────────────────────────────────────────────────────
+
+    /// <summary>True when Provider is Foundry and FoundryProjectEndpoint is configured.</summary>
+    public bool IsFoundry => Provider == AiProvider.Foundry
+                          && !string.IsNullOrWhiteSpace(FoundryProjectEndpoint);
+
+    /// <summary>True when Endpoint is configured and Enabled is true.</summary>
+    public bool IsConfigured => Enabled && !string.IsNullOrWhiteSpace(Endpoint);
+}
+
+/// <summary>
+/// AI provider selection for <see cref="AzureAiOptions.Provider"/>.
+/// </summary>
+public enum AiProvider
+{
+    /// <summary>Direct Azure OpenAI chat completions via IChatClient.</summary>
+    OpenAi = 0,
+
+    /// <summary>Azure AI Foundry Agents with server-side threads and runs.</summary>
+    Foundry = 1
 }
 
 /// <summary>
@@ -149,6 +191,38 @@ public class PimServiceOptions
 }
 
 /// <summary>
+/// Simulated identity configuration for CAC simulation mode.
+/// Bound from the "CacAuth:SimulatedIdentity" configuration sub-section.
+/// Used only in Development environment to bypass physical smart card requirements.
+/// </summary>
+public class SimulatedIdentityOptions
+{
+    /// <summary>Simulated user principal name (e.g., "dev.user@dev.mil").</summary>
+    public string UserPrincipalName { get; set; } = string.Empty;
+
+    /// <summary>Simulated display name (e.g., "Dev User (Simulated)").</summary>
+    public string DisplayName { get; set; } = string.Empty;
+
+    /// <summary>Optional simulated certificate thumbprint. Null when not configured.</summary>
+    public string? CertificateThumbprint { get; set; }
+
+    /// <summary>Simulated role assignments. Empty list = least privilege.</summary>
+    public List<string> Roles { get; set; } = [];
+
+    /// <summary>
+    /// Optional simulated tenant id (Entra <c>tid</c> claim). Required for endpoints
+    /// that scope access by tenant (e.g., the onboarding wizard policies).
+    /// </summary>
+    public Guid? TenantId { get; set; }
+
+    /// <summary>
+    /// Optional simulated object id (Entra <c>oid</c> claim). Required for endpoints
+    /// that resolve the calling subject by object id.
+    /// </summary>
+    public Guid? ObjectId { get; set; }
+}
+
+/// <summary>
 /// CAC/PIV authentication session configuration.
 /// Bound from the "CacAuth" configuration section.
 /// </summary>
@@ -162,6 +236,36 @@ public class CacAuthOptions
 
     /// <summary>Maximum allowed session timeout in hours.</summary>
     public int MaxSessionTimeoutHours { get; set; } = 24;
+
+    /// <summary>
+    /// When true, enables CAC simulation mode in Development environment.
+    /// Simulation is ignored in non-Development environments as a safety guard.
+    /// </summary>
+    public bool SimulationMode { get; set; }
+
+    /// <summary>
+    /// Simulated identity configuration. Required when <see cref="SimulationMode"/> is true.
+    /// Provides UPN, display name, optional thumbprint, and role assignments.
+    /// </summary>
+    public SimulatedIdentityOptions? SimulatedIdentity { get; set; }
+
+    /// <summary>
+    /// Feature 051 T121 [US7] — list of simulated identities available to the
+    /// dashboard <c>SimulationPanel</c> in Development. Each entry is keyed by
+    /// <see cref="SimulatedIdentityDescriptor.IdentityId"/> which is passed to
+    /// <c>POST /api/auth/simulate?identityId=&lt;key&gt;</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>This is a SUPERSET of the legacy single-identity <see cref="SimulatedIdentity"/>
+    /// field, which is preserved for backward compatibility with Feature 027's
+    /// <c>CacAuthenticationMiddleware</c> + <c>CacSessionService</c>. The two
+    /// fields are independent — middleware still reads <see cref="SimulatedIdentity"/>,
+    /// and the new <c>/api/auth/simulate</c> endpoint reads <see cref="SimulatedIdentities"/>.</para>
+    /// <para>An empty list (or null bind) collapses to "no simulation identities
+    /// configured", which causes the three-layer gate to omit the descriptor
+    /// from <c>/login-config</c> even when <see cref="SimulationMode"/> is true.</para>
+    /// </remarks>
+    public List<SimulatedIdentityDescriptor> SimulatedIdentities { get; set; } = new();
 }
 
 /// <summary>

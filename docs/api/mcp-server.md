@@ -19,6 +19,7 @@
 - [Document Templates](#document-templates)
 - [CAC Authentication](#cac-authentication)
 - [PIM — Privileged Identity Management](#pim--privileged-identity-management)
+- [Deviation Management](#deviation-management)
 - [Error Responses](#error-responses)
 
 ---
@@ -325,6 +326,92 @@ Generate System Security Plan.
 
 ---
 
+### `compliance_generate_roadmap`
+
+Generate a phased implementation roadmap from gap analysis data. Uses AI-driven clustering with deterministic fallback.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID or name |
+
+**RBAC**: Compliance.SecurityLead (ISSM) only
+
+**Response:** Roadmap ID, system name, status (Draft), phases with items (control ID, gap type, severity, effort, role, dependencies), total effort/risk points, generation method (AI/Deterministic).
+
+---
+
+### `compliance_get_roadmap`
+
+Get the active implementation roadmap for a system.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID or name |
+| `include_items` | boolean | | Include per-phase item details (default: true) |
+
+**RBAC**: Any compliance role (read-only)
+
+---
+
+### `compliance_get_roadmap_progress`
+
+Get progress metrics and risk reduction data for a system's active roadmap.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID or name |
+
+**RBAC**: Any compliance role (read-only)
+
+**Response:** Overall completion %, items completed/total, actual vs projected risk reduction, per-phase progress with overdue detection.
+
+---
+
+### `compliance_update_roadmap`
+
+Update roadmap items — move between phases, change roles, update effort, merge/split phases.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID or name |
+| `move_item` | object | | `{ control_id, target_phase_order }` |
+| `update_effort` | object | | `{ control_id, effort_days }` |
+| `update_role` | object | | `{ control_id, assigned_role }` |
+| `merge_phases` | object | | `{ source_phase_order, target_phase_order }` |
+| `split_phase` | object | | `{ phase_order, split_after_item_index }` |
+
+**RBAC**: Compliance.SecurityLead (ISSM) only
+
+---
+
+### `compliance_create_board_from_roadmap`
+
+Create a Kanban remediation board pre-populated from a roadmap.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID or name |
+
+**RBAC**: Compliance.SecurityLead (ISSM) only
+
+**Response:** Board ID, tasks created count, phases mapped count.
+
+---
+
+### `compliance_export_roadmap_pdf`
+
+Export a roadmap as a PDF document for AO briefings.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID or name |
+
+**RBAC**: Any compliance role (read-only)
+
+**Response:** PDF file as base64-encoded content with filename and content type.
+
+---
+
 ## Phase 5: Assess
 
 ### `compliance_assess_control`
@@ -610,12 +697,666 @@ Import from eMASS Excel.
 
 ### `compliance_export_oscal`
 
-Export as OSCAL JSON.
+Export as OSCAL 1.1.2 JSON.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `system_id` | string | ✓ | System GUID |
-| `model_type` | string | ✓ | `ssp`, `assessment_results`, `poam` |
+| `model` | string | ✓ | `ssp`, `assessment-results`, `poam`, `assessment-plan` |
+
+---
+
+## eMASS Authorization Package (Feature 041)
+
+**Service**: `IAuthorizationPackageService`, `IPackageValidationService`, `IOscalSchemaValidationService`
+
+### `compliance_generate_package`
+
+Generate eMASS authorization package as ZIP. Runs readiness validation first. Returns immediately — background generation.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID, name, or acronym |
+| `evidence_mode` | string | | `embedded` (default) or `manifest_only` |
+
+### `compliance_package_status`
+
+Get package generation status, artifacts, and download link.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `package_id` | string | ✓ | Package ID from `compliance_generate_package` |
+
+### `compliance_validate_package`
+
+Pre-submission readiness check (8 validation checks).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID, name, or acronym |
+
+### `compliance_list_packages`
+
+List package history with pagination.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID, name, or acronym |
+| `limit` | integer | | Max results (default: 10) |
+| `include_failed` | boolean | | Include failed packages (default: false) |
+
+### `compliance_validate_oscal_schema`
+
+Validate OSCAL artifact against NIST OSCAL 1.1.2 JSON schema.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID, name, or acronym |
+| `model` | string | ✓ | `ssp`, `poam`, `assessment-results`, `assessment-plan` |
+
+### `compliance_generate_sar`
+
+Generate Security Assessment Report auto-populated from findings.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID, name, or acronym |
+| `title` | string | ✓ | SAR title |
+
+### `compliance_edit_sar_section`
+
+Edit a SAR section.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sar_id` | string | ✓ | SAR identifier |
+| `section_type` | string | ✓ | ExecutiveSummary, Methodology, Findings, Recommendations, ConclusionRiskAssessment |
+| `content` | string | ✓ | New section content |
+
+### `compliance_review_sar`
+
+Submit, approve, or reject SAR.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sar_id` | string | ✓ | SAR identifier |
+| `action` | string | ✓ | `submit`, `approve`, `reject` |
+| `comments` | string | | Review comments |
+
+---
+
+## STIG & SCAP Import (Feature 017)
+
+**Service**: `IScanImportService`
+
+### `compliance_import_ckl`
+
+Import DISA STIG Viewer CKL checklist file.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID |
+| `ckl_content` | string | ✓ | CKL XML file content |
+| `conflict_resolution` | string | | `Skip` (default), `Overwrite` |
+
+### `compliance_import_xccdf`
+
+Import SCAP Compliance Checker XCCDF results.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID |
+| `xccdf_content` | string | ✓ | XCCDF XML file content |
+| `conflict_resolution` | string | | `Skip` (default), `Overwrite` |
+
+### `compliance_export_ckl`
+
+Export CKL checklist for DISA STIG Viewer or eMASS.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID |
+| `benchmark_id` | string | ✓ | STIG benchmark identifier |
+
+### `compliance_list_imports`
+
+List import history for a system.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID |
+| `import_type` | string | | Filter by type: `CKL`, `XCCDF`, `PrismaCloudCsv`, `PrismaCloudApi` |
+
+### `compliance_get_import_summary`
+
+Get detailed per-finding import breakdown.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `import_id` | string | ✓ | Import record GUID |
+
+---
+
+## SAP Generation (Feature 018)
+
+**Service**: `ISapService`
+
+### `compliance_generate_sap`
+
+Generate Security Assessment Plan from system metadata.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID |
+
+### `compliance_update_sap`
+
+Update SAP scope, methodology, or schedule.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sap_id` | string | ✓ | SAP GUID |
+| `updates` | object | ✓ | Fields to update (methodology, scope, schedule) |
+
+### `compliance_finalize_sap`
+
+Lock SAP — generates SHA-256 hash, no further edits allowed.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sap_id` | string | ✓ | SAP GUID |
+
+### `compliance_get_sap`
+
+Get SAP details by ID.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sap_id` | string | ✓ | SAP GUID |
+
+### `compliance_list_saps`
+
+List all SAPs for a system.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID |
+
+---
+
+## Prisma Cloud Import (Feature 019)
+
+**Parsers**: `PrismaCsvParser`, `PrismaApiJsonParser`
+
+### `compliance_import_prisma_csv`
+
+Import Prisma Cloud CSV compliance export.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID |
+| `csv_content` | string | ✓ | CSV file content |
+| `conflict_resolution` | string | | `Skip` (default), `Overwrite`, `Merge` |
+
+### `compliance_import_prisma_api`
+
+Import Prisma Cloud API JSON response.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID |
+| `api_json` | string | ✓ | Prisma RQL API JSON response |
+| `conflict_resolution` | string | | `Skip` (default), `Overwrite`, `Merge` |
+
+### `compliance_list_prisma_policies`
+
+List Prisma policies with NIST control mappings.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID |
+
+### `compliance_prisma_trend`
+
+Compare scan imports for remediation progress.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID |
+| `group_by` | string | | `nist_control`, `resource_type`, `severity` |
+
+---
+
+## ACAS/Nessus Scan Import (Feature 026)
+
+**Services**: `IScanImportService`, `INessusParser`, `INessusControlMapper`
+
+### `compliance_import_nessus`
+
+Import Tenable Nessus/ACAS vulnerability scan (.nessus XML).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID |
+| `file_content` | string | ✓ | Base64-encoded .nessus file (max 10 MB) |
+| `file_name` | string | ✓ | Original file name |
+| `conflict_resolution` | string | | `Skip` (default), `Overwrite`, `Merge` |
+| `dry_run` | boolean | | Preview without persisting (default: false) |
+| `user_role` | string | ✓ | Caller's compliance role |
+
+### `compliance_list_nessus_imports`
+
+List Nessus/ACAS import history with date filtering.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID |
+| `from_date` | string | | ISO 8601 start date filter |
+| `to_date` | string | | ISO 8601 end date filter |
+| `page_size` | integer | | Items per page (default: 20, max: 50) |
+| `user_role` | string | ✓ | Caller's compliance role |
+
+---
+
+## Privacy & Interconnections (Feature 021)
+
+**Services**: `IPrivacyService`, `IInterconnectionService`
+
+### `compliance_create_pta`
+
+Create Privacy Threshold Analysis.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID |
+| `collects_pii` | boolean | ✓ | Whether system collects PII |
+| `pii_categories` | string | | Comma-separated PII categories |
+
+### `compliance_generate_pia`
+
+Generate Privacy Impact Assessment from PTA.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID |
+
+### `compliance_review_pia`
+
+ISSM review of PIA — approve or reject.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `pia_id` | string | ✓ | PIA GUID |
+| `decision` | string | ✓ | `Approved` or `NeedsRevision` |
+| `notes` | string | | Review notes |
+
+### `compliance_check_privacy_compliance`
+
+Verify all privacy artifacts are complete.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID |
+
+### `compliance_add_interconnection`
+
+Register a system-to-system interconnection.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID |
+| `remote_system_name` | string | ✓ | Connected system name |
+| `direction` | string | ✓ | `Inbound`, `Outbound`, `Bidirectional` |
+| `protocol` | string | | Network protocol |
+| `data_types` | string | | Comma-separated data types |
+
+### `compliance_list_interconnections`
+
+List all interconnections for a system.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID |
+
+### `compliance_update_interconnection`
+
+Update interconnection metadata.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `interconnection_id` | string | ✓ | Interconnection GUID |
+| `updates` | object | ✓ | Fields to update |
+
+### `compliance_generate_isa`
+
+Generate ISA document from interconnection record.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `interconnection_id` | string | ✓ | Interconnection GUID |
+
+### `compliance_register_agreement`
+
+Register ISA/MOU agreement for an interconnection.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `interconnection_id` | string | ✓ | Interconnection GUID |
+| `agreement_type` | string | ✓ | `ISA`, `MOU`, `MOA`, `SLA` |
+| `effective_date` | string | | Agreement effective date |
+| `expiration_date` | string | | Agreement expiration date |
+
+### `compliance_update_agreement`
+
+Update agreement details.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `agreement_id` | string | ✓ | Agreement GUID |
+| `updates` | object | ✓ | Fields to update |
+
+### `compliance_certify_no_interconnections`
+
+Certify system has no external interconnections.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID |
+| `justification` | string | ✓ | Rationale for certification |
+
+### `compliance_validate_agreements`
+
+Validate all ISA/MOU agreements for a system.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID |
+
+---
+
+## SSP Authoring & OSCAL (Feature 022)
+
+**Services**: `ISspService`, `IOscalSspExportService`, `IOscalValidationService`
+
+### `compliance_write_ssp_section`
+
+Write or update an SSP section (NIST 800-18 structure).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID |
+| `section_number` | integer | ✓ | Section 1–13 |
+| `content` | string | ✓ | Section narrative |
+
+### `compliance_review_ssp_section`
+
+ISSM review of SSP section — approve or request revision.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `section_id` | string | ✓ | SSP section GUID |
+| `decision` | string | ✓ | `Approved` or `NeedsRevision` |
+| `notes` | string | | Review notes |
+
+### `compliance_ssp_completeness`
+
+Check SSP completeness percentage by section.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID |
+
+### `compliance_export_oscal_ssp`
+
+Export OSCAL SSP document for authorization package.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID |
+
+### `compliance_validate_oscal_ssp`
+
+Validate OSCAL SSP against NIST schema.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID |
+
+---
+
+## HW/SW Inventory (Feature 025)
+
+### `inventory_add_item`
+
+Register a hardware or software inventory item.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID, name, or acronym |
+| `item_name` | string | ✓ | Display name of the item |
+| `type` | string | ✓ | `hardware` or `software` |
+| `function` | string | ✓ | HW: `Server`, `Workstation`, `NetworkDevice`, `Storage`, `Other`; SW: `OperatingSystem`, `Database`, `Middleware`, `Application`, `SecurityTool`, `Other` |
+| `manufacturer` | string | | Manufacturer (required for hardware) |
+| `model` | string | | Hardware model |
+| `serial_number` | string | | Hardware serial number |
+| `ip_address` | string | | IP address (required for Server/NetworkDevice) |
+| `mac_address` | string | | MAC address |
+| `location` | string | | Physical location |
+| `vendor` | string | | Software vendor (required for software) |
+| `version` | string | | Software version (required for software) |
+| `patch_level` | string | | Current patch level |
+| `license_type` | string | | License type |
+| `parent_hardware_id` | string | | Parent hardware GUID (for software items) |
+
+**Response:** Created inventory item with generated GUID.
+
+### `inventory_update_item`
+
+Update fields on an existing inventory item. Only provided fields are changed.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `item_id` | string | ✓ | Inventory item GUID |
+| `item_name` | string | | Updated display name |
+| `manufacturer` | string | | Updated manufacturer |
+| `model` | string | | Updated model |
+| `serial_number` | string | | Updated serial number |
+| `ip_address` | string | | Updated IP address |
+| `mac_address` | string | | Updated MAC address |
+| `location` | string | | Updated location |
+| `vendor` | string | | Updated vendor |
+| `version` | string | | Updated version |
+| `patch_level` | string | | Updated patch level |
+| `license_type` | string | | Updated license type |
+
+**Response:** Updated inventory item.
+
+### `inventory_decommission_item`
+
+Soft-delete an inventory item with a decommission rationale. Cascades to child software.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `item_id` | string | ✓ | Inventory item GUID |
+| `rationale` | string | ✓ | Reason for decommissioning |
+
+**Response:** Decommissioned item with cascade count in metadata.
+
+### `inventory_list`
+
+List and filter inventory items with pagination.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID, name, or acronym |
+| `type` | string | | `hardware` or `software` |
+| `function` | string | | Function filter |
+| `vendor` | string | | Vendor/manufacturer filter |
+| `status` | string | | `active` (default) or `decommissioned` |
+| `search` | string | | Free-text search on item name |
+| `page_size` | integer | | Results per page (default 50) |
+| `page` | integer | | Page number (default 1) |
+
+**Response:** Paginated list of inventory items with count.
+
+### `inventory_get`
+
+Retrieve a single inventory item with installed software children.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `item_id` | string | ✓ | Inventory item GUID |
+
+**Response:** Inventory item with installed software array for hardware items.
+
+### `inventory_export`
+
+Export inventory to an eMASS-compatible Excel workbook.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID, name, or acronym |
+| `export_type` | string | | `all` (default), `hardware`, or `software` |
+| `include_decommissioned` | boolean | | Include decommissioned items (default false) |
+
+**Response:** Base64-encoded Excel workbook with Hardware and Software worksheets.
+
+### `inventory_import`
+
+Import inventory from an eMASS-format Excel workbook.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID, name, or acronym |
+| `file_base64` | string | ✓ | Base64-encoded Excel file |
+| `dry_run` | boolean | | Preview import without persisting (default false) |
+
+**Response:** Import result with `hardware_created`, `software_created`, `rows_skipped`, and row-level errors.
+
+### `inventory_completeness`
+
+Check inventory completeness against boundary and field requirements.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID, name, or acronym |
+
+**Response:** Completeness report with `completeness_score`, `is_complete`, items with missing fields, unmatched boundary resources, and hardware without software.
+
+### `inventory_auto_seed`
+
+Auto-create hardware inventory items from authorization boundary resources.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID, name, or acronym |
+
+**Response:** List of created items with `created_count`. Idempotent — re-running skips existing items.
+
+---
+
+## Narrative Governance (Feature 024)
+
+**Service**: `INarrativeGovernanceService`
+
+### `compliance_narrative_history`
+
+Retrieve paginated version history for a control narrative (newest first).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID, name, or acronym |
+| `control_id` | string | ✓ | NIST 800-53 control ID (e.g., "AC-1") |
+| `page` | integer | | Page number (default: 1) |
+| `page_size` | integer | | Items per page (default: 50) |
+
+**Response:** Array of `versions` with `version_number`, `content`, `status`, `authored_by`, `authored_at`, `change_reason`. Includes `total_versions` count. Error codes: `SYSTEM_NOT_FOUND`, `CONTROL_NOT_FOUND`.
+
+### `compliance_narrative_diff`
+
+Compare two versions of a control narrative with line-level unified diff.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID, name, or acronym |
+| `control_id` | string | ✓ | NIST 800-53 control ID |
+| `from_version` | integer | ✓ | Base version number |
+| `to_version` | integer | ✓ | Target version number |
+
+**Response:** Unified diff text with `lines_added` and `lines_removed` counts. Error codes: `SYSTEM_NOT_FOUND`, `CONTROL_NOT_FOUND`, `VERSION_NOT_FOUND`.
+
+### `compliance_rollback_narrative`
+
+Roll back to a prior narrative version (copy-forward — creates new version with old content, resets to Draft).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID, name, or acronym |
+| `control_id` | string | ✓ | NIST 800-53 control ID |
+| `target_version` | integer | ✓ | Version number to roll back to |
+| `change_reason` | string | | Reason for rollback |
+
+**Response:** New version details with `new_version_number`, `rolled_back_to`, `status` (Draft). Error codes: `SYSTEM_NOT_FOUND`, `CONTROL_NOT_FOUND`, `VERSION_NOT_FOUND`, `UNDER_REVIEW`.
+
+### `compliance_submit_narrative`
+
+Submit a Draft narrative for ISSM review (transitions status to InReview).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID, name, or acronym |
+| `control_id` | string | ✓ | NIST 800-53 control ID |
+
+**Response:** Updated version with `previous_status`, `new_status` (InReview), `submitted_by`, `submitted_at`. Error codes: `SYSTEM_NOT_FOUND`, `CONTROL_NOT_FOUND`, `INVALID_STATUS`.
+
+### `compliance_review_narrative`
+
+Approve or request revision of a narrative under review. ISSM only.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID, name, or acronym |
+| `control_id` | string | ✓ | NIST 800-53 control ID |
+| `decision` | string | ✓ | `approve` or `request_revision` |
+| `comments` | string | | Reviewer comments (required for `request_revision`) |
+
+**Response:** Review result with `decision`, `new_status` (Approved or NeedsRevision), `reviewed_by`, `reviewed_at`. Error codes: `SYSTEM_NOT_FOUND`, `CONTROL_NOT_FOUND`, `INVALID_STATUS`, `COMMENTS_REQUIRED`.
+
+### `compliance_batch_review_narratives`
+
+Batch approve or request revision of narratives by family or control IDs. ISSM only.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID, name, or acronym |
+| `decision` | string | ✓ | `approve` or `request_revision` |
+| `comments` | string | | Reviewer comments (required for `request_revision`) |
+| `family_filter` | string | | Control family prefix (e.g., "AC"). Mutually exclusive with `control_ids` |
+| `control_ids` | string | | Comma-separated control IDs. Mutually exclusive with `family_filter` |
+
+**Response:** `reviewed_count`, `skipped_count`, `reviewed_controls`, `skipped_controls`. Error codes: `SYSTEM_NOT_FOUND`, `NO_REVIEWABLE_NARRATIVES`, `COMMENTS_REQUIRED`, `MUTUALLY_EXCLUSIVE_FILTERS`.
+
+### `compliance_narrative_approval_progress`
+
+Return aggregate approval status, per-family breakdown, review queue, and staleness warnings.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID, name, or acronym |
+| `family_filter` | string | | Control family prefix to filter results |
+
+**Response:** Overall counts (`total_controls`, `approved`, `draft`, `in_review`, `needs_revision`, `missing`, `approval_percentage`), `families` breakdown, `review_queue` (InReview control IDs), `staleness_warnings`. Error codes: `SYSTEM_NOT_FOUND`.
+
+### `compliance_batch_submit_narratives`
+
+Submit all Draft narratives for a control family (or all families) for ISSM review.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✓ | System GUID, name, or acronym |
+| `family_filter` | string | | Control family prefix. If omitted, submits all Draft narratives |
+
+**Response:** `submitted_count`, `skipped_count`, `submitted_controls`, `skipped_controls`, `skipped_reason`. Error codes: `SYSTEM_NOT_FOUND`, `NO_DRAFT_NARRATIVES`.
 
 ---
 
@@ -694,6 +1435,69 @@ Delete template.
 
 ---
 
+## Deviation Management
+
+### `compliance_request_deviation`
+
+Create a new deviation request (false positive, risk acceptance, or waiver).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✅ | Target system ID |
+| `control_id` | string | ✅ | NIST 800-53 control ID |
+| `deviation_type` | string | ✅ | `FalsePositive`, `RiskAcceptance`, or `Waiver` |
+| `justification` | string | ✅ | Justification text |
+| `cat_severity` | string | ✅ | `CatI`, `CatII`, or `CatIII` |
+| `expiration_date` | string | ✅ | ISO 8601 date (max 365 days) |
+| `compensating_controls` | string | | Compensating controls description |
+| `finding_id` | string | | Link to compliance finding |
+| `poam_entry_id` | string | | Link to POA&M item |
+| `boundary_id` | string | | Scope to authorization boundary |
+
+### `compliance_review_deviation`
+
+Approve or deny a pending deviation.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `deviation_id` | string | ✅ | Deviation to review |
+| `decision` | string | ✅ | `Approve` or `Deny` |
+| `reviewer_role` | string | | `ISSM` (default) or `AO` |
+| `comments` | string | | Reviewer comments |
+
+### `compliance_list_deviations`
+
+List deviations with optional filters and pagination.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `system_id` | string | ✅ | Target system ID |
+| `status` | string | | Filter by status |
+| `type` | string | | Filter by deviation type |
+| `page` | int | | Page number (default: 1) |
+| `page_size` | int | | Items per page (default: 20) |
+
+### `compliance_revoke_deviation`
+
+Revoke an active deviation.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `deviation_id` | string | ✅ | Deviation to revoke |
+| `reason` | string | ✅ | Revocation reason |
+
+### `compliance_extend_deviation`
+
+Extend the expiration date of an approved deviation.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `deviation_id` | string | ✅ | Deviation to extend |
+| `new_expiration_date` | string | ✅ | New ISO 8601 date (max 365 days) |
+| `justification` | string | | Updated justification |
+
+---
+
 ## Error Responses
 
 All tools return structured error responses via `ToolResponse<T>`:
@@ -708,3 +1512,257 @@ All tools return structured error responses via `ToolResponse<T>`:
 | `CONCURRENCY_CONFLICT` | Optimistic concurrency violation |
 | `GATE_FAILED` | RMF gate conditions not met |
 | `INTERNAL_ERROR` | Unexpected server error |
+
+---
+
+## Enterprise Hardening (Feature 029)
+
+### Rate Limiting
+
+All endpoints are protected by sliding-window rate limiting. When the limit is exceeded:
+
+- **Status**: `429 Too Many Requests`
+- **Header**: `Retry-After: <seconds>` — seconds until the window resets
+- **Body**: `{ "error": "Rate limit exceeded", "retryAfter": <seconds> }`
+
+Default limits: 30 requests per 60-second window, 2 segments per window.
+
+### Cache Headers
+
+Responses from cached tool results include:
+
+| Header | Description |
+|--------|-------------|
+| `X-Cache` | `HIT` or `MISS` — whether the response was served from cache |
+| `X-Cache-Age` | Seconds since the cache entry was created |
+
+### Pagination
+
+Collection endpoints accept pagination parameters:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `page` | int | 1 | Page number (1-based) |
+| `pageSize` | int | 50 | Items per page (max 100) |
+
+Paginated responses include a `PaginationInfo` envelope in metadata:
+
+```json
+{
+  "metadata": {
+    "pagination": {
+      "page": 1,
+      "pageSize": 50,
+      "totalItems": 200,
+      "totalPages": 4,
+      "hasNextPage": true,
+      "nextPageToken": "<opaque-base64-token>"
+    }
+  }
+}
+```
+
+When `pageSize` exceeds the maximum (100), it is clamped and `metadata.pageSizeClamped: true` is set.
+
+The `/mcp/tools` endpoint supports `page` and `pageSize` query parameters for paginated tool listing.
+
+### Offline Mode
+
+When `Server:OfflineMode` is `true`, network-dependent operations return:
+
+```json
+{
+  "errors": [{
+    "errorCode": "OFFLINE_UNAVAILABLE",
+    "message": "AI chat requires network connectivity.",
+    "suggestion": "Available offline capabilities: NIST Control Lookups, Cached Assessments, ..."
+  }]
+}
+```
+
+The `/health` endpoint reports `"status": "degraded"` with `availableCapabilities` and `unavailableCapabilities` arrays.
+
+### SSE Reconnection Protocol
+
+The `/mcp/chat/stream` endpoint supports SSE reconnection:
+
+- Each SSE event includes an `id:` field with a monotonically increasing integer
+- To reconnect, send the `Last-Event-ID` header with the last received event ID
+- Missed events are replayed from the buffer before live events resume
+- Keepalive comments (`: keepalive\n\n`) are sent every 15 seconds during idle periods
+- Event buffers are evicted after session completion or 60 seconds of inactivity
+
+### Monitoring
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/metrics` | GET | Prometheus metrics (when `OpenTelemetry:EnablePrometheus` is true) |
+
+Metrics include `ato.copilot.http.request.duration`, `ato.copilot.http.request.total`, `ato.copilot.cache.hits`, `ato.copilot.cache.misses`. OTLP export is configured via `OpenTelemetry:OtlpEndpoint`.
+
+---
+
+## Dashboard REST API
+
+The Visual Compliance Dashboard exposes REST endpoints under `/api/dashboard/*`. These endpoints power the standalone React SPA dashboard.
+
+### Authentication
+
+All dashboard endpoints require a valid Bearer token in the `Authorization` header. RBAC filtering ensures users only see systems they have role assignments for.
+
+### CORS
+
+The MCP server is configured to allow requests from the dashboard SPA origin (`http://localhost:5173` in development).
+
+### Error Response Schema
+
+All error responses follow the Constitution Principle VII format:
+
+```json
+{
+  "error": "Human-readable error message",
+  "errorCode": "MACHINE_READABLE_CODE",
+  "details": "Optional additional context",
+  "suggestion": "Corrective guidance for the caller"
+}
+```
+
+### Endpoints
+
+#### Portfolio
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/dashboard/portfolio` | List all systems with compliance metrics |
+
+Query parameters: `sortBy`, `sortDir`, `impactLevel`, `rmfPhase`, `cursor`, `pageSize`
+
+#### System Detail
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/dashboard/systems/{systemId}` | System detail with RMF progress, metrics, and activity |
+| GET | `/api/dashboard/systems/{systemId}/heatmap` | Control family compliance heatmap |
+| GET | `/api/dashboard/systems/{systemId}/heatmap/{familyCode}/controls` | Drill-down into individual controls |
+
+#### Trends
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/dashboard/systems/{systemId}/trends` | Compliance trend data |
+
+Query parameters: `startDate`, `endDate`, `granularity` (Daily/Weekly/Monthly/Quarterly)
+
+#### Gap Analysis
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/dashboard/systems/{systemId}/gaps` | Capability-to-control gap analysis |
+
+#### Capabilities
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/dashboard/capabilities` | List capabilities with search/filter |
+| POST | `/api/dashboard/capabilities` | Create a new security capability |
+| PUT | `/api/dashboard/capabilities/{id}` | Update capability (triggers narrative propagation) |
+| DELETE | `/api/dashboard/capabilities/{id}` | Delete capability |
+| GET | `/api/dashboard/capabilities/{id}/mappings` | List control mappings |
+| POST | `/api/dashboard/capabilities/{id}/mappings` | Create new control mappings |
+
+#### Components
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/dashboard/systems/{systemId}/components` | List system components |
+| POST | `/api/dashboard/systems/{systemId}/components` | Create a component |
+| PUT | `/api/dashboard/components/{id}` | Update a component |
+| DELETE | `/api/dashboard/components/{id}` | Delete a component |
+
+Query parameters for GET: `type`, `status`, `search`, `cursor`, `pageSize`
+
+#### Implementation Roadmap
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/dashboard/systems/{systemId}/roadmap` | Active roadmap with phases and items |
+| GET | `/api/dashboard/systems/{systemId}/roadmap/progress` | Progress metrics with risk reduction curve |
+| GET | `/api/dashboard/systems/{systemId}/roadmap/export` | Export roadmap as PDF |
+
+Query parameters for roadmap GET: `includeItems` (default: true)
+
+#### Boundary Definitions (Feature 033)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/dashboard/systems/{systemId}/boundary-definitions` | List boundary definitions |
+| POST | `/api/dashboard/systems/{systemId}/boundary-definitions` | Create a boundary definition |
+| PUT | `/api/dashboard/boundary-definitions/{id}` | Update a boundary definition |
+| DELETE | `/api/dashboard/boundary-definitions/{id}` | Delete (reassigns to Primary) |
+
+#### Azure Resource Discovery (Feature 033)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/dashboard/systems/{systemId}/azure-discovery` | Discover Azure resources via Resource Graph |
+| POST | `/api/dashboard/systems/{systemId}/azure-discovery/apply` | Apply discovery suggestions (create boundaries + components) |
+
+Query parameters for discovery GET: `resourceGroup`, `resourceType`, `search`, `cursor`
+
+#### Boundary MCP Tools (Feature 033)
+
+| Tool Name | Description |
+|-----------|-------------|
+| `compliance_list_boundary_definitions` | List all boundary definitions for a system |
+| `compliance_create_boundary_definition` | Create a new boundary definition (name, type, description) |
+| `compliance_delete_boundary_definition` | Delete a boundary (reassigns resources to Primary) |
+| `compliance_boundary_gap_analysis` | Run boundary-scoped gap analysis with optional boundary filter |
+| `compliance_define_boundary` (modified) | Optionally assigns resources to a named boundary definition |
+
+#### Control Inheritance & CRM (Feature 043)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/dashboard/systems/{systemId}/inheritance` | List inheritance designations with filter/search/pagination |
+| PUT | `/api/dashboard/systems/{systemId}/inheritance` | Set inheritance designations (single or bulk) |
+| GET | `/api/dashboard/systems/{systemId}/inheritance/{controlId}/audit` | Get audit trail for a control |
+| GET | `/api/dashboard/systems/{systemId}/inheritance/crm` | Generate CRM data |
+| GET | `/api/dashboard/systems/{systemId}/inheritance/crm/export` | Export CRM as CSV or Excel |
+| GET | `/api/dashboard/systems/{systemId}/inheritance/csp-profiles` | List available CSP profiles |
+
+Query parameters for inheritance GET: `family`, `inheritanceType`, `search`, `source`, `page`, `pageSize`, `sortBy`, `sortDirection`
+
+The `source` parameter filters by designation source: `org` (org defaults only), `override` (system overrides only), `undesignated`.
+
+Query parameters for CRM export GET: `format` (csv/excel), `layout` (custom/fedramp/emass)
+
+#### Org-Level Inheritance Defaults (Feature 044)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/dashboard/inheritance/org-defaults` | List org-level inheritance defaults (paginated) |
+| POST | `/api/dashboard/inheritance/org-defaults/derive` | Derive org defaults from capability mappings, cascade to systems |
+| POST | `/api/dashboard/systems/{systemId}/inheritance/revert-to-org-defaults` | Revert selected controls to org defaults |
+
+Query parameters for org-defaults GET: `family`, `inheritanceType`, `search`, `page`, `pageSize`
+
+The list inheritance response now includes `designationSource` and `orgDefault` fields per item, plus `orgDefaultCount`, `systemOverrideCount`, and `sourceBreakdown` in the summary. CRM export includes a "Designation Source" column.
+
+#### Security Capabilities Hub (Feature 045)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/dashboard/capabilities` | List security capabilities (paginated, filterable) |
+| POST | `/api/dashboard/capabilities` | Create a new security capability |
+| PUT | `/api/dashboard/capabilities/{id}` | Update a security capability |
+| DELETE | `/api/dashboard/capabilities/{id}` | Delete a security capability |
+| GET | `/api/dashboard/capabilities/coverage` | Compute coverage dashboard (provider cards, KPI, gap controls) |
+| GET | `/api/dashboard/capabilities/csp-profiles` | List available CSP profiles with service counts |
+| POST | `/api/dashboard/capabilities/import/csp-profile` | Import CSP profile (preview with `?dryRun=true` or apply) |
+| POST | `/api/dashboard/capabilities/import/crm` | Import CRM spreadsheet (preview with `?dryRun=true` or apply) |
+| POST | `/api/dashboard/components/{componentId}/capabilities` | Bulk link capabilities to a component |
+| DELETE | `/api/dashboard/components/{componentId}/capabilities/{capabilityId}` | Unlink a capability from a component |
+
+Query parameters for capabilities GET: `search`, `category`, `provider`, `status`, `page`, `pageSize`
+
+The CSP profile import accepts JSON body with `profileId` and `conflictResolution` (Skip/Overwrite). The CRM import accepts `multipart/form-data` with a file and optional `columnMapping` JSON field. Both endpoints support `?dryRun=true` to return a preview without committing changes.

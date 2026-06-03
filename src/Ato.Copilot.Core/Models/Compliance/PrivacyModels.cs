@@ -1,6 +1,7 @@
 namespace Ato.Copilot.Core.Models.Compliance;
 
 using System.ComponentModel.DataAnnotations;
+using Ato.Copilot.Core.Models.Tenancy.Attributes;
 
 // ───────────────────────────── Enums (Feature 021) ─────────────────────────────
 
@@ -50,8 +51,15 @@ public enum PiaReviewDecision
 /// <summary>
 /// Determines whether a system requires a full Privacy Impact Assessment. One per system.
 /// </summary>
+[TenantScoped]
 public class PrivacyThresholdAnalysis
 {
+    /// <summary>
+    /// FK to <see cref="Ato.Copilot.Core.Models.Tenancy.Tenant"/> — populated by
+    /// <c>TenantStampingSaveChangesInterceptor</c> (Feature 048 FR-021).
+    /// </summary>
+    public Guid TenantId { get; set; }
+
     /// <summary>Unique identifier (GUID).</summary>
     [Key]
     [MaxLength(36)]
@@ -108,8 +116,15 @@ public class PrivacyThresholdAnalysis
 /// <summary>
 /// Full PIA document with lifecycle management. One per system (when PTA determines PIA is required).
 /// </summary>
+[TenantScoped]
 public class PrivacyImpactAssessment
 {
+    /// <summary>
+    /// FK to <see cref="Ato.Copilot.Core.Models.Tenancy.Tenant"/> — populated by
+    /// <c>TenantStampingSaveChangesInterceptor</c> (Feature 048 FR-021).
+    /// </summary>
+    public Guid TenantId { get; set; }
+
     /// <summary>Unique identifier (GUID).</summary>
     [Key]
     [MaxLength(36)]
@@ -120,10 +135,13 @@ public class PrivacyImpactAssessment
     [MaxLength(36)]
     public string RegisteredSystemId { get; set; } = string.Empty;
 
-    /// <summary>Triggering PTA.</summary>
-    [Required]
+    /// <summary>
+    /// Triggering PTA. Nullable: when a PTA is invalidated (e.g. info types
+    /// change), the PTA row is deleted but the PIA document is preserved with
+    /// status <see cref="PiaStatus.UnderReview"/> and this FK cleared.
+    /// </summary>
     [MaxLength(36)]
-    public string PtaId { get; set; } = string.Empty;
+    public string? PtaId { get; set; }
 
     /// <summary>PIA lifecycle status.</summary>
     [Required]

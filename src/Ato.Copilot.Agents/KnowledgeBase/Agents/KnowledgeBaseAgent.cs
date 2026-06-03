@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Reflection;
+using Azure.AI.Agents.Persistent;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -40,8 +41,9 @@ public class KnowledgeBaseAgent : BaseAgent
         GetFedRampTemplateGuidanceTool getFedRampTemplateGuidanceTool,
         ILogger<KnowledgeBaseAgent> logger,
         IChatClient? chatClient = null,
-        IOptions<AzureOpenAIGatewayOptions>? aiOptions = null)
-        : base(logger, chatClient, aiOptions?.Value)
+        PersistentAgentsClient? foundryClient = null,
+        IOptions<AzureAiOptions>? azureAiOptions = null)
+        : base(logger, chatClient, foundryClient, azureAiOptions?.Value)
     {
         _options = options.Value;
         _stateManager = stateManager;
@@ -54,6 +56,10 @@ public class KnowledgeBaseAgent : BaseAgent
         RegisterTool(explainRmfTool);
         RegisterTool(explainImpactLevelTool);
         RegisterTool(getFedRampTemplateGuidanceTool);
+
+        // Provision Foundry agent in background when enabled
+        if (_azureAiOptions?.IsFoundry == true)
+            _ = Task.Run(async () => await ProvisionFoundryAgentAsync());
     }
 
     /// <inheritdoc />
@@ -87,7 +93,9 @@ public class KnowledgeBaseAgent : BaseAgent
             "remove control", "add control", "tailor baseline", "generate the customer",
             "register system", "register a new", "define boundary", "categorize system",
             "select baseline", "set controls", "write narrative", "generate crm",
-            "generate sar", "issue ato", "create poam", "assign rmf"];
+            "generate sar", "issue ato", "create poam", "assign rmf",
+            "list open", "show open", "list all", "show all", "show me the",
+            "get the", "run assessment", "create conmon", "generate conmon"];
         foreach (var keyword in actionKeywords)
         {
             if (lower.Contains(keyword))
@@ -196,7 +204,7 @@ public class KnowledgeBaseAgent : BaseAgent
             };
         }
         // \u2500\u2500 AI-powered processing path (Feature 011) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-        var aiResponse = await TryProcessWithAiAsync(message, context, cancellationToken, progress);
+        var aiResponse = await TryProcessWithBackendAsync(message, context, cancellationToken, progress);
         if (aiResponse != null)
         {
             // Store cross-agent state for AI responses too

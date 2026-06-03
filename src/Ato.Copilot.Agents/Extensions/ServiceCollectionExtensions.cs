@@ -1,3 +1,4 @@
+using Azure.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Caching.Memory;
@@ -6,6 +7,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Http.Resilience;
+using Microsoft.Graph;
 using Ato.Copilot.Agents.Common;
 using Ato.Copilot.Agents.Compliance.Agents;
 using Ato.Copilot.Agents.Compliance.Configuration;
@@ -17,6 +19,8 @@ using Ato.Copilot.Agents.Compliance.Services.ScanImport;
 using Ato.Copilot.Agents.Compliance.Tools;
 using Ato.Copilot.Agents.Configuration.Agents;
 using Ato.Copilot.Agents.Configuration.Tools;
+using Ato.Copilot.Agents.Document.Agents;
+using Ato.Copilot.Agents.Document.Tools;
 using Ato.Copilot.Agents.KnowledgeBase.Agents;
 using Ato.Copilot.Agents.KnowledgeBase.Configuration;
 using Ato.Copilot.Agents.KnowledgeBase.Services;
@@ -27,6 +31,7 @@ using Ato.Copilot.Core.Data.Context;
 using Ato.Copilot.Core.Interfaces.Auth;
 using Ato.Copilot.Core.Interfaces.Compliance;
 using Ato.Copilot.Core.Interfaces.Kanban;
+using Ato.Copilot.Core.Models;
 using Polly;
 
 namespace Ato.Copilot.Agents.Extensions;
@@ -40,6 +45,8 @@ public static class ServiceCollectionExtensions
     {
         // Bind compliance agent options
         services.Configure<ComplianceAgentOptions>(configuration.GetSection("Agents:Compliance"));
+
+        RegisterGraphClient(services, configuration);
 
         // Bind boundary options (feature flag for Azure resource validation)
         services.Configure<BoundaryOptions>(configuration.GetSection("Agents:Compliance:Boundary"));
@@ -135,17 +142,14 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IComplianceEventSource>(sp => sp.GetRequiredService<ActivityLogEventSource>());
         services.AddHostedService<ComplianceWatchHostedService>();
 
-        // HttpClient for NistControlsService with Polly resilience
+        // HttpClient for NistControlsService with shared Polly resilience pipeline (FR-005a)
         services.AddHttpClient(nameof(NistControlsService))
-            .AddResilienceHandler("nist-catalog", builder =>
+            .ConfigureResiliencePipeline(new ResiliencePipelineConfig
             {
-                builder.AddRetry(new HttpRetryStrategyOptions
-                {
-                    MaxRetryAttempts = 3,
-                    Delay = TimeSpan.FromSeconds(2),
-                    BackoffType = DelayBackoffType.Exponential,
-                    UseJitter = true,
-                });
+                Name = "NistControlsService",
+                MaxRetryAttempts = 3,
+                BaseDelaySeconds = 2.0,
+                UseJitter = true
             });
 
         // Register NistControlsService as a singleton using the named HttpClient
@@ -179,6 +183,17 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IReferenceDataService, ReferenceDataService>();
         services.AddSingleton<IBaselineService, BaselineService>();
 
+        // ─── Multi-Framework Catalog Import Service (Feature 044) ────────────
+        services.AddSingleton<IFrameworkImportService>(sp =>
+        {
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            var httpClient = factory.CreateClient("FrameworkImport");
+            return new FrameworkImportService(
+                sp.GetRequiredService<IServiceScopeFactory>(),
+                httpClient,
+                sp.GetRequiredService<ILogger<FrameworkImportService>>());
+        });
+
         // Register compliance tools
         services.AddSingleton<ComplianceAssessmentTool>();
         services.AddSingleton<ControlFamilyTool>();
@@ -191,6 +206,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ComplianceHistoryTool>();
         services.AddSingleton<ComplianceStatusTool>();
         services.AddSingleton<ComplianceMonitoringTool>();
+        services.AddSingleton<ShowFindingsTool>();
         services.AddSingleton<ComplianceChatTool>();
         services.AddSingleton<IacComplianceScanTool>();
 
@@ -245,6 +261,12 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<AssignRmfRoleTool>();
         services.AddSingleton<ListRmfRolesTool>();
 
+        // Boundary Definition tools (Feature 033)
+        services.AddSingleton<ListBoundaryDefinitionsTool>();
+        services.AddSingleton<CreateBoundaryDefinitionTool>();
+        services.AddSingleton<DeleteBoundaryDefinitionTool>();
+        services.AddSingleton<BoundaryGapAnalysisTool>();
+
         // RMF Categorization tools (Feature 015 - US2)
         services.AddSingleton<CategorizeSystemTool>();
         services.AddSingleton<GetCategorizationTool>();
@@ -268,6 +290,46 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<NarrativeProgressTool>();
         services.AddSingleton<GenerateSspTool>();
 
+        // Narrative Governance service (Feature 024)
+        services.AddSingleton<INarrativeGovernanceService, NarrativeGovernanceService>();
+
+        // ─── HW/SW Inventory service (Feature 025) ──────────────────────────
+        services.AddSingleton<IInventoryService, InventoryService>();
+
+        // Narrative Governance tools (Feature 024)
+        services.AddSingleton<NarrativeHistoryTool>();
+        services.AddSingleton<NarrativeDiffTool>();
+        services.AddSingleton<RollbackNarrativeTool>();
+        services.AddSingleton<SubmitNarrativeTool>();
+        services.AddSingleton<ReviewNarrativeTool>();
+        services.AddSingleton<BatchReviewNarrativesTool>();
+        services.AddSingleton<NarrativeApprovalProgressTool>();
+        services.AddSingleton<BatchSubmitNarrativesTool>();
+
+        // HW/SW Inventory tools (Feature 025)
+        services.AddSingleton<InventoryAddItemTool>();
+        services.AddSingleton<InventoryUpdateItemTool>();
+        services.AddSingleton<InventoryDecommissionItemTool>();
+        services.AddSingleton<InventoryListTool>();
+        services.AddSingleton<InventoryGetTool>();
+        services.AddSingleton<InventoryExportTool>();
+        services.AddSingleton<InventoryImportTool>();
+        services.AddSingleton<InventoryCompletenessTool>();
+        services.AddSingleton<InventoryAutoSeedTool>();
+
+        // SSP Section Authoring tools (Feature 022)
+        services.AddSingleton<WriteSspSectionTool>();
+        services.AddSingleton<ReviewSspSectionTool>();
+        services.AddSingleton<SspCompletenessTool>();
+
+        // OSCAL SSP Export (Feature 022 Phase 5)
+        services.AddSingleton<IOscalSspExportService, OscalSspExportService>();
+        services.AddSingleton<ExportOscalSspTool>();
+
+        // OSCAL Validation (Feature 022 Phase 6)
+        services.AddSingleton<IOscalValidationService, OscalValidationService>();
+        services.AddSingleton<ValidateOscalSspTool>();
+
         // Assessment Artifact service and tools (Feature 015 - US7)
         services.AddSingleton<IAssessmentArtifactService, AssessmentArtifactService>();
         services.AddSingleton<AssessControlTool>();
@@ -279,13 +341,49 @@ public static class ServiceCollectionExtensions
 
         // Authorization Decision service and tools (Feature 015 - US8)
         services.AddSingleton<IAuthorizationService, AuthorizationService>();
+
+        // Feature 041: SAR lifecycle and package services
+        services.AddSingleton<ISecurityAssessmentReportService, SecurityAssessmentReportService>();
+        services.AddSingleton<IOscalSapExportService, OscalSapExportService>();
+        services.AddSingleton<IOscalSchemaValidationService, OscalSchemaValidationService>();
+        services.AddSingleton<IAuthorizationPackageService, AuthorizationPackageService>();
+        services.AddSingleton<IPackageValidationService, PackageValidationService>();
+
         services.AddSingleton<IssueAuthorizationTool>();
         services.AddSingleton<AcceptRiskTool>();
         services.AddSingleton<ShowRiskRegisterTool>();
         services.AddSingleton<CreatePoamTool>();
         services.AddSingleton<ListPoamTool>();
+        services.AddSingleton<Ato.Copilot.Agents.Compliance.Tools.Poam.GetPoamTool>();
+        services.AddSingleton<Ato.Copilot.Agents.Compliance.Tools.Poam.LinkPoamComponentTool>();
+        services.AddSingleton<Ato.Copilot.Agents.Compliance.Tools.Poam.UnlinkPoamComponentTool>();
+        services.AddSingleton<Ato.Copilot.Agents.Compliance.Tools.Poam.PoamByComponentTool>();
+        services.AddSingleton<Ato.Copilot.Agents.Compliance.Tools.Poam.BulkCreatePoamFromFindingsTool>();
+        services.AddSingleton<Ato.Copilot.Agents.Compliance.Tools.Poam.UpdatePoamTool>();
+        services.AddSingleton<Ato.Copilot.Agents.Compliance.Tools.Poam.ClosePoamTool>();
+        services.AddSingleton<Ato.Copilot.Agents.Compliance.Tools.Poam.UpdatePoamMilestoneTool>();
+        services.AddSingleton<Ato.Copilot.Agents.Compliance.Tools.Poam.BulkUpdatePoamTool>();
+        services.AddSingleton<Ato.Copilot.Agents.Compliance.Tools.Poam.LinkPoamTaskTool>();
+        services.AddSingleton<Ato.Copilot.Agents.Compliance.Tools.Poam.UnlinkPoamTaskTool>();
+        services.AddSingleton<Ato.Copilot.Agents.Compliance.Tools.Poam.CreateTaskFromPoamTool>();
+        services.AddSingleton<Ato.Copilot.Agents.Compliance.Tools.Poam.PoamMetricsTool>();
+        services.AddSingleton<Ato.Copilot.Agents.Compliance.Tools.Poam.PoamTrendTool>();
+        services.AddSingleton<Ato.Copilot.Agents.Compliance.Tools.Poam.ConfigureTicketingTool>();
+        services.AddSingleton<Ato.Copilot.Agents.Compliance.Tools.Poam.SyncPoamTicketTool>();
+        services.AddSingleton<Ato.Copilot.Agents.Compliance.Tools.Poam.BulkSyncTicketsTool>();
+        services.AddSingleton<Ato.Copilot.Agents.Compliance.Tools.Poam.ExportPoamTool>();
         services.AddSingleton<GenerateRarTool>();
         services.AddSingleton<BundleAuthorizationPackageTool>();
+
+        // ─── Feature 041: SAR lifecycle tools ────────────────────────────────
+        services.AddSingleton<SarGenerateTool>();
+        services.AddSingleton<SarEditSectionTool>();
+        services.AddSingleton<SarReviewTool>();
+        services.AddSingleton<ValidateOscalSchemaTool>();
+        services.AddSingleton<ValidatePackageTool>();
+        services.AddSingleton<GeneratePackageTool>();
+        services.AddSingleton<PackageStatusTool>();
+        services.AddSingleton<ListPackagesTool>();
 
         // ─── US9: Continuous Monitoring tools ────────────────────────────────
         services.AddSingleton<IConMonService, ConMonService>();
@@ -329,6 +427,13 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ListPrismaPoliciesTool>();
         services.AddSingleton<PrismaTrendTool>();
 
+        // ─── Feature 026: ACAS/Nessus Scan Import ───────────────────────────
+        services.AddSingleton<INessusParser, NessusParser>();
+        services.AddSingleton<PluginFamilyMappings>();
+        services.AddSingleton<INessusControlMapper, NessusControlMapper>();
+        services.AddSingleton<ImportNessusTool>();
+        services.AddSingleton<ListNessusImportsTool>();
+
         // ─── Feature 018: SAP Generation service and tools ───────────────────
         services.AddSingleton<ISapService, SapService>();
         services.AddSingleton<GenerateSapTool>();
@@ -359,6 +464,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<EscalationHostedService>();
         services.AddSingleton<IEscalationService>(sp => sp.GetRequiredService<EscalationHostedService>());
         services.AddHostedService(sp => sp.GetRequiredService<EscalationHostedService>());
+        services.AddHostedService<DigestSchedulerHostedService>();
 
         // Register tools as BaseTool collection
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ComplianceAssessmentTool>());
@@ -372,6 +478,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ComplianceHistoryTool>());
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ComplianceStatusTool>());
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ComplianceMonitoringTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ShowFindingsTool>());
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ComplianceChatTool>());
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<IacComplianceScanTool>());
 
@@ -414,6 +521,12 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<AssignRmfRoleTool>());
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ListRmfRolesTool>());
 
+        // Boundary Definition tools as BaseTool (Feature 033)
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ListBoundaryDefinitionsTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<CreateBoundaryDefinitionTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<DeleteBoundaryDefinitionTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<BoundaryGapAnalysisTool>());
+
         // RMF Categorization tools as BaseTool (Feature 015 - US2)
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<CategorizeSystemTool>());
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<GetCategorizationTool>());
@@ -436,6 +549,34 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<NarrativeProgressTool>());
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<GenerateSspTool>());
 
+        // SSP Section Authoring tools as BaseTool (Feature 022)
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<WriteSspSectionTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ReviewSspSectionTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<SspCompletenessTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ExportOscalSspTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ValidateOscalSspTool>());
+
+        // Narrative Governance tools as BaseTool (Feature 024)
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<NarrativeHistoryTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<NarrativeDiffTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<RollbackNarrativeTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<SubmitNarrativeTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ReviewNarrativeTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<BatchReviewNarrativesTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<NarrativeApprovalProgressTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<BatchSubmitNarrativesTool>());
+
+        // HW/SW Inventory tools as BaseTool (Feature 025)
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<InventoryAddItemTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<InventoryUpdateItemTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<InventoryDecommissionItemTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<InventoryListTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<InventoryGetTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<InventoryExportTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<InventoryImportTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<InventoryCompletenessTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<InventoryAutoSeedTool>());
+
         // Assessment Artifact tools as BaseTool (Feature 015 - US7)
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<AssessControlTool>());
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<TakeSnapshotTool>());
@@ -450,8 +591,34 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ShowRiskRegisterTool>());
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<CreatePoamTool>());
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ListPoamTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<Ato.Copilot.Agents.Compliance.Tools.Poam.GetPoamTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<Ato.Copilot.Agents.Compliance.Tools.Poam.LinkPoamComponentTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<Ato.Copilot.Agents.Compliance.Tools.Poam.UnlinkPoamComponentTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<Ato.Copilot.Agents.Compliance.Tools.Poam.PoamByComponentTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<Ato.Copilot.Agents.Compliance.Tools.Poam.BulkCreatePoamFromFindingsTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<Ato.Copilot.Agents.Compliance.Tools.Poam.UpdatePoamTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<Ato.Copilot.Agents.Compliance.Tools.Poam.ClosePoamTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<Ato.Copilot.Agents.Compliance.Tools.Poam.UpdatePoamMilestoneTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<Ato.Copilot.Agents.Compliance.Tools.Poam.BulkUpdatePoamTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<Ato.Copilot.Agents.Compliance.Tools.Poam.LinkPoamTaskTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<Ato.Copilot.Agents.Compliance.Tools.Poam.UnlinkPoamTaskTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<Ato.Copilot.Agents.Compliance.Tools.Poam.CreateTaskFromPoamTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<Ato.Copilot.Agents.Compliance.Tools.Poam.PoamMetricsTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<Ato.Copilot.Agents.Compliance.Tools.Poam.PoamTrendTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<Ato.Copilot.Agents.Compliance.Tools.Poam.ConfigureTicketingTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<Ato.Copilot.Agents.Compliance.Tools.Poam.SyncPoamTicketTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<Ato.Copilot.Agents.Compliance.Tools.Poam.BulkSyncTicketsTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<Ato.Copilot.Agents.Compliance.Tools.Poam.ExportPoamTool>());
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<GenerateRarTool>());
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<BundleAuthorizationPackageTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<SarGenerateTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<SarEditSectionTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<SarReviewTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ValidateOscalSchemaTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ValidatePackageTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<GeneratePackageTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<PackageStatusTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ListPackagesTool>());
 
         // US9: Continuous Monitoring BaseTool wrappers
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<CreateConMonPlanTool>());
@@ -493,6 +660,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ListPrismaPoliciesTool>());
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<PrismaTrendTool>());
 
+        // Feature 026: ACAS/Nessus Import BaseTool wrappers
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ImportNessusTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ListNessusImportsTool>());
+
         // Feature 021: Privacy tools BaseTool wrappers
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<CreatePtaTool>());
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<GeneratePiaTool>());
@@ -506,6 +677,72 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<UpdateAgreementTool>());
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<CertifyNoInterconnectionsTool>());
         services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ValidateAgreementsTool>());
+
+        // Feature 029: Cache management tool
+        services.AddSingleton<Ato.Copilot.Agents.Tools.ClearCacheTool>();
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<Ato.Copilot.Agents.Tools.ClearCacheTool>());
+
+        // Feature 031: Implementation Roadmap tools
+        services.AddSingleton<GenerateRoadmapTool>();
+        services.AddSingleton<GetRoadmapTool>();
+        services.AddSingleton<GetRoadmapProgressTool>();
+        services.AddSingleton<UpdateRoadmapTool>();
+        services.AddSingleton<CreateBoardFromRoadmapTool>();
+        services.AddSingleton<ExportRoadmapPdfTool>();
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<GenerateRoadmapTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<GetRoadmapTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<GetRoadmapProgressTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<UpdateRoadmapTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<CreateBoardFromRoadmapTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ExportRoadmapPdfTool>());
+
+        // Feature 035: Deviation Management tools
+        services.AddSingleton<RequestDeviationTool>();
+        services.AddSingleton<ReviewDeviationTool>();
+        services.AddSingleton<ListDeviationsTool>();
+        services.AddSingleton<RevokeDeviationTool>();
+        services.AddSingleton<ExtendDeviationTool>();
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<RequestDeviationTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ReviewDeviationTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ListDeviationsTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<RevokeDeviationTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ExtendDeviationTool>());
+
+        // Feature 040: Component-Centric Boundary tools
+        services.AddSingleton<DiscoverAzureComponentsTool>();
+        services.AddSingleton<ImportAzureComponentsTool>();
+        services.AddSingleton<AssignComponentToBoundaryTool>();
+        services.AddSingleton<ListBoundaryComponentsTool>();
+        services.AddSingleton<UpdateComponentScopeTool>();
+        services.AddSingleton<RemoveComponentFromBoundaryTool>();
+        services.AddSingleton<ComponentRiskSummaryTool>();
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<DiscoverAzureComponentsTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ImportAzureComponentsTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<AssignComponentToBoundaryTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ListBoundaryComponentsTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<UpdateComponentScopeTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<RemoveComponentFromBoundaryTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ComponentRiskSummaryTool>());
+
+        // ─── System Profile services and tools (Feature 046) ────────────────
+        services.AddSingleton<ISystemProfileService, SystemProfileService>();
+        services.AddSingleton<IProfileNotificationService, ProfileNotificationService>();
+        services.AddSingleton<IEmailSender, StubEmailSender>();
+
+        services.AddSingleton<ComplianceGetSystemProfileTool>();
+        services.AddSingleton<ComplianceSaveProfileSectionTool>();
+        services.AddSingleton<ComplianceSubmitProfileSectionTool>();
+        services.AddSingleton<ComplianceReviewProfileSectionTool>();
+        services.AddSingleton<ComplianceBatchApproveProfileTool>();
+        services.AddSingleton<ComplianceGetProfileCompletenessTool>();
+        services.AddSingleton<ComplianceSaveBusinessContextTool>();
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ComplianceGetSystemProfileTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ComplianceSaveProfileSectionTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ComplianceSubmitProfileSectionTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ComplianceReviewProfileSectionTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ComplianceBatchApproveProfileTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ComplianceGetProfileCompletenessTool>());
+        services.AddSingleton<BaseTool>(sp => sp.GetRequiredService<ComplianceSaveBusinessContextTool>());
 
         // Register the agent
         services.AddSingleton<ComplianceAgent>();
@@ -670,5 +907,181 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<BaseAgent>(sp => sp.GetRequiredService<KnowledgeBaseAgent>());
 
         return services;
+    }
+
+    /// <summary>
+    /// Register the Document agent and thin adapter tools.
+    /// This layer orchestrates existing canonical compliance services and avoids duplicated logic.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="DocumentNarrativeGenerateAdapterTool"/> and <see cref="DocumentAgent"/> declare
+    /// <see cref="IChatClient"/>, <see cref="Microsoft.Graph.GraphServiceClient"/>, and
+    /// <see cref="Azure.AI.Agents.Persistent.PersistentAgentsClient"/> as <c>nullable</c>
+    /// constructor parameters (graceful-degradation contract per
+    /// <see cref="CoreServiceExtensions.RegisterChatClient"/>'s doc-comment — the chat client
+    /// is silently skipped when <c>AzureAi:Endpoint</c> is empty). The default .NET DI
+    /// container does NOT infer that <c>?</c> on a reference type means "optional dependency",
+    /// so <c>WebApplicationBuilder</c>'s <c>ValidateOnBuild = true</c> (default when
+    /// <see cref="Microsoft.Extensions.Hosting.IHostEnvironment.IsDevelopment"/>) treats the
+    /// missing service as fatal.
+    /// </para>
+    /// <para>
+    /// Fix: register the tool and the agent via factory lambdas that resolve optional
+    /// dependencies through <see cref="ServiceProviderServiceExtensions.GetService"/> (which
+    /// returns <c>null</c> when unregistered) rather than the constructor-injection path
+    /// (which goes through <c>GetRequiredService</c> under <c>ValidateOnBuild</c>). All other
+    /// dependencies (<see cref="ISspService"/>, <see cref="IDocumentTemplateService"/>,
+    /// <see cref="IHttpClientFactory"/>, <see cref="ILogger{TCategoryName}"/>) are always
+    /// registered and resolve through <c>GetRequiredService</c> as before.
+    /// </para>
+    /// </remarks>
+    public static IServiceCollection AddDocumentAgent(this IServiceCollection services)
+    {
+        services.AddSingleton<DocumentStatusTool>();
+        services.AddSingleton<DocumentContextSourceTool>();
+        services.AddSingleton<DocumentTemplateSelectorTool>();
+
+        services.AddSingleton<DocumentNarrativeGenerateAdapterTool>(sp => new DocumentNarrativeGenerateAdapterTool(
+            sspService: sp.GetRequiredService<Ato.Copilot.Core.Interfaces.Compliance.ISspService>(),
+            templateService: sp.GetRequiredService<Ato.Copilot.Core.Interfaces.Compliance.IDocumentTemplateService>(),
+            httpClientFactory: sp.GetService<System.Net.Http.IHttpClientFactory>(),
+            chatClient: sp.GetService<IChatClient>(),
+            graphClient: sp.GetService<GraphServiceClient>(),
+            logger: sp.GetRequiredService<ILogger<DocumentNarrativeGenerateAdapterTool>>()));
+
+        services.AddSingleton<DocumentAgent>(sp => new DocumentAgent(
+            statusTool: sp.GetRequiredService<DocumentStatusTool>(),
+            contextSourceTool: sp.GetRequiredService<DocumentContextSourceTool>(),
+            templateSelectorTool: sp.GetRequiredService<DocumentTemplateSelectorTool>(),
+            narrativeGenerateTool: sp.GetRequiredService<DocumentNarrativeGenerateAdapterTool>(),
+            logger: sp.GetRequiredService<ILogger<DocumentAgent>>(),
+            chatClient: sp.GetService<IChatClient>(),
+            foundryClient: sp.GetService<Azure.AI.Agents.Persistent.PersistentAgentsClient>(),
+            azureAiOptions: sp.GetService<IOptions<Ato.Copilot.Core.Configuration.AzureAiOptions>>()));
+        services.AddSingleton<BaseAgent>(sp => sp.GetRequiredService<DocumentAgent>());
+
+        return services;
+    }
+
+    private static void RegisterGraphClient(IServiceCollection services, IConfiguration configuration)
+    {
+        if (services.Any(sd => sd.ServiceType == typeof(GraphServiceClient)))
+            return;
+
+        var configuredCloud = configuration.GetValue<string>("Gateway:Azure:CloudEnvironment")
+            ?? configuration.GetValue<string>("AzureAi:CloudEnvironment")
+            ?? "AzureGovernment";
+
+        var isPublicCloud = configuredCloud.Equals("AzureCloud", StringComparison.OrdinalIgnoreCase)
+            || configuredCloud.Equals("AzurePublicCloud", StringComparison.OrdinalIgnoreCase);
+
+        var authorityHost = isPublicCloud
+            ? AzureAuthorityHosts.AzurePublicCloud
+            : AzureAuthorityHosts.AzureGovernment;
+        var graphBaseUrl = isPublicCloud
+            ? "https://graph.microsoft.com/v1.0"
+            : "https://graph.microsoft.us/v1.0";
+        var scopes = new[]
+        {
+            isPublicCloud
+                ? "https://graph.microsoft.com/.default"
+                : "https://graph.microsoft.us/.default"
+        };
+
+        services.AddSingleton(sp =>
+        {
+            var logger = sp.GetService<ILogger<GraphServiceClient>>();
+            var credential = new DefaultAzureCredential(new DefaultAzureCredentialOptions
+            {
+                AuthorityHost = authorityHost
+            });
+
+            logger?.LogInformation("Registered GraphServiceClient for {GraphBaseUrl}", graphBaseUrl);
+            return new GraphServiceClient(credential, scopes, graphBaseUrl);
+        });
+    }
+
+    /// <summary>
+    /// Configures a shared resilience pipeline on an <see cref="IHttpClientBuilder"/> with
+    /// retry, circuit breaker, and timeout policies per FR-001 through FR-005.
+    /// Pipeline order: Retry (with Retry-After support) → Circuit Breaker → Timeout.
+    /// </summary>
+    /// <param name="builder">The HTTP client builder to add resilience to.</param>
+    /// <param name="config">Pipeline configuration with retry, circuit breaker, and timeout settings.</param>
+    /// <returns>The builder for chaining.</returns>
+    public static IHttpClientBuilder ConfigureResiliencePipeline(
+        this IHttpClientBuilder builder,
+        ResiliencePipelineConfig config)
+    {
+        builder.AddResilienceHandler($"resilience-{config.Name}", pipelineBuilder =>
+        {
+            // Retry with Retry-After header support (FR-001, FR-002)
+            pipelineBuilder.AddRetry(new HttpRetryStrategyOptions
+            {
+                MaxRetryAttempts = config.MaxRetryAttempts,
+                Delay = TimeSpan.FromSeconds(config.BaseDelaySeconds),
+                BackoffType = DelayBackoffType.Exponential,
+                UseJitter = config.UseJitter,
+                ShouldRetryAfterHeader = true,
+                ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
+                    .HandleResult(r => r.StatusCode is
+                        System.Net.HttpStatusCode.ServiceUnavailable or
+                        System.Net.HttpStatusCode.TooManyRequests or
+                        System.Net.HttpStatusCode.GatewayTimeout or
+                        System.Net.HttpStatusCode.RequestTimeout),
+                OnRetry = args =>
+                {
+                    var logger = args.Context.Properties.GetValue(
+                        new ResiliencePropertyKey<ILogger>("logger"), null!);
+                    logger?.LogWarning(
+                        "Retry attempt {AttemptNumber} for {Dependency} after {Delay}ms. Status: {StatusCode}",
+                        args.AttemptNumber + 1,
+                        config.Name,
+                        args.RetryDelay.TotalMilliseconds,
+                        args.Outcome.Result?.StatusCode);
+                    return ValueTask.CompletedTask;
+                }
+            });
+
+            // Circuit breaker (FR-003)
+            pipelineBuilder.AddCircuitBreaker(new HttpCircuitBreakerStrategyOptions
+            {
+                FailureRatio = 1.0,
+                MinimumThroughput = config.CircuitBreakerFailureThreshold,
+                SamplingDuration = TimeSpan.FromSeconds(config.CircuitBreakerSamplingDurationSeconds),
+                BreakDuration = TimeSpan.FromSeconds(config.CircuitBreakerBreakDurationSeconds),
+                ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
+                    .HandleResult(r => r.StatusCode is
+                        System.Net.HttpStatusCode.ServiceUnavailable or
+                        System.Net.HttpStatusCode.TooManyRequests or
+                        System.Net.HttpStatusCode.GatewayTimeout or
+                        System.Net.HttpStatusCode.RequestTimeout),
+                OnOpened = args =>
+                {
+                    var logger = args.Context.Properties.GetValue(
+                        new ResiliencePropertyKey<ILogger>("logger"), null!);
+                    logger?.LogWarning(
+                        "Circuit breaker OPENED for {Dependency}. Break duration: {BreakDuration}s",
+                        config.Name,
+                        config.CircuitBreakerBreakDurationSeconds);
+                    return ValueTask.CompletedTask;
+                },
+                OnClosed = args =>
+                {
+                    var logger = args.Context.Properties.GetValue(
+                        new ResiliencePropertyKey<ILogger>("logger"), null!);
+                    logger?.LogInformation(
+                        "Circuit breaker CLOSED for {Dependency}. Calls will resume.",
+                        config.Name);
+                    return ValueTask.CompletedTask;
+                }
+            });
+
+            // Timeout (FR-004)
+            pipelineBuilder.AddTimeout(TimeSpan.FromSeconds(config.RequestTimeoutSeconds));
+        });
+
+        return builder;
     }
 }

@@ -7,6 +7,9 @@ using Ato.Copilot.Core.Interfaces.Compliance;
 using Ato.Copilot.Core.Interfaces.Kanban;
 using Ato.Copilot.Core.Models.Compliance;
 using Ato.Copilot.Core.Models.Kanban;
+using Ato.Copilot.Core.Models.Poam;
+using Ato.Copilot.Core.Models.Roadmap;
+using Ato.Copilot.Core.Services;
 using Ato.Copilot.State.Abstractions;
 using TaskStatus = Ato.Copilot.Core.Models.Kanban.TaskStatus;
 
@@ -25,6 +28,7 @@ public class KanbanService : IKanbanService
     private readonly IAtoComplianceEngine _complianceEngine;
     private readonly IRemediationEngine _remediationEngine;
     private readonly ITaskEnrichmentService? _taskEnrichmentService;
+    private readonly PoamService? _poamService;
 
     /// <summary>
     /// Initializes a new instance of <see cref="KanbanService"/>.
@@ -36,7 +40,8 @@ public class KanbanService : IKanbanService
         IAgentStateManager stateManager,
         IAtoComplianceEngine complianceEngine,
         IRemediationEngine remediationEngine,
-        ITaskEnrichmentService? taskEnrichmentService = null)
+        ITaskEnrichmentService? taskEnrichmentService = null,
+        PoamService? poamService = null)
     {
         _context = context;
         _logger = logger;
@@ -45,6 +50,7 @@ public class KanbanService : IKanbanService
         _complianceEngine = complianceEngine;
         _remediationEngine = remediationEngine;
         _taskEnrichmentService = taskEnrichmentService;
+        _poamService = poamService;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -146,6 +152,65 @@ public class KanbanService : IKanbanService
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogWarning(ex, "Board enrichment failed for {BoardId} — tasks created without enrichment", board.Id);
+            }
+        }
+
+        // Feature 039: Auto-create POA&M items from open findings and link to tasks
+        if (_poamService != null && board.Tasks.Count > 0)
+        {
+            try
+            {
+                var systemId = board.SubscriptionId;
+                var findingLookup = findings.ToDictionary(f => f.Id);
+                var poamCreated = 0;
+
+                foreach (var task in board.Tasks)
+                {
+                    if (string.IsNullOrEmpty(task.FindingId) || !findingLookup.TryGetValue(task.FindingId, out var finding))
+                        continue;
+
+                    // Duplicate detection: check if active POA&M already exists for this finding
+                    var existing = await _context.PoamItems
+                        .AnyAsync(p => p.FindingId == finding.Id &&
+                                       p.SecurityControlNumber == finding.ControlId &&
+                                       p.Status != PoamStatus.Completed &&
+                                       p.Status != PoamStatus.RiskAccepted, cancellationToken);
+                    if (existing) continue;
+
+                    var severity = finding.Severity switch
+                    {
+                        FindingSeverity.Critical or FindingSeverity.High => CatSeverity.CatI,
+                        FindingSeverity.Medium => CatSeverity.CatII,
+                        _ => CatSeverity.CatIII
+                    };
+
+                    var poam = await _poamService.CreateAsync(
+                        systemId,
+                        finding.Title,
+                        "Assessment",
+                        finding.ControlId,
+                        severity,
+                        owner,
+                        DateTime.UtcNow.AddDays(severity == CatSeverity.CatI ? 30 : severity == CatSeverity.CatII ? 90 : 180),
+                        findingId: finding.Id,
+                        createdBy: owner,
+                        ct: cancellationToken);
+
+                    // Set bidirectional FKs
+                    task.PoamItemId = poam.Id;
+                    poam.RemediationTaskId = task.Id;
+                    poamCreated++;
+                }
+
+                if (poamCreated > 0)
+                {
+                    await _context.SaveChangesAsync(cancellationToken);
+                    _logger.LogInformation("Board {BoardId}: auto-created {Count} POA&M items linked to tasks", board.Id, poamCreated);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Auto-POA&M creation failed for board {BoardId} — tasks created without POA&M items", board.Id);
             }
         }
 
@@ -618,6 +683,10 @@ public class KanbanService : IKanbanService
 
         _logger.LogInformation("Task {TaskNumber} moved {OldStatus}→{NewStatus} by {User}",
             task.TaskNumber, oldStatus, targetStatus, actingUserId);
+
+        // Feature 031: Sync linked roadmap item status
+        await SyncLinkedRoadmapItemAsync(task, targetStatus, cancellationToken);
+
         return task;
     }
 
@@ -1347,4 +1416,62 @@ public class KanbanService : IKanbanService
     {
         return value.Replace("\"", "\"\"");
     }
+
+    // ─── Feature 031: Roadmap ↔ Kanban sync ──────────────────────────────────
+
+    /// <summary>
+    /// After a Kanban task status change, propagate to the linked RoadmapItem
+    /// (if any) to keep bi-directional sync. Uses DbContext directly to avoid
+    /// circular dependency with IRoadmapService.
+    /// </summary>
+    private async Task SyncLinkedRoadmapItemAsync(
+        RemediationTask task, TaskStatus newTaskStatus, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrEmpty(task.RoadmapItemId))
+            return;
+
+        var item = await _context.RoadmapItems
+            .Include(i => i.Phase)
+            .FirstOrDefaultAsync(i => i.Id == task.RoadmapItemId, cancellationToken);
+
+        if (item is null)
+        {
+            _logger.LogWarning("Linked RoadmapItem {ItemId} not found for task {TaskId}",
+                task.RoadmapItemId, task.Id);
+            return;
+        }
+
+        var oldStatus = item.Status;
+        item.Status = MapTaskStatusToItemStatus(newTaskStatus);
+
+        if (item.Status == oldStatus)
+            return;
+
+        // Update phase cached counts
+        var phase = item.Phase;
+        if (item.Status == ItemStatus.Complete && oldStatus != ItemStatus.Complete)
+            phase.CompletedItemCount++;
+        else if (item.Status != ItemStatus.Complete && oldStatus == ItemStatus.Complete)
+            phase.CompletedItemCount = Math.Max(0, phase.CompletedItemCount - 1);
+
+        // Update phase status
+        if (phase.CompletedItemCount >= phase.TotalItemCount)
+            phase.Status = PhaseStatus.Complete;
+        else if (phase.CompletedItemCount > 0 || item.Status == ItemStatus.InProgress)
+            phase.Status = PhaseStatus.InProgress;
+
+        await _context.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Synced RoadmapItem {ItemId} status {Old}→{New} from task {TaskNumber}",
+            item.Id, oldStatus, item.Status, task.TaskNumber);
+    }
+
+    private static ItemStatus MapTaskStatusToItemStatus(TaskStatus taskStatus) => taskStatus switch
+    {
+        TaskStatus.Backlog or TaskStatus.ToDo => ItemStatus.NotStarted,
+        TaskStatus.InProgress or TaskStatus.InReview or TaskStatus.Blocked => ItemStatus.InProgress,
+        TaskStatus.Done => ItemStatus.Complete,
+        _ => ItemStatus.NotStarted,
+    };
 }

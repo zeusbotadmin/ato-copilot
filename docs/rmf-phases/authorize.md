@@ -74,12 +74,27 @@
 
 **Tasks in this phase**:
 
-1. Bundle authorization package → Tool: `compliance_bundle_authorization_package`
-2. Review risk register → Tool: `compliance_show_risk_register`
+1. Review SSP section completeness → Tool: `compliance_ssp_completeness`
+2. Export OSCAL SSP → Tool: `compliance_export_oscal_ssp`
+3. Validate OSCAL SSP → Tool: `compliance_validate_oscal_ssp`
+4. Verify privacy compliance → Tool: `compliance_check_privacy_compliance`
+5. Validate interconnection agreements → Tool: `compliance_validate_agreements`
+6. Bundle authorization package → Tool: `compliance_bundle_authorization_package`
+7. Review risk register → Tool: `compliance_show_risk_register`
 
 **Natural Language Queries**:
 
 > **"Bundle the authorization package for system {id} including evidence"** → `compliance_bundle_authorization_package` — bundles SSP + SAR + RAR + POA&M + CRM + ATO Letter
+
+> **"Export the OSCAL SSP for the authorization package"** → `compliance_export_oscal_ssp` — generates NIST OSCAL-compliant SSP document
+
+> **"Validate the OSCAL SSP before submitting the package"** → `compliance_validate_oscal_ssp` — schema validation
+
+> **"Is the SSP complete for system {id}?"** → `compliance_ssp_completeness` — all 13 sections must be Approved
+
+> **"Check privacy compliance readiness"** → `compliance_check_privacy_compliance` — PTA/PIA status
+
+> **"Are all interconnection agreements valid?"** → `compliance_validate_agreements` — ISA/MOU status check
 
 > **"What documents are ready for the authorization package?"** → document readiness check
 
@@ -99,10 +114,14 @@
 | Document | Source | Required |
 |----------|--------|----------|
 | System Security Plan (SSP) | `compliance_generate_ssp` | Yes |
+| OSCAL SSP Export | `compliance_export_oscal_ssp` | Recommended |
+| Security Assessment Plan (SAP) | `compliance_generate_sap` (finalized) | Yes |
 | Security Assessment Report (SAR) | `compliance_generate_sar` | Yes |
 | Risk Assessment Report (RAR) | `compliance_generate_rar` | Yes |
 | Plan of Action & Milestones (POA&M) | `compliance_list_poam` | Yes |
 | Customer Responsibility Matrix (CRM) | `compliance_generate_crm` | Yes |
+| Privacy Impact Assessment (PIA) | `compliance_generate_pia` (if PII) | Conditional |
+| Interconnection Agreements (ISA/MOU) | `compliance_generate_isa` | Conditional |
 | ATO Letter | Generated from authorization decision | After AO decision |
 
 ---
@@ -123,6 +142,11 @@
 | Gate | Condition | Checked By |
 |------|-----------|-----------|
 | Authorization issued | An authorization decision has been recorded | `compliance_advance_rmf_step` |
+| SSP complete | All 13 SSP sections Approved | `compliance_ssp_completeness` |
+| SAP finalized | SAP locked before assessment | `compliance_get_sap` |
+| Privacy compliant | PTA complete; PIA approved (if applicable) | `compliance_check_privacy_compliance` |
+| Interconnections valid | All ISA/MOUs active or no-interconnections certified | `compliance_validate_agreements` |
+| OSCAL validated | OSCAL SSP passes schema validation (recommended) | `compliance_validate_oscal_ssp` |
 
 ---
 
@@ -141,3 +165,19 @@
 - [Next Phase: Monitor](monitor.md)
 - [AO Guide](../guides/ao-quick-reference.md) — Full AO workflow documentation
 - [ISSM Guide](../guides/issm-guide.md) — Package preparation workflows
+- [POA&M Management Guide](../guides/poam-management.md) — POA&M exports for authorization packages
+
+### POA&M Exports for Authorization (Feature 039)
+
+During authorization, export POA&M data in eMASS Excel format for inclusion in the authorization package. Use `compliance_export_poam` with format `emass_excel` or the Export button on the POA&M dashboard.
+
+### eMASS Authorization Package (Feature 041)
+
+Generate a complete authorization package for eMASS submission:
+
+1. **Validate readiness**: `compliance_validate_package` — ensures all artifacts exist and pass quality checks
+2. **Generate package**: `compliance_generate_package` — creates a ZIP with all six required artifacts
+3. **Track progress**: `compliance_package_status` — monitor generation in real time
+4. **Download and submit**: Download the ZIP from the Documents page for eMASS upload
+
+The package contains: OSCAL SSP, OSCAL POA&M, OSCAL Assessment Results, OSCAL Assessment Plan (SAP), SAR (Word), and evidence bundle.

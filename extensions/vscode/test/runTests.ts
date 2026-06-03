@@ -9,12 +9,20 @@ function run(): void {
     timeout: 10000,
   });
 
-  const testsRoot = path.resolve(__dirname, "suite");
+  // Tests live under multiple folders so groups stay logically separate.
+  // `runTests` walks each folder one level deep and registers `*.test.js`.
+  // (Feature 051 added `auth/` for the device-code sign-in suites.)
+  const testFolders = ["suite", "auth"];
 
-  const files = fs.readdirSync(testsRoot).filter((f) => f.endsWith(".test.js"));
-
-  for (const file of files) {
-    mocha.addFile(path.resolve(testsRoot, file));
+  for (const folder of testFolders) {
+    const testsRoot = path.resolve(__dirname, folder);
+    if (!fs.existsSync(testsRoot)) continue;
+    const files = fs
+      .readdirSync(testsRoot)
+      .filter((f) => f.endsWith(".test.js"));
+    for (const file of files) {
+      mocha.addFile(path.resolve(testsRoot, file));
+    }
   }
 
   mocha.run((failures) => {

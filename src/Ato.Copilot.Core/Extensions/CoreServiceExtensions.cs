@@ -1,6 +1,7 @@
 using Azure.Core;
 using Azure.Identity;
 using Azure.ResourceManager;
+using Azure.AI.Agents.Persistent;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
@@ -9,6 +10,13 @@ using Microsoft.Extensions.Logging;
 using OpenAI;
 using Ato.Copilot.Core.Configuration;
 using Ato.Copilot.Core.Data.Context;
+using Ato.Copilot.Core.Interfaces;
+using Ato.Copilot.Core.Models;
+using Ato.Copilot.Core.Observability;
+using Ato.Copilot.Core.Services;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Http.Resilience;
+using Polly;
 using System.ClientModel;
 
 namespace Ato.Copilot.Core.Extensions;
@@ -32,6 +40,7 @@ public static class CoreServiceExtensions
     {
         // Bind configuration sections
         services.Configure<GatewayOptions>(configuration.GetSection(GatewayOptions.SectionName));
+        services.Configure<AzureAiOptions>(configuration.GetSection(AzureAiOptions.SectionName));
         services.Configure<AzureAdOptions>(configuration.GetSection(AzureAdOptions.SectionName));
         services.Configure<PimServiceOptions>(configuration.GetSection(PimServiceOptions.SectionName));
         services.Configure<CacAuthOptions>(configuration.GetSection(CacAuthOptions.SectionName));
@@ -40,13 +49,66 @@ public static class CoreServiceExtensions
         services.Configure<AlertOptions>(configuration.GetSection(AlertOptions.SectionName));
         services.Configure<NotificationOptions>(configuration.GetSection(NotificationOptions.SectionName));
         services.Configure<EscalationOptions>(configuration.GetSection(EscalationOptions.SectionName));
-        services.Configure<AzureOpenAIGatewayOptions>(configuration.GetSection("Gateway:AzureOpenAI"));
 
-        // Register HTTP client factory
+        // Bind enterprise hardening configuration sections (Feature 029)
+        services.Configure<ResilienceOptions>(configuration.GetSection(ResilienceOptions.SectionName));
+        services.Configure<RateLimitingOptions>(configuration.GetSection(RateLimitingOptions.SectionName));
+        services.Configure<CachingOptions>(configuration.GetSection(CachingOptions.SectionName));
+        services.Configure<PaginationOptions>(configuration.GetSection(PaginationOptions.SectionName));
+        services.Configure<StreamingOptions>(configuration.GetSection(StreamingOptions.SectionName));
+        services.Configure<OpenTelemetryOptions>(configuration.GetSection(OpenTelemetryOptions.SectionName));
+
+        // Bind database options — drives EF Core retry, command timeout, and
+        // sensitive-data-logging behavior in RegisterDbContext below.
+        services.Configure<DatabaseOptions>(configuration.GetSection(DatabaseOptions.SectionName));
+
+        // Register enterprise hardening singletons
+        services.AddSingleton<HttpMetrics>();
+        services.AddSingleton<IPathSanitizationService, PathSanitizationService>();
+        services.AddSingleton<ResponseCacheService>();
+        services.AddSingleton<OfflineModeService>();
+
+        // Register IMemoryCache with configurable size limit (FR-020a)
+        var cachingOptions = new CachingOptions();
+        configuration.GetSection(CachingOptions.SectionName).Bind(cachingOptions);
+        services.AddMemoryCache(options =>
+        {
+            options.SizeLimit = (long)cachingOptions.SizeLimitMb * 1024 * 1024;
+        });
+
+        // Register HTTP client factory with default resilience pipeline (FR-001, T016).
+        // The "default" pipeline is read from Resilience:Pipelines[?Name=='default']
+        // when present; missing values fall back to the historical hardcoded literals
+        // so behavior is unchanged when the JSON section is absent.
+        var resilienceOptions = new ResilienceOptions();
+        configuration.GetSection(ResilienceOptions.SectionName).Bind(resilienceOptions);
+        var defaultPipeline = resilienceOptions.Pipelines
+            .FirstOrDefault(p => string.Equals(p.Name, "default", StringComparison.OrdinalIgnoreCase))
+            ?? new ResiliencePipelineConfig();
+
         services.AddHttpClient();
+        services.AddHttpClient("default", client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(defaultPipeline.RequestTimeoutSeconds);
+        })
+        .AddResilienceHandler("resilience-default", pipelineBuilder =>
+        {
+            pipelineBuilder.AddRetry(new Microsoft.Extensions.Http.Resilience.HttpRetryStrategyOptions
+            {
+                MaxRetryAttempts = defaultPipeline.MaxRetryAttempts,
+                Delay = TimeSpan.FromSeconds(defaultPipeline.BaseDelaySeconds),
+                BackoffType = DelayBackoffType.Exponential,
+                UseJitter = defaultPipeline.UseJitter,
+                ShouldRetryAfterHeader = true,
+            });
+            pipelineBuilder.AddTimeout(TimeSpan.FromSeconds(defaultPipeline.RequestTimeoutSeconds));
+        });
 
         // Register IChatClient from Azure OpenAI when configured
         RegisterChatClient(services, configuration);
+
+        // Register PersistentAgentsClient from Azure AI Foundry when configured
+        RegisterFoundryClient(services, configuration);
 
         // Register database context with provider selection
         RegisterDbContext(services, configuration);
@@ -58,19 +120,22 @@ public static class CoreServiceExtensions
     }
 
     /// <summary>
-    /// Registers <see cref="IChatClient"/> as a singleton when Gateway:AzureOpenAI:Endpoint
-    /// is configured. Uses API key or DefaultAzureCredential based on UseManagedIdentity.
+    /// Registers <see cref="IChatClient"/> as a singleton when an OpenAI endpoint is configured.
+    /// Reads from the unified AzureAi configuration section.
+    /// Uses API key or DefaultAzureCredential based on UseManagedIdentity.
     /// When Endpoint is empty or missing, registration is silently skipped — agents fall back
     /// to deterministic tool routing (Constitution Principle: graceful degradation).
     /// </summary>
     private static void RegisterChatClient(IServiceCollection services, IConfiguration configuration)
     {
-        var endpoint = configuration.GetValue<string>("Gateway:AzureOpenAI:Endpoint");
+        var endpoint = configuration.GetValue<string>("AzureAi:Endpoint");
         if (string.IsNullOrWhiteSpace(endpoint))
             return;
 
-        var useManagedIdentity = configuration.GetValue<bool>("Gateway:AzureOpenAI:UseManagedIdentity");
-        var chatDeploymentName = configuration.GetValue<string>("Gateway:AzureOpenAI:ChatDeploymentName") ?? "gpt-4o";
+        var useManagedIdentity = configuration.GetValue<bool>("AzureAi:UseManagedIdentity");
+        var chatDeploymentName = configuration.GetValue<string>("AzureAi:DeploymentName") ?? "gpt-4o";
+        var apiKey = configuration.GetValue<string>("AzureAi:ApiKey");
+        var cloudEnv = configuration.GetValue<string>("AzureAi:CloudEnvironment");
 
         services.AddSingleton<IChatClient>(sp =>
         {
@@ -79,8 +144,9 @@ public static class CoreServiceExtensions
             Azure.AI.OpenAI.AzureOpenAIClient azureClient;
             if (useManagedIdentity)
             {
-                var cloudEnv = configuration.GetValue<string>("Gateway:Azure:CloudEnvironment") ?? "AzureGovernment";
-                var authorityHost = cloudEnv.Equals("AzureCloud", StringComparison.OrdinalIgnoreCase)
+                var resolvedCloudEnv = cloudEnv ?? "AzureGovernment";
+                var authorityHost = resolvedCloudEnv.Equals("AzureCloud", StringComparison.OrdinalIgnoreCase)
+                                 || resolvedCloudEnv.Equals("AzurePublicCloud", StringComparison.OrdinalIgnoreCase)
                     ? AzureAuthorityHosts.AzurePublicCloud
                     : AzureAuthorityHosts.AzureGovernment;
 
@@ -96,10 +162,10 @@ public static class CoreServiceExtensions
             }
             else
             {
-                var apiKey = configuration.GetValue<string>("Gateway:AzureOpenAI:ApiKey") ?? string.Empty;
+                var resolvedApiKey = apiKey ?? string.Empty;
                 azureClient = new Azure.AI.OpenAI.AzureOpenAIClient(
                     new Uri(endpoint),
-                    new ApiKeyCredential(apiKey));
+                    new ApiKeyCredential(resolvedApiKey));
                 logger?.LogInformation(
                     "Registered IChatClient with API key for {Endpoint}, deployment {Deployment}",
                     endpoint, chatDeploymentName);
@@ -110,19 +176,63 @@ public static class CoreServiceExtensions
     }
 
     /// <summary>
+    /// Registers <see cref="PersistentAgentsClient"/> as a singleton when a Foundry project endpoint
+    /// is configured. Reads from the unified AzureAi configuration section.
+    /// Uses DefaultAzureCredential with the appropriate authority host for Gov/Commercial.
+    /// When Endpoint is empty or missing, registration is silently skipped — agents fall back
+    /// to IChatClient or deterministic tool routing.
+    /// </summary>
+    private static void RegisterFoundryClient(IServiceCollection services, IConfiguration configuration)
+    {
+        var endpoint = configuration.GetValue<string>("AzureAi:FoundryProjectEndpoint");
+        if (string.IsNullOrWhiteSpace(endpoint))
+            return;
+
+        var cloudEnv = configuration.GetValue<string>("AzureAi:CloudEnvironment");
+
+        var resolvedCloudEnv = cloudEnv ?? "AzureGovernment";
+        var authorityHost = resolvedCloudEnv.Equals("AzureCloud", StringComparison.OrdinalIgnoreCase)
+                         || resolvedCloudEnv.Equals("AzurePublicCloud", StringComparison.OrdinalIgnoreCase)
+            ? AzureAuthorityHosts.AzurePublicCloud
+            : AzureAuthorityHosts.AzureGovernment;
+
+        services.AddSingleton(sp =>
+        {
+            var logger = sp.GetService<ILogger<PersistentAgentsClient>>();
+            var credential = new DefaultAzureCredential(new DefaultAzureCredentialOptions
+            {
+                AuthorityHost = authorityHost
+            });
+
+            logger?.LogInformation(
+                "Registered PersistentAgentsClient with DefaultAzureCredential for {Endpoint} ({CloudEnv})",
+                endpoint, resolvedCloudEnv);
+
+            return new PersistentAgentsClient(endpoint, credential);
+        });
+    }
+
+    /// <summary>
     /// Registers <see cref="AtoCopilotContext"/> with SQLite (development) or
     /// SQL Server (production) based on Database:Provider configuration.
     /// Defaults to SQLite with "Data Source=ato-copilot.db".
+    /// Retry policy, command timeout, and sensitive-data-logging are driven
+    /// by <see cref="DatabaseOptions"/>.
     /// </summary>
     /// <param name="services">The service collection.</param>
     /// <param name="configuration">Application configuration.</param>
     private static void RegisterDbContext(IServiceCollection services, IConfiguration configuration)
     {
-        var provider = configuration.GetValue<string>("Database:Provider") ?? "SQLite";
+        var dbOptions = new DatabaseOptions();
+        configuration.GetSection(DatabaseOptions.SectionName).Bind(dbOptions);
+
+        var provider = !string.IsNullOrWhiteSpace(dbOptions.Provider)
+            ? dbOptions.Provider
+            : "SQLite";
         var connectionString = configuration.GetConnectionString("DefaultConnection")
                                ?? "Data Source=ato-copilot.db";
 
-        services.AddDbContextFactory<AtoCopilotContext>(options =>
+        services.AddDbContextFactory<AtoCopilotContext>((sp, options) =>
         {
             // Suppress PendingModelChangesWarning — model snapshot may lag behind
             // code-first changes during active development. EnsureCreated/Migrate
@@ -130,64 +240,73 @@ public static class CoreServiceExtensions
             options.ConfigureWarnings(w =>
                 w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning));
 
+            // EnableSensitiveDataLogging — driven by DatabaseOptions so it can be
+            // flipped on per-environment without a rebuild. MUST remain false in
+            // production (exposes parameter values in logs).
+            if (dbOptions.EnableSensitiveDataLogging)
+            {
+                options.EnableSensitiveDataLogging();
+            }
+
+            // Feature 048 (T041): tenant-stamping interceptor — resolved per-DbContext
+            // from DI so the AsyncLocal-backed accessor is always live.
+            var stamper = sp.GetService<Ato.Copilot.Core.Data.Interceptors.TenantStampingSaveChangesInterceptor>();
+            if (stamper is not null)
+            {
+                options.AddInterceptors(stamper);
+            }
+
+            // Feature 048 (T107 / T108): SQL Server SESSION_CONTEXT publisher —
+            // wires the current TenantId / IsCspAdmin claims into every
+            // connection so the Row-Level Security FILTER + BLOCK predicates
+            // installed by RlsPolicyInstaller (T109) can read them. The
+            // interceptor short-circuits to no-op for non-SQL-Server
+            // providers, so it is safe to register unconditionally.
+            var sessionPublisher = sp.GetService<Ato.Copilot.Core.Data.Interceptors.SqlServerSessionContextConnectionInterceptor>();
+            if (sessionPublisher is not null)
+            {
+                options.AddInterceptors(sessionPublisher);
+            }
+
             if (provider.Equals("SqlServer", StringComparison.OrdinalIgnoreCase))
             {
                 options.UseSqlServer(connectionString, sqlOptions =>
                 {
                     sqlOptions.EnableRetryOnFailure(
-                        maxRetryCount: 5,
-                        maxRetryDelay: TimeSpan.FromSeconds(30),
+                        maxRetryCount: dbOptions.MaxRetryCount,
+                        maxRetryDelay: TimeSpan.FromSeconds(dbOptions.MaxRetryDelay),
                         errorNumbersToAdd: null);
-                    sqlOptions.CommandTimeout(30);
+                    sqlOptions.CommandTimeout(dbOptions.CommandTimeoutSeconds);
                 });
             }
             else
             {
                 options.UseSqlite(connectionString, sqliteOptions =>
                 {
-                    sqliteOptions.CommandTimeout(30);
+                    sqliteOptions.CommandTimeout(dbOptions.CommandTimeoutSeconds);
                 });
             }
         });
     }
 
     /// <summary>
-    /// Registers <see cref="ArmClient"/> as a singleton with dual-cloud support
-    /// (AzureGovernment / AzureCloud). Uses <see cref="DefaultAzureCredential"/>
-    /// configured for the target cloud environment.
-    /// Thread-safe: ArmClient is designed for concurrent use.
+    /// Registers <see cref="ArmClientFactory"/> and a default <see cref="ArmClient"/>
+    /// singleton with dual-cloud support (AzureGovernment / AzureCloud).
+    /// The factory lazily creates clients for both clouds; the singleton resolves
+    /// to the configured default for backward compatibility with existing services.
     /// </summary>
     /// <param name="services">The service collection.</param>
     /// <param name="configuration">Application configuration.</param>
     private static void RegisterArmClient(IServiceCollection services, IConfiguration configuration)
     {
+        var cloudEnv = configuration.GetValue<string>("Gateway:Azure:CloudEnvironment")
+                       ?? "AzureGovernment";
+
+        // Factory: provides ArmClient instances for any cloud
         services.AddSingleton(sp =>
-        {
-            var cloudEnv = configuration.GetValue<string>("Gateway:Azure:CloudEnvironment")
-                           ?? "AzureGovernment";
+            new ArmClientFactory(cloudEnv, sp.GetRequiredService<ILogger<ArmClientFactory>>()));
 
-            var authorityHost = cloudEnv.Equals("AzureCloud", StringComparison.OrdinalIgnoreCase)
-                ? AzureAuthorityHosts.AzurePublicCloud
-                : AzureAuthorityHosts.AzureGovernment;
-
-            var credential = new DefaultAzureCredential(new DefaultAzureCredentialOptions
-            {
-                AuthorityHost = authorityHost
-            });
-
-            var armEnvironment = cloudEnv.Equals("AzureCloud", StringComparison.OrdinalIgnoreCase)
-                ? ArmEnvironment.AzurePublicCloud
-                : ArmEnvironment.AzureGovernment;
-
-            var logger = sp.GetService<ILogger<ArmClient>>();
-            logger?.LogInformation(
-                "Initializing ArmClient for {CloudEnvironment} ({ArmEndpoint})",
-                cloudEnv, armEnvironment.Endpoint);
-
-            return new ArmClient(credential, default, new ArmClientOptions
-            {
-                Environment = armEnvironment
-            });
-        });
+        // Default singleton ArmClient: delegates to the factory's default for backward compat
+        services.AddSingleton(sp => sp.GetRequiredService<ArmClientFactory>().GetDefault());
     }
 }

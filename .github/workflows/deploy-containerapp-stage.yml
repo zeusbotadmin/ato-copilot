@@ -1,0 +1,567 @@
+name: Reusable - Deploy Container App Stage
+
+on:
+  workflow_call:
+    inputs:
+      environment_name:
+        description: GitHub environment name (dev, test, production)
+        required: true
+        type: string
+      workload:
+        description: Workload type (mcp or dashboard)
+        required: false
+        default: mcp
+        type: string
+      image:
+        description: Fully-qualified container image to deploy
+        required: true
+        type: string
+      containerapp_name:
+        description: Optional Container App name override
+        required: false
+        default: ""
+        type: string
+      containerapp_env_name:
+        description: Optional Container Apps environment name override
+        required: false
+        default: ""
+        type: string
+      target_port:
+        description: Container App ingress target port
+        required: false
+        default: "3001"
+        type: string
+      health_path:
+        description: Health check path to validate deployment
+        required: false
+        default: /health
+        type: string
+      include_mcp_env_vars:
+        description: Whether to include MCP-specific environment variables
+        required: false
+        default: true
+        type: boolean
+      mcp_base_url_override:
+        description: Optional MCP base URL override for dashboard deployments
+        required: false
+        default: ""
+        type: string
+      assign_managed_identity:
+        description: Whether to assign a system-assigned managed identity
+        required: false
+        default: true
+        type: boolean
+      inject_runtime_secrets:
+        description: Whether to set optional runtime secrets and secretref env vars
+        required: false
+        default: false
+        type: boolean
+      min_replicas:
+        description: "Minimum replica count. Set to 1+ to disable cold-start (scale-to-zero)."
+        required: false
+        default: "1"
+        type: string
+      max_replicas:
+        description: Maximum replica count for autoscaling.
+        required: false
+        default: "5"
+        type: string
+      cpu:
+        description: "vCPU request per replica (e.g. 0.5, 1.0, 2.0). .NET 9 needs >= 0.5."
+        required: false
+        default: "1.0"
+        type: string
+      memory:
+        description: "Memory request per replica (e.g. 1.0Gi, 2.0Gi). Must pair with cpu (cpu*2 == memoryGi typical)."
+        required: false
+        default: "2.0Gi"
+        type: string
+      http_scale_concurrency:
+        description: Concurrent HTTP requests per replica that triggers scale-out.
+        required: false
+        default: "50"
+        type: string
+      enable_session_affinity:
+        description: "Enable sticky sessions on ingress (REQUIRED for SignalR with >1 replica)."
+        required: false
+        default: true
+        type: boolean
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+      ATO_DB_CONNECTION_STRING:
+        required: false
+      ATO_AZUREAI_APIKEY:
+        required: false
+      ATO_AZUREAD_CLIENTSECRET:
+        required: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment_name }}
+
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Validate stage configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${{ vars.AZURE_RESOURCE_GROUP }}" || (echo "Missing environment variable: AZURE_RESOURCE_GROUP" && exit 1)
+          if [ -z "${{ inputs.containerapp_name }}" ] && [ -z "${{ vars.AZURE_CONTAINERAPP_NAME || '' }}" ]; then
+            echo "Missing environment variable: AZURE_CONTAINERAPP_NAME"
+            exit 1
+          fi
+          if [ -z "${{ inputs.containerapp_env_name }}" ] && [ -z "${{ vars.AZURE_CONTAINERAPP_ENV_NAME || '' }}" ]; then
+            echo "Missing environment variable: AZURE_CONTAINERAPP_ENV_NAME"
+            exit 1
+          fi
+          test -n "${{ vars.AZURE_ACR_NAME }}" || (echo "Missing environment variable: AZURE_ACR_NAME" && exit 1)
+
+      - name: Resolve deployment target
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WORKLOAD="${{ inputs.workload }}"
+          APP="${{ inputs.containerapp_name }}"
+          BASE_APP="${{ vars.AZURE_CONTAINERAPP_NAME }}"
+
+          if [ -z "$APP" ]; then
+            if [ "$WORKLOAD" = "dashboard" ]; then
+              APP="${{ vars.AZURE_DASHBOARD_CONTAINERAPP_NAME || '' }}"
+              if [ -z "$APP" ]; then
+                APP="${BASE_APP/-mcp/-dashboard}"
+                if [ "$APP" = "$BASE_APP" ]; then
+                  APP="${BASE_APP}-dashboard"
+                fi
+              fi
+            else
+              APP="$BASE_APP"
+            fi
+          fi
+
+          ENV_NAME="${{ inputs.containerapp_env_name }}"
+          if [ -z "$ENV_NAME" ]; then
+            if [ "$WORKLOAD" = "dashboard" ]; then
+              ENV_NAME="${{ vars.AZURE_DASHBOARD_CONTAINERAPP_ENV_NAME || '' }}"
+            fi
+            if [ -z "$ENV_NAME" ]; then
+              ENV_NAME="${{ vars.AZURE_CONTAINERAPP_ENV_NAME }}"
+            fi
+          fi
+
+          echo "app=${APP}" >> "$GITHUB_OUTPUT"
+          echo "env_name=${ENV_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve ACR credentials
+        id: acr
+        shell: bash
+        run: |
+          set -euo pipefail
+          USERNAME=$(az acr credential show -n "${{ vars.AZURE_ACR_NAME }}" --query username -o tsv)
+          PASSWORD=$(az acr credential show -n "${{ vars.AZURE_ACR_NAME }}" --query passwords[0].value -o tsv)
+          LOGIN_SERVER=$(az acr show -g "${{ vars.AZURE_RESOURCE_GROUP }}" -n "${{ vars.AZURE_ACR_NAME }}" --query loginServer -o tsv)
+          echo "username=${USERNAME}" >> "$GITHUB_OUTPUT"
+          echo "password=${PASSWORD}" >> "$GITHUB_OUTPUT"
+          echo "login_server=${LOGIN_SERVER}" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure Container Apps environment exists (idempotent)
+        shell: bash
+        run: |
+          set -euo pipefail
+          RG="${{ vars.AZURE_RESOURCE_GROUP }}"
+          ENV_NAME="${{ steps.target.outputs.env_name }}"
+
+          # Prefer explicit location variable when defined; otherwise use RG location.
+          LOCATION="${{ vars.AZURE_LOCATION || '' }}"
+          if [ -z "$LOCATION" ]; then
+            LOCATION=$(az group show -n "$RG" --query location -o tsv)
+          fi
+
+          LAW_NAME="law-${ENV_NAME}"
+
+          LAW_ID=$(az monitor log-analytics workspace show \
+            --resource-group "$RG" --workspace-name "$LAW_NAME" \
+            --query customerId -o tsv 2>/dev/null || true)
+
+          if [ -z "$LAW_ID" ]; then
+            az monitor log-analytics workspace create \
+              --resource-group "$RG" \
+              --workspace-name "$LAW_NAME" \
+              --location "$LOCATION" \
+              --retention-time 30 >/dev/null
+            LAW_ID=$(az monitor log-analytics workspace show \
+              --resource-group "$RG" --workspace-name "$LAW_NAME" \
+              --query customerId -o tsv)
+          fi
+
+          LAW_KEY=$(az monitor log-analytics workspace get-shared-keys \
+            --resource-group "$RG" --workspace-name "$LAW_NAME" \
+            --query primarySharedKey -o tsv)
+
+          EXISTING_ENV=$(az containerapp env show \
+            --name "$ENV_NAME" --resource-group "$RG" \
+            --query id -o tsv 2>/dev/null || true)
+
+          if [ -n "$EXISTING_ENV" ]; then
+            echo "Container Apps environment '$ENV_NAME' already exists."
+          else
+            az containerapp env create \
+              --name "$ENV_NAME" \
+              --resource-group "$RG" \
+              --location "$LOCATION" \
+              --logs-workspace-id "$LAW_ID" \
+              --logs-workspace-key "$LAW_KEY" \
+              --enable-workload-profiles false >/dev/null
+            echo "Created Container Apps environment '$ENV_NAME'."
+          fi
+
+      - name: Build env var arguments
+        id: envargs
+        shell: bash
+        run: |
+          set -euo pipefail
+          ENV_ARGS_BASE=""
+          if [ "${{ inputs.include_mcp_env_vars }}" = "true" ]; then
+            ENV_ARGS_BASE="ASPNETCORE_URLS=http://+:3001 ATO_RUN_MODE=http"
+            ENV_ARGS_BASE="${ENV_ARGS_BASE} ATO_GATEWAY__AZURE__CLOUDENVIRONMENT=${{ vars.ATO_GATEWAY_AZURE_CLOUDENVIRONMENT || 'AzureGovernment' }}"
+            ENV_ARGS_BASE="${ENV_ARGS_BASE} ATO_AZUREAI__ENABLED=${{ vars.ATO_AZUREAI_ENABLED || 'false' }}"
+            ENV_ARGS_BASE="${ENV_ARGS_BASE} ATO_AZUREAI__PROVIDER=${{ vars.ATO_AZUREAI_PROVIDER || 'OpenAi' }}"
+            ENV_ARGS_BASE="${ENV_ARGS_BASE} ATO_AZUREAI__ENDPOINT=${{ vars.ATO_AZUREAI_ENDPOINT || '' }}"
+            ENV_ARGS_BASE="${ENV_ARGS_BASE} ATO_AZUREAI__DEPLOYMENTNAME=${{ vars.ATO_AZUREAI_DEPLOYMENTNAME || 'gpt-4o' }}"
+          elif [ "${{ inputs.workload }}" = "dashboard" ]; then
+            MCP_OVERRIDE="${{ inputs.mcp_base_url_override }}"
+            if [ -n "$MCP_OVERRIDE" ]; then
+              ENV_ARGS_BASE="MCP_BASE_URL=${MCP_OVERRIDE}"
+            else
+              MCP_APP="${{ vars.AZURE_CONTAINERAPP_NAME }}"
+              MCP_FQDN=$(az containerapp show -g "${{ vars.AZURE_RESOURCE_GROUP }}" -n "${MCP_APP}" --query properties.configuration.ingress.fqdn -o tsv 2>/dev/null || true)
+              if [ -n "${MCP_FQDN}" ]; then
+                ENV_ARGS_BASE="MCP_BASE_URL=https://${MCP_FQDN}"
+              fi
+            fi
+          fi
+
+          SECRETREF_ARGS=""
+
+          if [ "${{ inputs.inject_runtime_secrets }}" = "true" ]; then
+            if [ -n "${{ secrets.ATO_DB_CONNECTION_STRING || '' }}" ]; then
+              SECRETREF_ARGS="${SECRETREF_ARGS} ATO_CONNECTIONSTRINGS__DEFAULTCONNECTION=secretref:db-connection-string"
+            fi
+            if [ -n "${{ secrets.ATO_AZUREAI_APIKEY || '' }}" ]; then
+              SECRETREF_ARGS="${SECRETREF_ARGS} ATO_AZUREAI__APIKEY=secretref:azureai-apikey"
+            fi
+            if [ -n "${{ secrets.ATO_AZUREAD_CLIENTSECRET || '' }}" ]; then
+              SECRETREF_ARGS="${SECRETREF_ARGS} ATO_AZUREAD__CLIENTSECRET=secretref:azuread-client-secret"
+            fi
+          fi
+
+          ENV_ARGS_WITH_SECRETS="${ENV_ARGS_BASE}${SECRETREF_ARGS}"
+          echo "base=${ENV_ARGS_BASE}" >> "$GITHUB_OUTPUT"
+          echo "with_secrets=${ENV_ARGS_WITH_SECRETS}" >> "$GITHUB_OUTPUT"
+
+      - name: Create/update container app
+        shell: bash
+        run: |
+          set -euo pipefail
+          RG="${{ vars.AZURE_RESOURCE_GROUP }}"
+          APP="${{ steps.target.outputs.app }}"
+          ENV_NAME="${{ steps.target.outputs.env_name }}"
+          IMAGE="${{ inputs.image }}"
+          ENV_ARGS="${{ steps.envargs.outputs.base }}"
+          TARGET_PORT="${{ inputs.target_port }}"
+
+          MIN_REPLICAS="${{ inputs.min_replicas }}"
+          MAX_REPLICAS="${{ inputs.max_replicas }}"
+          CPU="${{ inputs.cpu }}"
+          MEMORY="${{ inputs.memory }}"
+          HTTP_CONCURRENCY="${{ inputs.http_scale_concurrency }}"
+
+          # Sized resource args that apply to BOTH create and update.
+          RESOURCE_ARGS=(
+            --min-replicas "${MIN_REPLICAS}"
+            --max-replicas "${MAX_REPLICAS}"
+            --cpu "${CPU}"
+            --memory "${MEMORY}"
+            --scale-rule-name http-rule
+            --scale-rule-type http
+            --scale-rule-http-concurrency "${HTTP_CONCURRENCY}"
+          )
+
+          if az containerapp show -g "${RG}" -n "${APP}" >/dev/null 2>&1; then
+            if [ -n "${ENV_ARGS}" ]; then
+              # shellcheck disable=SC2086
+              az containerapp update \
+                --resource-group "${RG}" \
+                --name "${APP}" \
+                --image "${IMAGE}" \
+                "${RESOURCE_ARGS[@]}" \
+                --set-env-vars ${ENV_ARGS}
+            else
+              az containerapp update \
+                --resource-group "${RG}" \
+                --name "${APP}" \
+                --image "${IMAGE}" \
+                "${RESOURCE_ARGS[@]}"
+            fi
+          else
+            if [ -n "${ENV_ARGS}" ]; then
+              # shellcheck disable=SC2086
+              az containerapp create \
+                --resource-group "${RG}" \
+                --name "${APP}" \
+                --environment "${ENV_NAME}" \
+                --image "${IMAGE}" \
+                --target-port "${TARGET_PORT}" \
+                --ingress external \
+                --registry-server "${{ steps.acr.outputs.login_server }}" \
+                --registry-username "${{ steps.acr.outputs.username }}" \
+                --registry-password "${{ steps.acr.outputs.password }}" \
+                "${RESOURCE_ARGS[@]}" \
+                --env-vars ${ENV_ARGS}
+            else
+              az containerapp create \
+                --resource-group "${RG}" \
+                --name "${APP}" \
+                --environment "${ENV_NAME}" \
+                --image "${IMAGE}" \
+                --target-port "${TARGET_PORT}" \
+                --ingress external \
+                --registry-server "${{ steps.acr.outputs.login_server }}" \
+                --registry-username "${{ steps.acr.outputs.username }}" \
+                --registry-password "${{ steps.acr.outputs.password }}" \
+                "${RESOURCE_ARGS[@]}"
+            fi
+          fi
+
+      - name: Ensure ingress target port
+        shell: bash
+        run: |
+          set -euo pipefail
+          az containerapp ingress update \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ steps.target.outputs.app }}" \
+            --type external \
+            --target-port "${{ inputs.target_port }}" >/dev/null
+
+      - name: Ensure ingress session affinity (required for SignalR)
+        if: inputs.enable_session_affinity
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Sticky sessions are mandatory for SignalR (negotiate → websocket
+          # must hit the same replica) whenever max_replicas > 1.
+          # `az containerapp ingress sticky-sessions set` is GA from az CLI
+          # 2.45 (Jan-2023). `azure/login@v2` provisions a current CLI on the
+          # runner, so we can rely on the command being present.
+          if ! az containerapp ingress sticky-sessions set --help >/dev/null 2>&1; then
+            echo "::warning::'az containerapp ingress sticky-sessions set' not available — upgrade az CLI to >=2.45 on the runner. Skipping affinity configuration."
+            exit 0
+          fi
+          az containerapp ingress sticky-sessions set \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ steps.target.outputs.app }}" \
+            --affinity sticky >/dev/null
+
+      - name: Ensure system-assigned managed identity
+        if: inputs.assign_managed_identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          az containerapp identity assign \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ steps.target.outputs.app }}" \
+            --system-assigned >/dev/null
+
+      - name: Set optional runtime secrets
+        if: inputs.inject_runtime_secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          RG="${{ vars.AZURE_RESOURCE_GROUP }}"
+          APP="${{ steps.target.outputs.app }}"
+
+          if [ -n "${{ secrets.ATO_DB_CONNECTION_STRING || '' }}" ]; then
+            az containerapp secret set -g "${RG}" -n "${APP}" --secrets "db-connection-string=${{ secrets.ATO_DB_CONNECTION_STRING }}"
+          fi
+          if [ -n "${{ secrets.ATO_AZUREAI_APIKEY || '' }}" ]; then
+            az containerapp secret set -g "${RG}" -n "${APP}" --secrets "azureai-apikey=${{ secrets.ATO_AZUREAI_APIKEY }}"
+          fi
+          if [ -n "${{ secrets.ATO_AZUREAD_CLIENTSECRET || '' }}" ]; then
+            az containerapp secret set -g "${RG}" -n "${APP}" --secrets "azuread-client-secret=${{ secrets.ATO_AZUREAD_CLIENTSECRET }}"
+          fi
+
+      - name: Reapply env vars after secret updates
+        if: inputs.inject_runtime_secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          RG="${{ vars.AZURE_RESOURCE_GROUP }}"
+          APP="${{ steps.target.outputs.app }}"
+          ENV_ARGS="${{ steps.envargs.outputs.with_secrets }}"
+
+          if [ -n "${ENV_ARGS}" ]; then
+            # shellcheck disable=SC2086
+            az containerapp update \
+              --resource-group "${RG}" \
+              --name "${APP}" \
+              --set-env-vars ${ENV_ARGS}
+          fi
+
+      - name: Reconcile SQL firewall to app egress IPs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APP="${{ steps.target.outputs.app }}"
+          APP_RG="${{ vars.AZURE_RESOURCE_GROUP }}"
+          DB_CONN="${{ secrets.ATO_DB_CONNECTION_STRING }}"
+
+          if [ -z "$DB_CONN" ]; then
+            echo "No ATO_DB_CONNECTION_STRING provided; skipping SQL firewall reconciliation."
+            exit 0
+          fi
+
+          SQL_FQDN=$(echo "$DB_CONN" | sed -nE 's/.*Server=tcp:([^,;]+).*/\1/p')
+          if [ -z "$SQL_FQDN" ]; then
+            SQL_FQDN=$(echo "$DB_CONN" | sed -nE 's/.*Server=([^,;]+).*/\1/p')
+          fi
+          if [ -z "$SQL_FQDN" ]; then
+            echo "::warning::Could not parse SQL server FQDN from ATO_DB_CONNECTION_STRING; skipping firewall reconciliation."
+            exit 0
+          fi
+
+          SQL_SERVER="${SQL_FQDN%%.*}"
+          SQL_RG=$(az resource list \
+            --resource-type Microsoft.Sql/servers \
+            --name "$SQL_SERVER" \
+            --query "[0].resourceGroup" -o tsv 2>/dev/null || true)
+
+          if [ -z "$SQL_RG" ]; then
+            echo "::warning::SQL server '$SQL_SERVER' not found in subscription; skipping firewall reconciliation."
+            exit 0
+          fi
+
+          SQL_PUBLIC_ACCESS=$(az sql server show \
+            --resource-group "$SQL_RG" \
+            --name "$SQL_SERVER" \
+            --query publicNetworkAccess -o tsv 2>/dev/null || echo "Unknown")
+
+          if [ "$SQL_PUBLIC_ACCESS" = "Disabled" ]; then
+            echo "SQL server '$SQL_SERVER' has publicNetworkAccess=Disabled; skipping firewall reconciliation."
+            exit 0
+          fi
+
+          OUTBOUND_IPS=$(az containerapp show \
+            -g "$APP_RG" -n "$APP" \
+            --query "properties.outboundIpAddresses" -o tsv 2>/dev/null || true)
+          if [ -z "$OUTBOUND_IPS" ]; then
+            echo "::warning::No outbound IPs resolved for app '$APP'; leaving existing SQL firewall rules unchanged."
+            exit 0
+          fi
+
+          APP_SAFE=$(echo "$APP" | tr -cd '[:alnum:]-' | cut -c1-30)
+          RULE_PREFIX="Allow-${APP_SAFE}-"
+
+          DESIRED_RULES=""
+          for IP in $OUTBOUND_IPS; do
+            RULE_NAME="${RULE_PREFIX}${IP//./-}"
+            DESIRED_RULES+="${RULE_NAME}"$'\n'
+            az sql server firewall-rule create \
+              --resource-group "$SQL_RG" \
+              --server "$SQL_SERVER" \
+              --name "$RULE_NAME" \
+              --start-ip-address "$IP" \
+              --end-ip-address "$IP" >/dev/null
+          done
+
+          EXISTING_RULES=$(az sql server firewall-rule list \
+            --resource-group "$SQL_RG" \
+            --server "$SQL_SERVER" \
+            --query "[?starts_with(name, '${RULE_PREFIX}')].name" -o tsv)
+
+          for RULE in $EXISTING_RULES; do
+            if ! grep -qx "$RULE" <<< "$DESIRED_RULES"; then
+              az sql server firewall-rule delete \
+                --resource-group "$SQL_RG" \
+                --server "$SQL_SERVER" \
+                --name "$RULE" >/dev/null || true
+            fi
+          done
+
+          # Ensure permissive fallback is not retained.
+          az sql server firewall-rule delete \
+            --resource-group "$SQL_RG" \
+            --server "$SQL_SERVER" \
+            --name AllowAzureServices >/dev/null 2>&1 || true
+
+          echo "### SQL Firewall Reconciliation" >> "$GITHUB_STEP_SUMMARY"
+          echo "- SQL Server: ${SQL_SERVER}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Resource Group: ${SQL_RG}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- App: ${APP}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Allowed egress IPs: ${OUTBOUND_IPS}" >> "$GITHUB_STEP_SUMMARY"
+
+
+      - name: Smoke check deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="${{ steps.target.outputs.app }}"
+          URL=$(az containerapp show -g "${{ vars.AZURE_RESOURCE_GROUP }}" -n "${APP}" --query properties.configuration.ingress.fqdn -o tsv)
+          HEALTH_PATH="${{ inputs.health_path }}"
+          echo "Deployed URL (${{ inputs.environment_name }}): https://${URL}"
+
+          HEALTH_OK="false"
+          for ATTEMPT in $(seq 1 20); do
+            if curl -fsS --max-time 15 "https://${URL}${HEALTH_PATH}" >/tmp/health-response.txt 2>/tmp/health-error.txt; then
+              HEALTH_OK="true"
+              cat /tmp/health-response.txt
+              echo "Health check passed on attempt ${ATTEMPT}."
+              break
+            fi
+
+            echo "Health check attempt ${ATTEMPT}/20 failed. Waiting 15s before retry..."
+            sleep 15
+          done
+
+          if [ "$HEALTH_OK" != "true" ]; then
+            echo "::error::Health endpoint did not become ready after 5 minutes."
+            echo "Recent revision status:"
+            az containerapp revision list \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --name "${APP}" \
+              --query "[].{name:name,active:properties.active,replicas:properties.replicas,health:properties.healthState,created:properties.createdTime}" -o table || true
+
+            echo "Ingress and latest revision details:"
+            az containerapp show \
+              --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+              --name "${APP}" \
+              --query "{fqdn:properties.configuration.ingress.fqdn,latestRevision:properties.latestRevisionName,provisioningState:properties.provisioningState}" -o json || true
+
+            echo "Last curl error:"
+            cat /tmp/health-error.txt || true
+            exit 1
+          fi
+
+          echo "### Deployment complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Environment: ${{ inputs.environment_name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Workload: ${{ inputs.workload }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- App: ${APP}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Image: ${{ inputs.image }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- URL: https://${URL}" >> "$GITHUB_STEP_SUMMARY"

@@ -1,3 +1,4 @@
+using Ato.Copilot.Core.Models.Tenancy.Attributes;
 // ═══════════════════════════════════════════════════════════════════════════
 // Feature 017 — SCAP/STIG Viewer Import: Entities, Enums, and DTOs
 // See specs/017-scap-stig-import/data-model.md for full specification.
@@ -22,7 +23,10 @@ public enum ScanImportType
     PrismaCsv,
 
     /// <summary>Prisma Cloud API JSON (RQL alert response).</summary>
-    PrismaApi
+    PrismaApi,
+
+    /// <summary>ACAS/Nessus vulnerability scan (.nessus) — NessusClientData_v2 XML format.</summary>
+    NessusXml
 }
 
 /// <summary>
@@ -89,8 +93,15 @@ public enum ImportFindingAction
 /// Tracks each file import operation. One record per imported file.
 /// See data-model.md §ScanImportRecord for field descriptions.
 /// </summary>
+[TenantScoped]
 public class ScanImportRecord
 {
+    /// <summary>
+    /// FK to <see cref="Ato.Copilot.Core.Models.Tenancy.Tenant"/> — populated by
+    /// <c>TenantStampingSaveChangesInterceptor</c> (Feature 048 FR-021).
+    /// </summary>
+    public Guid TenantId { get; set; }
+
     /// <summary>Unique identifier (GUID).</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString();
 
@@ -196,6 +207,32 @@ public class ScanImportRecord
 
     /// <summary>UTC timestamp when the import was performed.</summary>
     public DateTime ImportedAt { get; set; } = DateTime.UtcNow;
+
+    // ─── Nessus/ACAS-specific counters (Feature 026) ─────────────────────────
+
+    /// <summary>Count of informational (severity 0) plugins — not persisted as findings.</summary>
+    public int? NessusInformationalCount { get; set; }
+
+    /// <summary>Count of critical (severity 4) findings.</summary>
+    public int? NessusCriticalCount { get; set; }
+
+    /// <summary>Count of high (severity 3) findings.</summary>
+    public int? NessusHighCount { get; set; }
+
+    /// <summary>Count of medium (severity 2) findings.</summary>
+    public int? NessusMediumCount { get; set; }
+
+    /// <summary>Count of low (severity 1) findings.</summary>
+    public int? NessusLowCount { get; set; }
+
+    /// <summary>Number of distinct hosts scanned in the .nessus file.</summary>
+    public int? NessusHostCount { get; set; }
+
+    /// <summary>Number of POA&amp;M weakness entries created during this import.</summary>
+    public int? NessusPoamCreatedCount { get; set; }
+
+    /// <summary>Whether the scan was a credentialed (authenticated) scan.</summary>
+    public bool? NessusCredentialedScan { get; set; }
 }
 
 /// <summary>
@@ -203,8 +240,15 @@ public class ScanImportRecord
 /// to the resulting <see cref="ComplianceFinding"/>.
 /// See data-model.md §ScanImportFinding for field descriptions.
 /// </summary>
+[TenantScoped]
 public class ScanImportFinding
 {
+    /// <summary>
+    /// FK to <see cref="Ato.Copilot.Core.Models.Tenancy.Tenant"/> — populated by
+    /// <c>TenantStampingSaveChangesInterceptor</c> (Feature 048 FR-021).
+    /// </summary>
+    public Guid TenantId { get; set; }
+
     /// <summary>Unique identifier (GUID).</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString();
 
@@ -279,6 +323,62 @@ public class ScanImportFinding
     /// <summary>Azure subscription GUID or AWS account ID.</summary>
     [System.ComponentModel.DataAnnotations.MaxLength(200)]
     public string? CloudAccountId { get; set; }
+
+    // ─── Nessus/ACAS-specific fields (Feature 026 — nullable, only populated for Nessus imports) ──
+
+    /// <summary>Nessus plugin ID (e.g., <c>97833</c>).</summary>
+    [System.ComponentModel.DataAnnotations.MaxLength(20)]
+    public string? NessusPluginId { get; set; }
+
+    /// <summary>Plugin display name (e.g., <c>MS17-010: EternalBlue</c>).</summary>
+    [System.ComponentModel.DataAnnotations.MaxLength(200)]
+    public string? NessusPluginName { get; set; }
+
+    /// <summary>Plugin family category (e.g., <c>Windows : Microsoft Bulletins</c>).</summary>
+    [System.ComponentModel.DataAnnotations.MaxLength(100)]
+    public string? NessusPluginFamily { get; set; }
+
+    /// <summary>Target hostname from the scan.</summary>
+    [System.ComponentModel.DataAnnotations.MaxLength(500)]
+    public string? NessusHostname { get; set; }
+
+    /// <summary>Target IP address (IPv4/IPv6).</summary>
+    [System.ComponentModel.DataAnnotations.MaxLength(45)]
+    public string? NessusHostIp { get; set; }
+
+    /// <summary>Port number (0 = host-level finding).</summary>
+    public int? NessusPort { get; set; }
+
+    /// <summary>Protocol (e.g., <c>tcp</c>, <c>udp</c>, <c>icmp</c>).</summary>
+    [System.ComponentModel.DataAnnotations.MaxLength(10)]
+    public string? NessusProtocol { get; set; }
+
+    /// <summary>Service name (e.g., <c>www</c>, <c>ssh</c>, <c>cifs</c>).</summary>
+    [System.ComponentModel.DataAnnotations.MaxLength(50)]
+    public string? NessusServiceName { get; set; }
+
+    /// <summary>CVSS v3.x base score (0.0–10.0).</summary>
+    public double? NessusCvssV3BaseScore { get; set; }
+
+    /// <summary>Full CVSS v3 vector string.</summary>
+    [System.ComponentModel.DataAnnotations.MaxLength(100)]
+    public string? NessusCvssV3Vector { get; set; }
+
+    /// <summary>CVSS v2 base score (fallback if v3 unavailable).</summary>
+    public double? NessusCvssV2BaseScore { get; set; }
+
+    /// <summary>Tenable Vulnerability Priority Rating score.</summary>
+    public double? NessusVprScore { get; set; }
+
+    /// <summary>CVE identifiers associated with this plugin. Stored as JSON column.</summary>
+    public List<string> NessusCves { get; set; } = new();
+
+    /// <summary>Whether a public exploit is available for this vulnerability.</summary>
+    public bool? NessusExploitAvailable { get; set; }
+
+    /// <summary>How the NIST control mapping was derived: <c>StigXref</c> or <c>PluginFamilyHeuristic</c>.</summary>
+    [System.ComponentModel.DataAnnotations.MaxLength(30)]
+    public string? NessusControlMappingSource { get; set; }
 
     /// <summary>Action taken for this finding during import.</summary>
     public ImportFindingAction ImportAction { get; set; }

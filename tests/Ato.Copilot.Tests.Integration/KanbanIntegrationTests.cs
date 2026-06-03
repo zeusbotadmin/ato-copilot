@@ -52,17 +52,6 @@ public class KanbanIntegrationTests : IAsyncLifetime
 
         _dbName = $"KanbanIntegrationTest_{Guid.NewGuid():N}";
 
-        builder.Services.AddDbContext<AtoCopilotContext>(
-            options => options.UseInMemoryDatabase(_dbName),
-            ServiceLifetime.Singleton,
-            ServiceLifetime.Singleton);
-        builder.Services.AddSingleton<IDbContextFactory<AtoCopilotContext>>(sp =>
-        {
-            var optionsBuilder = new DbContextOptionsBuilder<AtoCopilotContext>();
-            optionsBuilder.UseInMemoryDatabase(_dbName);
-            return new TestDbContextFactory(optionsBuilder.Options);
-        });
-
         builder.Services.Configure<GatewayOptions>(builder.Configuration.GetSection(GatewayOptions.SectionName));
         builder.Services.Configure<AzureAdOptions>(builder.Configuration.GetSection(AzureAdOptions.SectionName));
         builder.Services.AddHttpClient();
@@ -79,10 +68,7 @@ public class KanbanIntegrationTests : IAsyncLifetime
             });
         });
 
-        builder.Services.AddInMemoryStateManagement();
-        builder.Services.AddComplianceAgent(builder.Configuration);
-        builder.Services.AddConfigurationAgent();
-        builder.Services.AddMcpServer(builder.Configuration);
+        builder.Services.AddAtoCopilotMcpForTesting(builder.Configuration, _dbName);
 
         builder.Services.AddCors(options =>
             options.AddDefaultPolicy(policy =>
@@ -132,7 +118,7 @@ public class KanbanIntegrationTests : IAsyncLifetime
         var json = JsonDocument.Parse(content);
 
         json.RootElement.GetProperty("success").GetBoolean().Should().BeTrue();
-        json.RootElement.GetProperty("agentName").GetString()
+        json.RootElement.GetProperty("agentUsed").GetString()
             .Should().Be("Compliance Agent");
     }
 
@@ -174,7 +160,7 @@ public class KanbanIntegrationTests : IAsyncLifetime
         var content = await response.Content.ReadAsStringAsync();
         var json = JsonDocument.Parse(content);
 
-        json.RootElement.GetProperty("agentName").GetString()
+        json.RootElement.GetProperty("agentUsed").GetString()
             .Should().Be("Compliance Agent");
     }
 
@@ -190,7 +176,7 @@ public class KanbanIntegrationTests : IAsyncLifetime
         var content = await response.Content.ReadAsStringAsync();
         var json = JsonDocument.Parse(content);
 
-        json.RootElement.GetProperty("agentName").GetString()
+        json.RootElement.GetProperty("agentUsed").GetString()
             .Should().Be("Compliance Agent");
     }
 
@@ -206,7 +192,7 @@ public class KanbanIntegrationTests : IAsyncLifetime
         var content = await response.Content.ReadAsStringAsync();
         var json = JsonDocument.Parse(content);
 
-        json.RootElement.GetProperty("agentName").GetString()
+        json.RootElement.GetProperty("agentUsed").GetString()
             .Should().Be("Compliance Agent");
     }
 
@@ -224,7 +210,7 @@ public class KanbanIntegrationTests : IAsyncLifetime
         var content = await response.Content.ReadAsStringAsync();
         var json = JsonDocument.Parse(content);
 
-        json.RootElement.GetProperty("agentName").GetString()
+        json.RootElement.GetProperty("agentUsed").GetString()
             .Should().Be("Compliance Agent");
     }
 
@@ -240,7 +226,7 @@ public class KanbanIntegrationTests : IAsyncLifetime
         var content = await response.Content.ReadAsStringAsync();
         var json = JsonDocument.Parse(content);
 
-        json.RootElement.GetProperty("agentName").GetString()
+        json.RootElement.GetProperty("agentUsed").GetString()
             .Should().Be("Compliance Agent");
     }
 
@@ -278,7 +264,7 @@ public class KanbanIntegrationTests : IAsyncLifetime
         var content = await response.Content.ReadAsStringAsync();
         var json = JsonDocument.Parse(content);
 
-        json.RootElement.GetProperty("agentName").GetString()
+        json.RootElement.GetProperty("agentUsed").GetString()
             .Should().Be("Compliance Agent");
     }
 
@@ -294,7 +280,7 @@ public class KanbanIntegrationTests : IAsyncLifetime
         var content = await response.Content.ReadAsStringAsync();
         var json = JsonDocument.Parse(content);
 
-        json.RootElement.GetProperty("agentName").GetString()
+        json.RootElement.GetProperty("agentUsed").GetString()
             .Should().Be("Compliance Agent");
     }
 
@@ -310,7 +296,7 @@ public class KanbanIntegrationTests : IAsyncLifetime
         var content = await response.Content.ReadAsStringAsync();
         var json = JsonDocument.Parse(content);
 
-        json.RootElement.GetProperty("agentName").GetString()
+        json.RootElement.GetProperty("agentUsed").GetString()
             .Should().Be("Compliance Agent");
     }
 
@@ -326,7 +312,7 @@ public class KanbanIntegrationTests : IAsyncLifetime
         var content = await response.Content.ReadAsStringAsync();
         var json = JsonDocument.Parse(content);
 
-        json.RootElement.GetProperty("agentName").GetString()
+        json.RootElement.GetProperty("agentUsed").GetString()
             .Should().Be("Compliance Agent");
     }
 }

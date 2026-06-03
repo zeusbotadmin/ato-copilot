@@ -1,6 +1,6 @@
 # Tool Inventory
 
-> Complete reference of all 114 MCP tools available in ATO Copilot, grouped by category.
+> Complete reference of all 140 MCP tools available in ATO Copilot, grouped by category.
 
 ---
 
@@ -43,6 +43,13 @@ Tools that drive the seven-phase RMF lifecycle from Prepare through Authorize.
 | 14 | `compliance_set_inheritance` | Set control inheritance | Select | ISSM |
 | 15 | `compliance_get_baseline` | View baseline details | Select | All |
 | 16 | `compliance_generate_crm` | Generate CRM | Select | ISSM |
+| 16a | `GET /inheritance/org-defaults` | List org-level inheritance defaults | Select | ISSM |
+| 16b | `POST /inheritance/org-defaults/derive` | Derive org defaults from capabilities, cascade to systems | Select | ISSM |
+| 16c | `POST /systems/{id}/inheritance/revert-to-org-defaults` | Revert controls to org defaults | Select | ISSM |
+| 16d | `GET /capabilities/coverage` | Capabilities coverage dashboard (providers, KPI, gaps) | Select | ISSM, ISSO |
+| 16e | `POST /capabilities/import/csp-profile` | Import CSP profile → components + capabilities + mappings | Select | ISSM |
+| 16f | `POST /capabilities/import/crm` | Import CRM spreadsheet → capabilities + mappings | Select | ISSM |
+| 16g | `POST /components/{id}/capabilities` | Bulk link capabilities to a component | Select | ISSM |
 | 17 | `compliance_write_narrative` | Write control narrative | Implement | ISSO, Eng |
 | 18 | `compliance_suggest_narrative` | AI-suggest narrative | Implement | ISSO, Eng |
 | 19 | `compliance_batch_populate_narratives` | Auto-fill inherited narratives | Implement | ISSO |
@@ -220,6 +227,66 @@ Cloud security posture management scan import, policy catalog, and trend analysi
 
 ---
 
+## Category 10: ACAS/Nessus Scan Import Tools (2 tools)
+
+Tenable Nessus/ACAS vulnerability scan import with plugin-family → NIST 800-53 control mapping and POA&M auto-generation.
+
+| # | Tool | Description | Phase(s) | Roles |
+|---|------|-------------|----------|-------|
+| 119 | `compliance_import_nessus` | Import Nessus .nessus scan file | Assess | ISSO, SCA, Admin |
+| 120 | `compliance_list_nessus_imports` | List Nessus import history | Assess, Monitor | All |
+
+---
+
+## Category 11: SAP Generation Tools (5 tools)
+
+Security Assessment Plan generation, update, and finalization for RMF Step 4.
+
+| # | Tool | Description | Phase(s) | Roles |
+|---|------|-------------|----------|-------|
+| 121 | `compliance_generate_sap` | Generate SAP from baseline, objectives, and STIGs | Assess | SCA, ISSM |
+| 122 | `compliance_update_sap` | Update Draft SAP schedule, scope, team, methods | Assess | SCA, ISSM |
+| 123 | `compliance_finalize_sap` | Lock SAP with SHA-256 content hash | Assess | SCA |
+| 124 | `compliance_get_sap` | Retrieve SAP by ID or latest for system | Assess | All |
+| 125 | `compliance_list_saps` | List SAP history for system | Assess | All |
+
+---
+
+## Category 12: Privacy & Interconnection Tools (12 tools)
+
+Privacy threshold/impact analysis, interconnection registration, ISA/MOU lifecycle, and compliance gates.
+
+| # | Tool | Description | Phase(s) | Roles |
+|---|------|-------------|----------|-------|
+| 126 | `compliance_create_pta` | Conduct Privacy Threshold Analysis | Prepare | ISSO, ISSM |
+| 127 | `compliance_generate_pia` | Generate Privacy Impact Assessment (8 sections) | Prepare | ISSO, ISSM |
+| 128 | `compliance_review_pia` | Approve or request revision on PIA | Prepare | ISSM |
+| 129 | `compliance_check_privacy_compliance` | Privacy and interconnection compliance dashboard | Prepare | All |
+| 130 | `compliance_add_interconnection` | Register system-to-system interconnection | Prepare | Eng, ISSO, ISSM |
+| 131 | `compliance_list_interconnections` | List interconnections with agreement status | Prepare | All |
+| 132 | `compliance_update_interconnection` | Update interconnection details or status | Prepare | ISSO, ISSM |
+| 133 | `compliance_generate_isa` | Generate ISA from interconnection data (NIST 800-47) | Prepare | ISSM |
+| 134 | `compliance_register_agreement` | Register pre-existing ISA/MOU/SLA | Prepare | ISSM |
+| 135 | `compliance_update_agreement` | Update agreement status, dates, signatories | Prepare | ISSM |
+| 136 | `compliance_certify_no_interconnections` | Certify no external interconnections | Prepare | ISSM |
+| 137 | `compliance_validate_agreements` | Validate all interconnection agreements are current | Prepare | ISSO, ISSM, SCA |
+
+---
+
+## Category 13: SSP Authoring & OSCAL Export Tools (5 tools)
+
+NIST 800-18 SSP section authoring, review workflow, and OSCAL 1.1.2 SSP export.
+
+| # | Tool | Description | Phase(s) | Roles |
+|---|------|-------------|----------|-------|
+| 138 | `compliance_write_ssp_section` | Write/update SSP section (§1–§13) | Implement | ISSO, Eng |
+| 139 | `compliance_review_ssp_section` | Review and approve SSP section | Implement, Assess | ISSM |
+| 140 | `compliance_ssp_completeness` | SSP section completeness dashboard | Implement, Assess | All |
+| 141 | `compliance_export_oscal_ssp` | Export OSCAL 1.1.2 SSP JSON | Authorize | ISSM, SCA, AO |
+| 142 | `compliance_validate_oscal_ssp` | Validate OSCAL SSP structural correctness | Authorize | ISSM, SCA |
+
+---
+
 ## Tool Count Summary
 
 | Category | Tools | Description |
@@ -233,7 +300,18 @@ Cloud security posture management scan import, policy catalog, and trend analysi
 | Kanban Remediation | 18 | Task lifecycle management |
 | PIM & Authentication | 13 | JIT access and CAC sessions |
 | Prisma Cloud Import | 4 | CSPM scan import and analysis |
-| **Total** | **118** | |
+| ACAS/Nessus Import | 2 | Nessus scan import and history |
+| SAP Generation | 5 | Security Assessment Plan lifecycle |
+| Privacy & Interconnection | 12 | Privacy analysis, ISA/MOU management |
+| SSP Authoring & OSCAL | 5 | SSP sections and OSCAL export |
+| POA&M Lifecycle | 6 | Create, update, close, milestones, bulk update, bulk create |
+| POA&M Component Linkage | 3 | Link/unlink components, component POA&M view |
+| POA&M Remediation Sync | 3 | Link/unlink/create tasks |
+| POA&M Trend & Metrics | 2 | Metrics summary, trend analysis |
+| POA&M Export | 1 | eMASS Excel, OSCAL JSON, CSV |
+| POA&M Ticketing | 3 | Configure, sync, bulk sync |
+| POA&M Bulk Operations | 2 | Bulk update, bulk create from findings |
+| **Total** | **162** | |
 
 ---
 

@@ -3,6 +3,7 @@ using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
@@ -10,6 +11,7 @@ using Moq;
 using Xunit;
 using FluentAssertions;
 using Ato.Copilot.Core.Configuration;
+using Ato.Copilot.Mcp.Configuration;
 using Ato.Copilot.Mcp.Middleware;
 
 namespace Ato.Copilot.Tests.Unit.Middleware;
@@ -25,12 +27,20 @@ public class CacAuthenticationMiddlewareTests
 
     private CacAuthenticationMiddleware CreateMiddleware(
         RequestDelegate next,
-        AzureAdOptions? options = null)
+        AzureAdOptions? options = null,
+        CacAuthOptions? cacOptions = null,
+        string environmentName = "Production")
     {
         var opts = options ?? new AzureAdOptions { RequireCac = true };
+        var cacOpts = cacOptions ?? new CacAuthOptions();
+        var hostEnv = new Mock<IHostEnvironment>();
+        hostEnv.Setup(h => h.EnvironmentName).Returns(environmentName);
         return new CacAuthenticationMiddleware(
             next,
             Options.Create(opts),
+            Options.Create(cacOpts),
+            Options.Create(new RoleClaimMappingsOptions()),
+            hostEnv.Object,
             _logger.Object);
     }
 

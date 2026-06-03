@@ -54,7 +54,7 @@ public class ExplainImpactLevelTool : BaseTool
 
     /// <inheritdoc />
     public override async Task<string> ExecuteCoreAsync(
-        Dictionary<string, object> args,
+        Dictionary<string, object?> args,
         CancellationToken cancellationToken = default)
     {
         var level = GetArg<string>(args, "level") ?? "all";

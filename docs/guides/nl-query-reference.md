@@ -197,6 +197,100 @@ Replace `{id}`, `{sub-id}`, and similar placeholders with your actual system, su
 
 ---
 
+## 12. STIG & SCAP Import
+
+| Query | Tool | Persona |
+|-------|------|---------|
+| Import this CKL file for system {id} | `compliance_import_ckl` | ISSM, ISSO |
+| Import SCAP scan results for system {id} | `compliance_import_xccdf` | ISSM, ISSO |
+| Export a CKL checklist for the Windows Server 2022 STIG | `compliance_export_ckl` | ISSM, ISSO, SCA |
+| Show import history for system {id} | `compliance_list_imports` | All |
+| Show details of import {import-id} | `compliance_get_import_summary` | All |
+
+---
+
+## 13. SAP Generation
+
+| Query | Tool | Persona |
+|-------|------|---------|
+| Generate a security assessment plan for system {id} | `compliance_generate_sap` | SCA, ISSM |
+| Update the SAP methodology for control AC-2 | `compliance_update_sap` | SCA, ISSM |
+| Finalize the SAP for system {id} | `compliance_finalize_sap` | SCA |
+| Show the current SAP for system {id} | `compliance_get_sap` | All |
+| List all SAPs | `compliance_list_saps` | All |
+
+---
+
+## 14. Prisma Cloud
+
+| Query | Tool | Persona |
+|-------|------|---------|
+| Import the Prisma Cloud CSV export for system {id} | `compliance_import_prisma_csv` | ISSM, ISSO |
+| Connect Prisma Cloud API and pull the latest scan data | `compliance_import_prisma_api` | ISSM, ISSO |
+| List Prisma policies mapped to our controls | `compliance_list_prisma_policies` | All |
+| Show the Prisma compliance trend for the last 30 days | `compliance_prisma_trend` | All |
+
+---
+
+## 15. Privacy (PTA & PIA)
+
+| Query | Tool | Persona |
+|-------|------|---------|
+| Create a privacy threshold analysis for system {id} | `compliance_create_pta` | ISSM, ISSO |
+| Generate a privacy impact assessment based on the PTA | `compliance_generate_pia` | ISSO, ISSM |
+| Review the PIA for system {id} — approved | `compliance_review_pia` | ISSM |
+| Check overall privacy compliance for system {id} | `compliance_check_privacy_compliance` | All |
+
+---
+
+## 16. Interconnections
+
+| Query | Tool | Persona |
+|-------|------|---------|
+| Add an interconnection to the HR payroll system for system {id} | `compliance_add_interconnection` | ISSM, ISSO, Eng |
+| List all interconnections for system {id} | `compliance_list_interconnections` | All |
+| Update the bandwidth for interconnection {icn-id} | `compliance_update_interconnection` | ISSM, ISSO |
+| Generate an ISA for interconnection {icn-id} | `compliance_generate_isa` | ISSM |
+| Register the ISA agreement for interconnection {icn-id} | `compliance_register_agreement` | ISSM |
+| Update agreement expiration for interconnection {icn-id} | `compliance_update_agreement` | ISSM |
+| Certify this system has no external interconnections | `compliance_certify_no_interconnections` | ISSM |
+| Validate all interconnection agreements for system {id} | `compliance_validate_agreements` | ISSM, ISSO, SCA |
+
+---
+
+## 17. SSP Authoring & OSCAL
+
+| Query | Tool | Persona |
+|-------|------|---------|
+| Write SSP section 1 (System Identification) for system {id} | `compliance_write_ssp_section` | ISSO, Eng |
+| Review SSP section 5 for system {id} — approved | `compliance_review_ssp_section` | ISSM |
+| What is the SSP completeness for system {id}? | `compliance_ssp_completeness` | All |
+| Export the OSCAL SSP for system {id} | `compliance_export_oscal_ssp` | ISSM, SCA, AO |
+| Validate the OSCAL SSP for system {id} | `compliance_validate_oscal_ssp` | ISSM, SCA |
+
+---
+
+## POA&M Management Queries (Feature 039)
+
+| Query | Tool | Persona |
+|-------|------|---------|
+| Show all POA&M items for system {id} | `compliance_list_poam` | All |
+| Show overdue POA&M items for system {id} | `compliance_list_poam` (overdue filter) | All |
+| Show POA&M details for item {poamId} | `compliance_get_poam` | All |
+| Create a POA&M for AC-2 on system {id} | `compliance_create_poam` | ISSO, ISSM |
+| Update POA&M {poamId} status to Completed | `compliance_update_poam` | ISSO, ISSM |
+| Close POA&M {poamId} | `compliance_close_poam` | ISSO, ISSM |
+| What's the POA&M status for system {id}? | `compliance_poam_metrics` | All |
+| Show POA&M trends for system {id} | `compliance_poam_trend` | All |
+| Export POA&M to eMASS format for system {id} | `compliance_export_poam` | ISSO, ISSM, AO |
+| Export POA&M to CSV for system {id} | `compliance_export_poam` | ISSO, ISSM, AO |
+| Sync POA&M {poamId} to Jira | `compliance_sync_poam_ticket` | ISSO, ISSM |
+| Show POA&M items for component {componentId} | `compliance_poam_by_component` | All |
+| Link POA&M {poamId} to component {componentId} | `compliance_link_poam_component` | ISSO, ISSM |
+| Create a task from POA&M {poamId} | `compliance_create_task_from_poam` | ISSO, ISSM |
+
+---
+
 ## See Also
 
 - [Getting Started](../getting-started/index.md) — Per-persona onboarding

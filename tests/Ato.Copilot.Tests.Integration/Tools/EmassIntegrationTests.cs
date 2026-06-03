@@ -14,6 +14,7 @@ using FluentAssertions;
 using Ato.Copilot.Agents.Compliance.Services;
 using Ato.Copilot.Agents.Compliance.Tools;
 using Ato.Copilot.Core.Data.Context;
+using Ato.Copilot.Core.Interfaces.Compliance;
 using Ato.Copilot.Core.Models.Compliance;
 
 namespace Ato.Copilot.Tests.Integration.Tools;
@@ -43,15 +44,24 @@ public class EmassIntegrationTests : IDisposable
         _serviceProvider = services.BuildServiceProvider();
         _scopeFactory = _serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
+        var oscalMock = new Mock<IOscalSspExportService>();
+        oscalMock.Setup(s => s.ExportAsync(
+                It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OscalExportResult(
+                "{\"system-security-plan\":{\"uuid\":\"test\",\"metadata\":{\"title\":\"Test SSP\",\"oscal-version\":\"1.0.6\"}}}",
+                new List<string>(),
+                new OscalStatistics(2, 1, 0, 0, 0)));
+
         var emassSvc = new EmassExportService(
-            _scopeFactory, Mock.Of<ILogger<EmassExportService>>());
+            _scopeFactory, Mock.Of<ILogger<EmassExportService>>(),
+            oscalMock.Object);
 
         _exportTool = new ExportEmassTool(
             emassSvc, Mock.Of<ILogger<ExportEmassTool>>());
         _importTool = new ImportEmassTool(
             emassSvc, Mock.Of<ILogger<ImportEmassTool>>());
         _oscalTool = new ExportOscalTool(
-            emassSvc, Mock.Of<ILogger<ExportOscalTool>>());
+            emassSvc, Mock.Of<IOscalSapExportService>(), Mock.Of<ILogger<ExportOscalTool>>());
     }
 
     public void Dispose() => _serviceProvider.Dispose();

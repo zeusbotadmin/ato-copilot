@@ -1,10 +1,17 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Serilog;
 using Serilog.Events;
 using Serilog.Sinks.ApplicationInsights.TelemetryConverters;
 using System.Text.Json;
 using Ato.Copilot.Channels.Abstractions;
+using Ato.Copilot.Agents.Extensions;
+using Ato.Copilot.Core.Interfaces.Tenancy;
+using Ato.Copilot.Core.Interfaces;
+using Ato.Copilot.Core.Models;
+using Ato.Copilot.Core.Services.Tenancy;
+using Ato.Copilot.Core.Services;
 using Ato.Copilot.Chat.Channels;
 using Ato.Copilot.Chat.Data;
 using Ato.Copilot.Chat.Hubs;
@@ -15,19 +22,24 @@ using Ato.Copilot.Chat.Services;
 //  Full-stack SPA + REST API + SignalR hub
 // ────────────────────────────────────────────────────────────────
 
+// Build a minimal IConfiguration for Serilog bootstrap so the `Serilog`
+// appsettings section drives sinks, levels, output templates, and retention.
+// Programmatic .Enrich.WithProperty + Application Insights sink calls below
+// augment whatever the JSON configures — they are NOT replaced by
+// ReadFrom.Configuration.
+var bootstrapConfig = new ConfigurationBuilder()
+    .SetBasePath(AppContext.BaseDirectory)
+    .AddJsonFile("appsettings.json", optional: true)
+    .AddJsonFile(
+        $"appsettings.{Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production"}.json",
+        optional: true)
+    .AddEnvironmentVariables("ATO_")
+    .Build();
+
 var logConfig = new LoggerConfiguration()
-    .MinimumLevel.Information()
-    .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
-    .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
-    .MinimumLevel.Override("System", LogEventLevel.Warning)
+    .ReadFrom.Configuration(bootstrapConfig)
     .Enrich.FromLogContext()
-    .Enrich.WithProperty("Application", "ATO Copilot Chat")
-    .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
-    .WriteTo.File(
-        path: "logs/ato-copilot-chat-.log",
-        rollingInterval: RollingInterval.Day,
-        retainedFileCountLimit: 14,
-        outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}");
+    .Enrich.WithProperty("Application", "ATO Copilot Chat");
 
 // Conditionally add Application Insights sink when connection string is available
 var appInsightsConnectionString = Environment.GetEnvironmentVariable("APPLICATIONINSIGHTS_CONNECTION_STRING");
@@ -57,20 +69,42 @@ try
     var connectionString = builder.Configuration.GetConnectionString("ChatDb")
                            ?? "Data Source=chat.db";
 
+    // DatabaseOptions drives EF Core retry, command timeout, and
+    // sensitive-data-logging — same wire-up pattern as Core's RegisterDbContext.
+    var chatDbOptions = new Ato.Copilot.Core.Configuration.DatabaseOptions();
+    builder.Configuration
+        .GetSection(Ato.Copilot.Core.Configuration.DatabaseOptions.SectionName)
+        .Bind(chatDbOptions);
+
     builder.Services.AddDbContext<ChatDbContext>(options =>
     {
+        if (chatDbOptions.EnableSensitiveDataLogging)
+        {
+            options.EnableSensitiveDataLogging();
+        }
+
         if (connectionString.StartsWith("Data Source=", StringComparison.OrdinalIgnoreCase))
-            options.UseSqlite(connectionString, sqliteOptions => sqliteOptions.CommandTimeout(30));
+            options.UseSqlite(connectionString,
+                sqliteOptions => sqliteOptions.CommandTimeout(chatDbOptions.CommandTimeoutSeconds));
         else
             options.UseSqlServer(connectionString, sqlOptions =>
             {
-                sqlOptions.EnableRetryOnFailure(maxRetryCount: 5, maxRetryDelay: TimeSpan.FromSeconds(30), errorNumbersToAdd: null);
-                sqlOptions.CommandTimeout(30);
+                sqlOptions.EnableRetryOnFailure(
+                    maxRetryCount: chatDbOptions.MaxRetryCount,
+                    maxRetryDelay: TimeSpan.FromSeconds(chatDbOptions.MaxRetryDelay),
+                    errorNumbersToAdd: null);
+                sqlOptions.CommandTimeout(chatDbOptions.CommandTimeoutSeconds);
             });
     });
 
     // ─── Services ────────────────────────────────────────────────────
 
+    // ChatService depends on IPathSanitizationService for upload-path
+    // safety checks. Chat does not call AddAtoCopilotCore (that pulls in
+    // the full compliance graph), so the dependency is registered
+    // explicitly here. Singleton matches the canonical registration in
+    // CoreServiceExtensions.AddAtoCopilotCore.
+    builder.Services.AddSingleton<IPathSanitizationService, PathSanitizationService>();
     builder.Services.AddScoped<IChatService, ChatService>();
 
     // ─── Channels Adapter Services ───────────────────────────────────
@@ -82,11 +116,25 @@ try
     builder.Services.AddSingleton<IChannelManager, SignalRChannelManager>();
     builder.Services.AddScoped<IMessageHandler, ChatServiceMessageHandler>();
 
+    // Tenant scope propagation for in-process MCP tool invocation via Channels
+    // (FR-021/FR-024). Chat owns the bridge because it references both Core
+    // (ITenantContextAccessor) and Channels (ITenantScopeBinder).
+    builder.Services.AddSingleton<ITenantContextAccessor, TenantContextAccessor>();
+    builder.Services.AddSingleton<ITenantScopeBinder, AccessorTenantScopeBinder>();
+
     builder.Services.AddHttpClient("McpServer", client =>
     {
         var mcpBaseUrl = builder.Configuration.GetValue<string>("McpServer:BaseUrl") ?? "http://localhost:3001";
         client.BaseAddress = new Uri(mcpBaseUrl);
         client.Timeout = TimeSpan.FromSeconds(180);
+    })
+    .ConfigureResiliencePipeline(new ResiliencePipelineConfig
+    {
+        Name = "McpServer",
+        MaxRetryAttempts = 3,
+        BaseDelaySeconds = 2.0,
+        UseJitter = true,
+        RequestTimeoutSeconds = 180
     });
     builder.Services.AddControllers()
         .AddJsonOptions(options =>

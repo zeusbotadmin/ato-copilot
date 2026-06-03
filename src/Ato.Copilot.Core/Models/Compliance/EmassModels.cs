@@ -90,7 +90,12 @@ public record EmassPoamExportRow(
     // ─── Metadata ───
     DateTime? CreatedDate,
     DateTime? LastUpdatedDate,
-    string? LastUpdatedBy
+    string? LastUpdatedBy,
+
+    // ─── Deviation (Feature 035) ───
+    string? DeviationJustification = null,
+    string? DeviationTypeName = null,
+    string? DeviationExpiration = null
 );
 
 /// <summary>
@@ -152,5 +157,8 @@ public enum OscalModelType
     AssessmentResults,
 
     /// <summary>OSCAL Plan of Action and Milestones.</summary>
-    Poam
+    Poam,
+
+    /// <summary>OSCAL Assessment Plan (Security Assessment Plan).</summary>
+    AssessmentPlan
 }

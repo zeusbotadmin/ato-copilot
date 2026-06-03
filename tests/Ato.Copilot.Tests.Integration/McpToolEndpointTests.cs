@@ -55,17 +55,6 @@ public class McpToolEndpointTests : IAsyncLifetime
         var dbName = $"IntegrationTest_{Guid.NewGuid():N}";
 
         // Register InMemory DbContext as singleton (all options singleton to avoid captive dependency)
-        builder.Services.AddDbContext<AtoCopilotContext>(
-            options => options.UseInMemoryDatabase(dbName),
-            ServiceLifetime.Singleton,
-            ServiceLifetime.Singleton);
-        builder.Services.AddSingleton<IDbContextFactory<AtoCopilotContext>>(sp =>
-        {
-            var optionsBuilder = new DbContextOptionsBuilder<AtoCopilotContext>();
-            optionsBuilder.UseInMemoryDatabase(dbName);
-            return new TestDbContextFactory(optionsBuilder.Options);
-        });
-
         // Bind configuration (no real Azure client — just the settings)
         builder.Services.Configure<GatewayOptions>(builder.Configuration.GetSection(GatewayOptions.SectionName));
         builder.Services.Configure<AzureAdOptions>(builder.Configuration.GetSection(AzureAdOptions.SectionName));
@@ -84,18 +73,7 @@ public class McpToolEndpointTests : IAsyncLifetime
             });
         });
 
-        // State management
-        builder.Services.AddInMemoryStateManagement();
-
-        // Compliance agent + tools
-        builder.Services.AddComplianceAgent(builder.Configuration);
-
-        // Configuration agent + tools
-        builder.Services.AddConfigurationAgent();
-
-        // MCP server
-        builder.Services.AddMcpServer(builder.Configuration);
-
+        builder.Services.AddAtoCopilotMcpForTesting(builder.Configuration, dbName);
         // CORS
         builder.Services.AddCors(options =>
             options.AddDefaultPolicy(policy =>
@@ -215,7 +193,7 @@ public class McpToolEndpointTests : IAsyncLifetime
         var json = JsonDocument.Parse(content);
 
         json.RootElement.GetProperty("success").GetBoolean().Should().BeTrue();
-        json.RootElement.GetProperty("agentName").GetString()
+        json.RootElement.GetProperty("agentUsed").GetString()
             .Should().Be("Configuration Agent",
                 "subscription configuration should route to Configuration Agent");
     }
@@ -232,7 +210,7 @@ public class McpToolEndpointTests : IAsyncLifetime
         var content = await response.Content.ReadAsStringAsync();
         var json = JsonDocument.Parse(content);
 
-        json.RootElement.GetProperty("agentName").GetString()
+        json.RootElement.GetProperty("agentUsed").GetString()
             .Should().Be("Configuration Agent");
     }
 
@@ -248,7 +226,7 @@ public class McpToolEndpointTests : IAsyncLifetime
         var content = await response.Content.ReadAsStringAsync();
         var json = JsonDocument.Parse(content);
 
-        json.RootElement.GetProperty("agentName").GetString()
+        json.RootElement.GetProperty("agentUsed").GetString()
             .Should().Be("Configuration Agent");
     }
 
@@ -268,7 +246,7 @@ public class McpToolEndpointTests : IAsyncLifetime
         var content = await response.Content.ReadAsStringAsync();
         var json = JsonDocument.Parse(content);
 
-        json.RootElement.GetProperty("agentName").GetString()
+        json.RootElement.GetProperty("agentUsed").GetString()
             .Should().Be("Compliance Agent",
                 "assessment requests should route to Compliance Agent");
     }
@@ -285,7 +263,7 @@ public class McpToolEndpointTests : IAsyncLifetime
         var content = await response.Content.ReadAsStringAsync();
         var json = JsonDocument.Parse(content);
 
-        json.RootElement.GetProperty("agentName").GetString()
+        json.RootElement.GetProperty("agentUsed").GetString()
             .Should().Be("Compliance Agent");
     }
 
@@ -430,7 +408,7 @@ public class McpToolEndpointTests : IAsyncLifetime
         var configContent = await configResponse.Content.ReadAsStringAsync();
         var configJson = JsonDocument.Parse(configContent);
         configJson.RootElement.GetProperty("success").GetBoolean().Should().BeTrue();
-        configJson.RootElement.GetProperty("agentName").GetString()
+        configJson.RootElement.GetProperty("agentUsed").GetString()
             .Should().Be("Configuration Agent");
 
         // Step 2: Ask for assessment (should route to ComplianceAgent)
@@ -440,7 +418,7 @@ public class McpToolEndpointTests : IAsyncLifetime
 
         var assessContent = await assessResponse.Content.ReadAsStringAsync();
         var assessJson = JsonDocument.Parse(assessContent);
-        assessJson.RootElement.GetProperty("agentName").GetString()
+        assessJson.RootElement.GetProperty("agentUsed").GetString()
             .Should().Be("Compliance Agent");
     }
 
